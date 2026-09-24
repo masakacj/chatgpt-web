@@ -1,8 +1,3 @@
 .DS_Store
-.build/
-DerivedData/
-build/
-*.xcuserstate
-*.xcworkspace/xcuserdata/
-*.xcodeproj/xcuserdata/
+node_modules/
 dist/
