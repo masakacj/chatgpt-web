@@ -1,9 +1,9 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.3",
   "scriptURL": "https://raw.githubusercontent.com/masakacj/chatgpt-web/main/remote/perf.js",
-  "sha256": "35e20156aab0c4947a858b8bc948d23a1b4d8863d4800c739c9bd2f9d7e30e7c",
+  "sha256": "d98a8622378140b6c6b47618ae515eb113463ae3bf89b816276c62315fccee34",
   "minimumAppVersion": "0.1.0",
-  "notes": "Improves compatibility with the current ChatGPT DOM and finalizes MCP/tool-call compaction. Completed tool groups collapse to one summary; active/error/confirmation states stay expanded. Tool summaries no longer self-match and CSP badges no longer leak into tool names.",
+  "notes": "Preserves visible running/streaming animations. Animation suppression is now limited to cold/packed offscreen turns; current replies and status UI remain native. MCP/tool-call compaction remains enabled.",
   "config": {
     "balancedThreshold": 28,
     "aggressiveThreshold": 70,

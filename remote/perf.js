@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const ENGINE_VERSION = '0.1.2';
+  const ENGINE_VERSION = '0.1.3';
   const GLOBAL_KEY = 'ChatGPTPerf';
 
   try {
@@ -114,8 +114,9 @@
         user-select: none;
       }
 
-      html.cgp-perf-aggressive [data-cgp-turn="1"] *,
-      html.cgp-perf-extreme [data-cgp-turn="1"] * {
+      html.cgp-perf-aggressive [data-cgp-tier="cold"] *,
+      html.cgp-perf-extreme [data-cgp-tier="cold"] *,
+      html.cgp-perf-extreme [data-cgp-tier="packed"] * {
         transition-duration: .001ms !important;
         animation-duration: .001ms !important;
         animation-iteration-count: 1 !important;
