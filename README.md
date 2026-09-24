@@ -1,72 +1,63 @@
-# ChatGPT Web
+# ChatGPT Safari Lite
 
-A self-signed iOS client for ChatGPT built around `WKWebView`, with a remotely updatable performance engine for very long conversations.
+A Safari-first ChatGPT client enhancement. The browser is now the client: no WKWebView shell, no native JavaScript bridge, and no custom conversation renderer.
 
-## Goals
+## Why this version
 
-- Keep ChatGPT's web UI and normal account/session behavior.
-- Make long chats smoother on iPhone by controlling rendering cost, media lifetime, and far-offscreen turns.
-- Keep the native shell stable while allowing the performance engine and thresholds to update remotely.
-- Produce an unsigned IPA in GitHub Actions for self-signing.
+The previous iOS wrapper could diverge from real Safari in layout, keyboard, scrolling, login, file upload and WebKit lifecycle behavior. This version keeps the official `https://chatgpt.com/` page in Safari and adds only a small userscript.
 
-## Architecture
+The userscript deliberately avoids the risky optimizations from the old app:
 
-```text
-SwiftUI shell
-  └─ WKWebView (persistent WKWebsiteDataStore)
-      ├─ native config injection
-      ├─ remote/cached Perf Engine
-      └─ JS -> Native metrics bridge
+- no DOM snapshots or `innerHTML` replacement;
+- no hiding/fixed-height conversation turns;
+- no image/video/iframe source removal;
+- no custom tool-call collapsing;
+- no native state bridge or native loading/status model.
 
-Remote update channel
-  remote/manifest.json
-      ├─ engine version
-      ├─ SHA-256
-      ├─ remote thresholds
-      └─ remote/perf.js
+For long chats it can add one conservative rendering hint to older turns: `content-visibility: auto`. The latest 16 turns stay untouched by default.
+
+## iPhone / iPad installation
+
+Safari itself does not install `.user.js` files directly. Use a Safari userscript extension that supports standard userscript metadata, enable it for `chatgpt.com`, then install:
+
+`safari/chatgpt-safari.user.js`
+
+Raw update URL:
+
+`https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-safari.user.js`
+
+The script includes `@updateURL` and `@downloadURL` metadata pointing to the same file.
+
+## Controls
+
+A small floating **S** button appears at the top-right of ChatGPT. It does not resize the page.
+
+- **长对话轻量优化** — on/off. It activates only when the conversation reaches 32 turns.
+- **重新加载 ChatGPT** — reloads the official page.
+- **恢复官方页面显示** — disables all performance hints immediately.
+- **隐藏悬浮按钮** — hides the control. It can be restored from the console with `ChatGPTSafari.showControl()`.
+
+Useful console checks:
+
+```js
+ChatGPTSafari.getState()
+ChatGPTSafari.setEnabled(false)
+ChatGPTSafari.setKeepRecent(20)
 ```
 
-The app downloads `remote/manifest.json`, validates `remote/perf.js` with SHA-256, and keeps a last-known-good copy in Application Support. A bad or unavailable remote update never replaces the bundled fallback.
+Settings are stored only in Safari localStorage for `chatgpt.com`.
 
-## Performance modes
+## Repository layout
 
-- **Auto**: selects a level from conversation length and iOS memory pressure.
-- **Balanced**: `content-visibility` and containment; low risk.
-- **Aggressive**: freezes far-offscreen turns and unloads old media.
-- **Extreme**: can package very old, very distant turns into static snapshots. Recent turns stay untouched.
-- **Off**: restores the normal page.
+```text
+safari/chatgpt-safari.user.js   # the complete Safari userscript
+scripts/validate-userscript.mjs # metadata/version safety checks
+scripts/package-userscript.mjs  # release packaging
+.github/workflows/safari.yml     # syntax check + release artifact
+```
 
-The default remote policy keeps destructive packing disabled in Auto. Manual Extreme mode and iOS memory warnings may use the deeper path.
+## Release
 
-## Updating only the performance engine
+Pushes to `main` run syntax/metadata validation and upload a packaged artifact. A tag such as `v0.2.0` publishes the userscript and ZIP to GitHub Releases.
 
-1. Edit `remote/perf.js`.
-2. Increment `ENGINE_VERSION`.
-3. Update `remote/manifest.json` version + SHA-256.
-4. Push to `main`.
-
-No IPA rebuild is required. The app checks the remote manifest, downloads a verified engine, and can apply it with one reload.
-
-## Native app updates
-
-The Settings sheet displays:
-
-- App version/build.
-- Cached Perf Engine version.
-- Live DOM/turn/tier metrics.
-- Remote performance update controls.
-- GitHub Release update check.
-- Cache cleanup that keeps login cookies.
-
-## Build
-
-GitHub Actions generates the Xcode project with XcodeGen and builds with code signing disabled. The produced IPA is intended for your own signing workflow.
-
-A tag such as `v0.1.0` publishes:
-
-- `ChatGPTWeb-<version>-<build>-unsigned.ipa`
-- SHA-256 checksum
-
-## Notes
-
-This is a personal WebView client, not an OpenAI API client. It does not need to export ChatGPT cookies or store account credentials itself.
+The earlier native iOS client remains available in Git history; it is no longer the active architecture.
