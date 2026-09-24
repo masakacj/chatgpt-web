@@ -352,7 +352,7 @@
       '  contain-intrinsic-size: auto 720px !important;',
       '}',
       'a[data-cgpt-safari-chat-state] { position: relative !important; }',
-      'a[data-cgpt-safari-chat-state]::after { content: ""; position: absolute; right: 8px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: none; }',
+      'a[data-cgpt-safari-chat-state]::after { content: ""; position: absolute; right: 30px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: none; }',
       'a[data-cgpt-safari-chat-state="running"]::after { background: #34c759; animation: cgpt-safari-pulse 1.15s ease-in-out infinite; }',
       'a[data-cgpt-safari-chat-state="waiting_user"]::after { background: #ff9f0a; }',
       'a[data-cgpt-safari-chat-state="settling"]::after { background: #8e8e93; animation: cgpt-safari-pulse .9s ease-in-out infinite; }',
