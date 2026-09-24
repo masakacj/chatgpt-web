@@ -1,0 +1,11 @@
+{
+  "name": "chatgpt-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate:remote": "node scripts/validate-remote.mjs",
+    "sync:github": "node scripts/github-sync.mjs",
+    "release:tag": "node scripts/github-sync.mjs --tag"
+  }
+}
