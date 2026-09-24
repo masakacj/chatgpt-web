@@ -1,7 +1,7 @@
 {
   "version": "0.1.1",
   "scriptURL": "https://raw.githubusercontent.com/masakacj/chatgpt-web/main/remote/perf.js",
-  "sha256": "5140a42c813cd49a28e9432d83f7541fa3be6214124f557dccf2620989522731",
+  "sha256": "d3315ad076e8863e926ee4d7b5b4fd4b485ddc044a2ca482acee2382cf8a532d",
   "minimumAppVersion": "0.1.0",
   "notes": "Adds MCP/tool-call compaction. Completed tool groups collapse to one lightweight summary by default; running, failed, permission, and confirmation states stay expanded. Existing hot/warm/cold virtualization remains unchanged.",
   "config": {

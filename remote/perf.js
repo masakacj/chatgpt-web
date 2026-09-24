@@ -271,7 +271,10 @@
   function toolActionNodes(scope) {
     return Array.from(
       scope.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
-    ).filter((node) => TOOL_ACTION_RE.test(normalizedText(node)));
+    ).filter((node) => {
+      const text = normalizedText(node);
+      return TOOL_ACTION_RE.test(text) && !TOOL_GROUP_RE.test(text);
+    });
   }
 
   function findToolGroupContainer(heading, turn) {
@@ -395,9 +398,15 @@
         group.setAttribute('data-cgp-tool-active', active ? '1' : '0');
 
         const button = ensureToolSummaryButton(group);
-        button.textContent = toolSummary(group);
-
         const record = toolRecordFor(group);
+        const summary = toolSummary(group);
+        const chinese = /已调用工具|调用工具|工具调用/.test(normalizedText(group)) ||
+          (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+        const desiredText = record.manualExpanded
+          ? `${summary} · ${chinese ? '收起' : 'collapse'}`
+          : summary;
+        if (button.textContent !== desiredText) button.textContent = desiredText;
+
         const toolMode = config.toolMode === 'full' ? 'full' :
           (config.toolMode === 'auto' ? 'auto' : 'minimal');
 
