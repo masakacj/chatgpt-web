@@ -14,7 +14,7 @@ The userscript deliberately avoids the risky optimizations from the old app:
 - no custom tool-call collapsing;
 - no native state bridge or native loading/status model.
 
-For long chats it can add one conservative rendering hint to older turns: `content-visibility: auto`. The latest 16 turns stay untouched by default.
+The userscript keeps one conservative rendering hint active continuously: `content-visibility: auto`. Safari still renders visible content normally, while it may skip work for offscreen conversation turns. The currently streaming turn and any focused/interactive turn are explicitly excluded.
 
 ## iPhone / iPad installation
 
@@ -32,7 +32,7 @@ The script includes `@updateURL` and `@downloadURL` metadata pointing to the sam
 
 A small floating **S** button appears at the top-right of ChatGPT. It does not resize the page.
 
-- **长对话轻量优化** — on/off. It activates only when the conversation reaches 32 turns.
+- **常驻轻量优化** — on/off. It is active from the beginning of a conversation; the currently streaming turn and focused/interactive turns are protected.
 - **重新加载 ChatGPT** — reloads the official page.
 - **恢复官方页面显示** — disables all performance hints immediately.
 - **隐藏悬浮按钮** — hides the control. It can be restored from the console with `ChatGPTSafari.showControl()`.
@@ -42,7 +42,6 @@ Useful console checks:
 ```js
 ChatGPTSafari.getState()
 ChatGPTSafari.setEnabled(false)
-ChatGPTSafari.setKeepRecent(20)
 ```
 
 Settings are stored only in Safari localStorage for `chatgpt.com`.
@@ -58,6 +57,6 @@ scripts/package-userscript.mjs  # release packaging
 
 ## Release
 
-Pushes to `main` run syntax/metadata validation and upload a packaged artifact. A tag such as `v0.2.0` publishes the userscript and ZIP to GitHub Releases.
+Pushes to `main` run syntax/metadata validation and upload a packaged artifact. A tag such as `v0.2.1` publishes the userscript and ZIP to GitHub Releases.
 
 The earlier native iOS client remains available in Git history; it is no longer the active architecture.
