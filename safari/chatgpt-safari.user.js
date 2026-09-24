@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Safari Lite
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.2.0
-// @description  Safari-first ChatGPT helper: keep the official page intact and only apply conservative long-chat rendering hints.
+// @version      0.2.1
+// @description  Safari-first ChatGPT helper: keep the official page intact and apply conservative rendering hints continuously.
 // @author       masakacj
 // @match        https://chatgpt.com/*
 // @run-at       document-start
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   const GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
   const HOST_ID = 'cgpt-safari-lite-host';
@@ -26,8 +26,6 @@
 
   const defaults = {
     enabled: true,
-    minTurns: 32,
-    keepRecent: 16,
     showControl: true,
   };
 
@@ -37,7 +35,7 @@
     observer: null,
     refreshTimer: 0,
     statusTimer: 0,
-    coldTurns: new Set(),
+    optimizedTurns: new Set(),
     lastRoute: location.pathname + location.search,
     ui: null,
   };
@@ -52,8 +50,6 @@
       const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
       return {
         enabled: stored.enabled !== false,
-        minTurns: clamp(stored.minTurns ?? defaults.minTurns, 12, 200),
-        keepRecent: clamp(stored.keepRecent ?? defaults.keepRecent, 6, 60),
         showControl: stored.showControl !== false,
       };
     } catch (_) {
@@ -73,7 +69,7 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = [
-      '[data-cgpt-safari-cold="1"] {',
+      '[data-cgpt-safari-opt="1"] {',
       '  content-visibility: auto !important;',
       '  contain-intrinsic-size: auto 720px !important;',
       '}',
@@ -108,42 +104,49 @@
     return [];
   }
 
-  function restoreColdTurns() {
-    for (const turn of Array.from(state.coldTurns)) {
+  function restoreOptimizedTurns() {
+    for (const turn of Array.from(state.optimizedTurns)) {
       if (turn instanceof HTMLElement) {
-        turn.removeAttribute('data-cgpt-safari-cold');
+        turn.removeAttribute('data-cgpt-safari-opt');
       }
     }
-    state.coldTurns.clear();
+    state.optimizedTurns.clear();
   }
 
   function applyPerformanceHints() {
     const turns = turnCandidates();
 
-    if (!state.settings.enabled || turns.length < state.settings.minTurns) {
-      restoreColdTurns();
+    if (!state.settings.enabled) {
+      restoreOptimizedTurns();
       updateUI(turns.length);
       return;
     }
 
-    const cutoff = Math.max(0, turns.length - state.settings.keepRecent);
-    const nextCold = new Set();
+    const streaming = isStreaming();
+    const liveTurn = streaming ? turns[turns.length - 1] : null;
+    const nextOptimized = new Set();
 
-    for (let i = 0; i < cutoff; i += 1) {
-      const turn = turns[i];
+    for (const turn of turns) {
       if (!(turn instanceof HTMLElement)) continue;
-      if (turn.matches(':focus-within')) continue;
-      turn.setAttribute('data-cgpt-safari-cold', '1');
-      nextCold.add(turn);
-    }
 
-    for (const oldTurn of Array.from(state.coldTurns)) {
-      if (!nextCold.has(oldTurn) && oldTurn instanceof HTMLElement) {
-        oldTurn.removeAttribute('data-cgpt-safari-cold');
+      const interactive = turn.matches(':focus-within');
+      const shouldOptimize = !interactive && turn !== liveTurn;
+
+      if (shouldOptimize) {
+        turn.setAttribute('data-cgpt-safari-opt', '1');
+        nextOptimized.add(turn);
+      } else {
+        turn.removeAttribute('data-cgpt-safari-opt');
       }
     }
 
-    state.coldTurns = nextCold;
+    for (const oldTurn of Array.from(state.optimizedTurns)) {
+      if (!nextOptimized.has(oldTurn) && oldTurn instanceof HTMLElement) {
+        oldTurn.removeAttribute('data-cgpt-safari-opt');
+      }
+    }
+
+    state.optimizedTurns = nextOptimized;
     updateUI(turns.length);
   }
 
@@ -166,7 +169,7 @@
       const route = location.pathname + location.search;
       if (route !== state.lastRoute) {
         state.lastRoute = route;
-        restoreColdTurns();
+        restoreOptimizedTurns();
       }
       window.requestAnimationFrame(applyPerformanceHints);
     }, delay);
@@ -229,7 +232,7 @@
     perfRow.className = 'row';
     const perfLabel = document.createElement('span');
     perfLabel.className = 'label';
-    perfLabel.textContent = '长对话轻量优化';
+    perfLabel.textContent = '常驻轻量优化';
     const perfSwitch = document.createElement('input');
     perfSwitch.className = 'switch';
     perfSwitch.type = 'checkbox';
@@ -285,7 +288,7 @@
       state.settings.enabled = false;
       perfSwitch.checked = false;
       saveSettings();
-      restoreColdTurns();
+      restoreOptimizedTurns();
       updateUI(turnCandidates().length);
       panel.classList.remove('open');
     });
@@ -308,18 +311,13 @@
     const streaming = isStreaming();
     ui.button.dataset.streaming = streaming ? '1' : '0';
 
-    let mode = '官方原生';
-    if (state.settings.enabled && turnCount >= state.settings.minTurns) {
-      mode = '轻量优化';
-    } else if (state.settings.enabled) {
-      mode = '自动待命';
-    }
+    const mode = state.settings.enabled ? '常驻优化' : '官方原生';
 
     ui.status.textContent =
       mode + ' · ' +
-      turnCount + ' 轮 · 保留最近 ' +
-      state.settings.keepRecent + ' 轮 · ' +
-      (streaming ? '正在回复' : '空闲');
+      turnCount + ' 轮 · 已优化 ' +
+      state.optimizedTurns.size + ' 轮 · ' +
+      (streaming ? '正在回复（当前轮保护）' : '空闲');
   }
 
   function setupObservers() {
@@ -359,21 +357,13 @@
     scheduleRefresh(0);
   }
 
-  function setKeepRecent(value) {
-    state.settings.keepRecent = clamp(value, 6, 60);
-    saveSettings();
-    scheduleRefresh(0);
-  }
-
   function getState() {
     const turns = turnCandidates();
     return {
       version: VERSION,
       enabled: state.settings.enabled,
-      minTurns: state.settings.minTurns,
-      keepRecent: state.settings.keepRecent,
       turns: turns.length,
-      optimizedTurns: state.coldTurns.size,
+      optimizedTurns: state.optimizedTurns.size,
       streaming: isStreaming(),
       route: location.pathname + location.search,
     };
@@ -391,7 +381,7 @@
     window.removeEventListener('hashchange', onRoute);
     document.removeEventListener('visibilitychange', onVisibility);
 
-    restoreColdTurns();
+    restoreOptimizedTurns();
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(HOST_ID)?.remove();
     state.ui = null;
@@ -407,7 +397,6 @@
     version: VERSION,
     getState,
     setEnabled,
-    setKeepRecent,
     showControl,
     refresh: () => scheduleRefresh(0),
     destroy,
