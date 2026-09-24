@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Safari Lite
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.2.1
+// @version      0.2.2
 // @description  Safari-first ChatGPT helper: keep the official page intact and apply conservative rendering hints continuously.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,11 +14,16 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   const GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
   const HOST_ID = 'cgpt-safari-lite-host';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
+  const CONVERSATION_STATE_KEY = 'cgpt-safari-conversation-state-v1';
+  const STATE_CHANNEL = 'cgpt-safari-conversation-state';
+  const SETTLE_MS = 2800;
+  const READ_DWELL_MS = 1200;
+  const STATE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
   try {
     window[GLOBAL_KEY]?.destroy?.();
@@ -37,6 +42,11 @@
     statusTimer: 0,
     optimizedTurns: new Set(),
     lastRoute: location.pathname + location.search,
+    activeConversationId: null,
+    activeRouteSince: Date.now(),
+    settlingSince: 0,
+    conversationStates: loadConversationStates(),
+    channel: null,
     ui: null,
   };
 
@@ -63,6 +73,274 @@
     } catch (_) {}
   }
 
+  function loadConversationStates() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(CONVERSATION_STATE_KEY) || '{}');
+      const now = Date.now();
+      const result = {};
+
+      for (const [id, record] of Object.entries(raw)) {
+        if (!record || typeof record !== 'object') continue;
+        if (now - Number(record.updatedAt || 0) > STATE_TTL_MS) continue;
+        result[id] = record;
+      }
+
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function persistConversationStates() {
+    try {
+      const entries = Object.entries(state.conversationStates)
+        .sort((a, b) => Number(b[1]?.updatedAt || 0) - Number(a[1]?.updatedAt || 0))
+        .slice(0, 300);
+      state.conversationStates = Object.fromEntries(entries);
+      localStorage.setItem(CONVERSATION_STATE_KEY, JSON.stringify(state.conversationStates));
+    } catch (_) {}
+  }
+
+  function conversationIdFromPath(pathname) {
+    const parts = String(pathname || '').split('/').filter(Boolean);
+    for (let i = parts.length - 2; i >= 0; i -= 1) {
+      if (parts[i] === 'c' && parts[i + 1]) return parts[i + 1];
+    }
+    return null;
+  }
+
+  function conversationIdFromHref(href) {
+    try {
+      const url = new URL(href, location.origin);
+      return conversationIdFromPath(url.pathname);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function currentConversationId() {
+    return conversationIdFromPath(location.pathname);
+  }
+
+  function statusLabel(status) {
+    switch (status) {
+      case 'running': return '运行中';
+      case 'waiting_user': return '等待操作';
+      case 'settling': return '收尾确认';
+      case 'completed_unread': return '已完成 · 未读';
+      case 'completed_read': return '已完成';
+      default: return '就绪';
+    }
+  }
+
+  function setConversationState(id, status, extra = {}) {
+    if (!id) return;
+
+    const previous = state.conversationStates[id] || {};
+    const now = Date.now();
+    const next = {
+      ...previous,
+      ...extra,
+      status,
+      updatedAt: now,
+    };
+
+    if (status === 'completed_unread' && !next.completedAt) {
+      next.completedAt = now;
+    }
+    if (status === 'completed_read') {
+      next.readAt = now;
+    }
+
+    const unchanged =
+      previous.status === next.status &&
+      Number(previous.settlingSince || 0) === Number(next.settlingSince || 0) &&
+      Number(previous.completedAt || 0) === Number(next.completedAt || 0);
+
+    if (unchanged) return;
+
+    state.conversationStates[id] = next;
+    persistConversationStates();
+    renderConversationStates();
+
+    try {
+      state.channel?.postMessage({ type: 'conversation-state', id, record: next });
+    } catch (_) {}
+  }
+
+  function mergeConversationState(id, record) {
+    if (!id || !record || typeof record !== 'object') return;
+    const current = state.conversationStates[id];
+    if (current && Number(current.updatedAt || 0) >= Number(record.updatedAt || 0)) return;
+
+    state.conversationStates[id] = record;
+    persistConversationStates();
+    renderConversationStates();
+    updateUI(turnCandidates().length);
+  }
+
+  function renderConversationStates() {
+    const anchors = document.querySelectorAll('a[href*="/c/"]');
+
+    for (const anchor of anchors) {
+      if (!(anchor instanceof HTMLAnchorElement)) continue;
+      const id = conversationIdFromHref(anchor.href);
+      const status = id ? state.conversationStates[id]?.status : null;
+
+      if (status && status !== 'completed_read') {
+        anchor.setAttribute('data-cgpt-safari-chat-state', status);
+      } else {
+        anchor.removeAttribute('data-cgpt-safari-chat-state');
+      }
+    }
+  }
+
+  function lastConversationTurn() {
+    const turns = turnCandidates();
+    return turns.length ? turns[turns.length - 1] : null;
+  }
+
+  function hasWaitingUserSignal() {
+    const turn = lastConversationTurn();
+    if (!(turn instanceof HTMLElement)) return false;
+
+    const buttons = Array.from(turn.querySelectorAll('button,[role="button"]'));
+    return buttons.some((button) => {
+      const text = [
+        button.textContent || '',
+        button.getAttribute?.('aria-label') || '',
+        button.getAttribute?.('title') || '',
+      ].join(' ').replace(/\s+/g, ' ').trim();
+
+      if (!text) return false;
+      if (/(stop|cancel|停止|取消)/i.test(text)) return false;
+      return /(allow|approve|confirm|yes,?\s*(?:run|proceed)|run\s+(?:it|command)|continue|允许|批准|确认|继续|运行此|授权)/i.test(text);
+    });
+  }
+
+  function hasToolOrStreamingSignal() {
+    if (isStreaming()) return true;
+
+    const turn = lastConversationTurn();
+    if (!(turn instanceof HTMLElement)) return false;
+
+    return Boolean(turn.querySelector(
+      '[aria-busy="true"],[role="progressbar"],[data-state="loading"],[data-loading="true"]'
+    ));
+  }
+
+  function evaluateConversationState() {
+    if (state.destroyed) return;
+
+    const now = Date.now();
+    const id = currentConversationId();
+
+    if (id !== state.activeConversationId) {
+      state.activeConversationId = id;
+      state.activeRouteSince = now;
+      state.settlingSince = 0;
+    }
+
+    if (!id) {
+      renderConversationStates();
+      updateUI(turnCandidates().length);
+      return;
+    }
+
+    const waiting = hasWaitingUserSignal();
+    const running = hasToolOrStreamingSignal();
+
+    if (waiting) {
+      state.settlingSince = 0;
+      setConversationState(id, 'waiting_user', {
+        settlingSince: 0,
+        completedAt: 0,
+      });
+      updateUI(turnCandidates().length);
+      return;
+    }
+
+    if (running) {
+      state.settlingSince = 0;
+      setConversationState(id, 'running', {
+        settlingSince: 0,
+        completedAt: 0,
+      });
+      updateUI(turnCandidates().length);
+      return;
+    }
+
+    const record = state.conversationStates[id];
+
+    if (!record) {
+      setConversationState(id, 'completed_read', {
+        settlingSince: 0,
+        completedAt: now,
+      });
+      updateUI(turnCandidates().length);
+      return;
+    }
+
+    if (record.status === 'running' || record.status === 'waiting_user') {
+      state.settlingSince = now;
+      setConversationState(id, 'settling', {
+        settlingSince: now,
+        completedAt: 0,
+      });
+      updateUI(turnCandidates().length);
+      return;
+    }
+
+    if (record.status === 'settling') {
+      const since = Number(record.settlingSince || state.settlingSince || now);
+      if (now - since >= SETTLE_MS) {
+        setConversationState(id, 'completed_unread', {
+          settlingSince: 0,
+          completedAt: now,
+        });
+      }
+      updateUI(turnCandidates().length);
+      return;
+    }
+
+    if (record.status === 'completed_unread' && !document.hidden) {
+      const completedAt = Number(record.completedAt || now);
+      const readableSince = Math.max(completedAt, state.activeRouteSince);
+      if (now - readableSince >= READ_DWELL_MS) {
+        setConversationState(id, 'completed_read', {
+          settlingSince: 0,
+          completedAt,
+        });
+      }
+    }
+
+    updateUI(turnCandidates().length);
+  }
+
+  function setupConversationStateSync() {
+    try {
+      state.channel = new BroadcastChannel(STATE_CHANNEL);
+      state.channel.addEventListener('message', (event) => {
+        const data = event.data;
+        if (data?.type === 'conversation-state') {
+          mergeConversationState(data.id, data.record);
+        }
+      });
+    } catch (_) {
+      state.channel = null;
+    }
+
+    window.addEventListener('storage', onStorageSync);
+  }
+
+  function onStorageSync(event) {
+    if (event.key !== CONVERSATION_STATE_KEY) return;
+    const incoming = loadConversationStates();
+    for (const [id, record] of Object.entries(incoming)) {
+      mergeConversationState(id, record);
+    }
+  }
+
   function installStyle() {
     if (document.getElementById(STYLE_ID)) return;
 
@@ -73,6 +351,13 @@
       '  content-visibility: auto !important;',
       '  contain-intrinsic-size: auto 720px !important;',
       '}',
+      'a[data-cgpt-safari-chat-state] { position: relative !important; }',
+      'a[data-cgpt-safari-chat-state]::after { content: ""; position: absolute; right: 8px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: none; }',
+      'a[data-cgpt-safari-chat-state="running"]::after { background: #34c759; animation: cgpt-safari-pulse 1.15s ease-in-out infinite; }',
+      'a[data-cgpt-safari-chat-state="waiting_user"]::after { background: #ff9f0a; }',
+      'a[data-cgpt-safari-chat-state="settling"]::after { background: #8e8e93; animation: cgpt-safari-pulse .9s ease-in-out infinite; }',
+      'a[data-cgpt-safari-chat-state="completed_unread"]::after { background: #0a84ff; }',
+      '@keyframes cgpt-safari-pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
       '@media print {',
       '  #' + HOST_ID + ' { display: none !important; }',
       '}',
@@ -196,7 +481,12 @@
       '* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }',
       '.wrap { position: relative; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }',
       '.fab { width: 36px; height: 36px; border: 0; border-radius: 18px; background: rgba(32,32,32,.78); color: white; box-shadow: 0 3px 14px rgba(0,0,0,.22); display: grid; place-items: center; font-size: 15px; font-weight: 700; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }',
-      '.fab[data-streaming="1"]::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #34c759; position: absolute; right: 1px; top: 1px; box-shadow: 0 0 0 2px rgba(255,255,255,.82); }',
+      '.fab[data-chat-state]::after { content: ""; width: 7px; height: 7px; border-radius: 50%; position: absolute; right: 1px; top: 1px; box-shadow: 0 0 0 2px rgba(255,255,255,.82); }',
+      '.fab[data-chat-state="running"]::after { background: #34c759; animation: pulse 1.15s ease-in-out infinite; }',
+      '.fab[data-chat-state="waiting_user"]::after { background: #ff9f0a; }',
+      '.fab[data-chat-state="settling"]::after { background: #8e8e93; animation: pulse .9s ease-in-out infinite; }',
+      '.fab[data-chat-state="completed_unread"]::after { background: #0a84ff; }',
+      '@keyframes pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
       '.panel { position: absolute; top: 43px; right: 0; width: 238px; padding: 10px; border-radius: 14px; background: rgba(28,28,30,.94); color: white; box-shadow: 0 12px 34px rgba(0,0,0,.28); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: none; }',
       '.panel.open { display: block; }',
       '.title { font-size: 13px; font-weight: 700; margin: 2px 2px 9px; }',
@@ -308,20 +598,29 @@
     const ui = state.ui;
     if (!ui) return;
 
-    const streaming = isStreaming();
-    ui.button.dataset.streaming = streaming ? '1' : '0';
-
+    const id = currentConversationId();
+    const chatStatus = id ? state.conversationStates[id]?.status : null;
     const mode = state.settings.enabled ? '常驻优化' : '官方原生';
+
+    if (chatStatus && chatStatus !== 'completed_read') {
+      ui.button.dataset.chatState = chatStatus;
+    } else {
+      delete ui.button.dataset.chatState;
+    }
 
     ui.status.textContent =
       mode + ' · ' +
       turnCount + ' 轮 · 已优化 ' +
       state.optimizedTurns.size + ' 轮 · ' +
-      (streaming ? '正在回复（当前轮保护）' : '空闲');
+      statusLabel(chatStatus);
   }
 
   function setupObservers() {
-    state.observer = new MutationObserver(() => scheduleRefresh(180));
+    state.observer = new MutationObserver(() => {
+      scheduleRefresh(180);
+      evaluateConversationState();
+      renderConversationStates();
+    });
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
@@ -332,16 +631,28 @@
     document.addEventListener('visibilitychange', onVisibility, { passive: true });
 
     state.statusTimer = window.setInterval(() => {
-      if (!state.destroyed) updateUI(turnCandidates().length);
-    }, 1600);
+      if (!state.destroyed) {
+        evaluateConversationState();
+        renderConversationStates();
+      }
+    }, 600);
   }
 
   function onRoute() {
+    state.activeConversationId = null;
+    state.activeRouteSince = Date.now();
+    state.settlingSince = 0;
     scheduleRefresh(0);
+    evaluateConversationState();
+    renderConversationStates();
   }
 
   function onVisibility() {
-    if (!document.hidden) scheduleRefresh(0);
+    if (!document.hidden) {
+      scheduleRefresh(0);
+      evaluateConversationState();
+      renderConversationStates();
+    }
   }
 
   function showControl() {
@@ -365,6 +676,11 @@
       turns: turns.length,
       optimizedTurns: state.optimizedTurns.size,
       streaming: isStreaming(),
+      conversationId: currentConversationId(),
+      conversationStatus: currentConversationId()
+        ? state.conversationStates[currentConversationId()]?.status || null
+        : null,
+      conversationStates: { ...state.conversationStates },
       route: location.pathname + location.search,
     };
   }
@@ -380,8 +696,13 @@
     window.removeEventListener('popstate', onRoute);
     window.removeEventListener('hashchange', onRoute);
     document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('storage', onStorageSync);
+    try { state.channel?.close?.(); } catch (_) {}
 
     restoreOptimizedTurns();
+    for (const anchor of document.querySelectorAll('[data-cgpt-safari-chat-state]')) {
+      anchor.removeAttribute('data-cgpt-safari-chat-state');
+    }
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(HOST_ID)?.remove();
     state.ui = null;
@@ -403,15 +724,20 @@
   };
 
   installStyle();
+  setupConversationStateSync();
   setupObservers();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       createControl();
       scheduleRefresh(0);
+      evaluateConversationState();
+      renderConversationStates();
     }, { once: true });
   } else {
     createControl();
     scheduleRefresh(0);
+    evaluateConversationState();
+    renderConversationStates();
   }
 })();
