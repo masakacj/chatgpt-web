@@ -1,9 +1,9 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.2",
   "scriptURL": "https://raw.githubusercontent.com/masakacj/chatgpt-web/main/remote/perf.js",
-  "sha256": "47c1d7723ddd6dae4383df3623b578a6ac054fc370a8b32b56707f756bd932e2",
+  "sha256": "35e20156aab0c4947a858b8bc948d23a1b4d8863d4800c739c9bd2f9d7e30e7c",
   "minimumAppVersion": "0.1.0",
-  "notes": "Adds MCP/tool-call compaction. Completed tool groups collapse to one lightweight summary by default; running, failed, permission, and confirmation states stay expanded. Existing hot/warm/cold virtualization remains unchanged.",
+  "notes": "Improves compatibility with the current ChatGPT DOM and finalizes MCP/tool-call compaction. Completed tool groups collapse to one summary; active/error/confirmation states stay expanded. Tool summaries no longer self-match and CSP badges no longer leak into tool names.",
   "config": {
     "balancedThreshold": 28,
     "aggressiveThreshold": 70,

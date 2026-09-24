@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const ENGINE_VERSION = '0.1.1';
+  const ENGINE_VERSION = '0.1.2';
   const GLOBAL_KEY = 'ChatGPTPerf';
 
   try {
@@ -187,6 +187,8 @@
     const selectors = [
       'article[data-testid^="conversation-turn-"]',
       '[data-testid^="conversation-turn-"]',
+      '[data-message-author-role]',
+      'main [data-scroll-anchor]',
       'main article',
     ];
 
@@ -245,7 +247,7 @@
     );
   }
 
-  const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|工具调用|Called tools?|Tool calls?|Tools called)/i;
+  const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called)/i;
   const TOOL_ACTION_RE = /(?:Ran command|Run command|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|运行命令|执行命令|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
   const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
   const TOOL_NAME_RE = /\b(?:mcp[a-z0-9_-]+|mcpoffice|mcpdebian|mcphome|web|python|container|functions|image_gen|automations|genui)\b/gi;
@@ -307,7 +309,9 @@
   function findToolGroups(turn) {
     const headings = Array.from(
       turn.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
-    ).filter((node) => TOOL_GROUP_RE.test(nodeLabel(node)));
+    ).filter((node) =>
+      !node.classList?.contains('cgp-tool-summary') && TOOL_GROUP_RE.test(nodeLabel(node))
+    );
 
     const groups = [];
     for (const heading of headings) {
@@ -336,8 +340,11 @@
   function toolSummary(group) {
     const text = normalizedText(group);
     const actions = toolActionNodes(group);
-    const names = Array.from(new Set(text.match(TOOL_NAME_RE) || []))
-      .slice(0, 3);
+    const names = Array.from(new Set(
+      (text.match(TOOL_NAME_RE) || [])
+        .map((name) => name.replace(/CSP$/i, ''))
+        .filter(Boolean)
+    )).slice(0, 3);
 
     const lineMatches = Array.from(text.matchAll(/(\d{1,6})\s*(?:lines?|行)\b/gi));
     const lineCount = lineMatches.reduce((max, match) => Math.max(max, Number(match[1]) || 0), 0);
@@ -717,7 +724,7 @@
       }
     }
 
-    optimizeToolGroups(turns);
+    optimizeToolGroups([document.body]);
     state.lastCounts = { hot, warm, cold, packed };
   }
 
