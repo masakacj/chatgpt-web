@@ -26,7 +26,7 @@ requireText('// @run-at       document-start', 'document-start injection');
 requireText('// @grant        none', 'grant none');
 requireText('content-visibility: auto', 'conservative rendering hint');
 requireText("const liveTurn = streaming ? turns[turns.length - 1] : null;", 'streaming turn protection');
-requireText("perfLabel.textContent = '常驻轻量优化';", 'always-on control label');
+requireText("perfLabel.textContent = '常驻轻量优化';", 'always-on control label');\nrequireText("const SETTLE_MS = 2800;", 'desktop-compatible settling window');\nrequireText("const READ_DWELL_MS = 1200;", 'desktop-compatible read dwell');\nrequireText("new BroadcastChannel(STATE_CHANNEL)", 'cross-tab state sync');\nrequireText("window.addEventListener('storage', onStorageSync)", 'storage-event sync fallback');\nfor (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {\n  requireText(status, 'conversation state ' + status);\n}
 requireText('attachShadow({ mode: \'open\' })', 'isolated control UI');
 
 const forbidden = [
