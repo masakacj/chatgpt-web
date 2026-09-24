@@ -25,9 +25,13 @@ requireText('// @match        https://chatgpt.com/*', 'chatgpt.com match');
 requireText('// @run-at       document-start', 'document-start injection');
 requireText('// @grant        none', 'grant none');
 requireText('content-visibility: auto', 'conservative rendering hint');
+requireText("const liveTurn = streaming ? turns[turns.length - 1] : null;", 'streaming turn protection');
+requireText("perfLabel.textContent = '常驻轻量优化';", 'always-on control label');
 requireText('attachShadow({ mode: \'open\' })', 'isolated control UI');
 
 const forbidden = [
+  ['minTurns', 'length-gated optimization'],
+  ['keepRecent', 'legacy recent-turn threshold'],
   ['window.webkit?.messageHandlers', 'native JS bridge'],
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
