@@ -1,13 +1,10 @@
 {
-  "name": "chatgpt-web",
-  "version": "0.1.0",
+  "name": "chatgpt-safari-lite",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "validate:remote": "node scripts/validate-remote.mjs",
-    "sync:github": "node scripts/github-sync.mjs",
-    "release:tag": "node scripts/github-sync.mjs --tag",
-    "status:github": "node scripts/github-status.mjs",
-    "log:github": "node scripts/github-job-log.mjs"
+    "check": "node --check safari/chatgpt-safari.user.js && node scripts/validate-userscript.mjs",
+    "package": "node scripts/package-userscript.mjs"
   }
 }
