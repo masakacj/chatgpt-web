@@ -1,9 +1,9 @@
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "scriptURL": "https://raw.githubusercontent.com/masakacj/chatgpt-web/main/remote/perf.js",
-  "sha256": "88583dcfa8f3cff8262eca679449228a6804af693ac16e330afd163d07349350",
+  "sha256": "5140a42c813cd49a28e9432d83f7541fa3be6214124f557dccf2620989522731",
   "minimumAppVersion": "0.1.0",
-  "notes": "Initial hot/warm/cold virtualization engine. Auto mode uses paint/layout containment; manual Extreme or iOS memory pressure may pack very old turns into static snapshots.",
+  "notes": "Adds MCP/tool-call compaction. Completed tool groups collapse to one lightweight summary by default; running, failed, permission, and confirmation states stay expanded. Existing hot/warm/cold virtualization remains unchanged.",
   "config": {
     "balancedThreshold": 28,
     "aggressiveThreshold": 70,

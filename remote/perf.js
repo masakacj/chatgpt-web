@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const ENGINE_VERSION = '0.1.0';
+  const ENGINE_VERSION = '0.1.1';
   const GLOBAL_KEY = 'ChatGPTPerf';
 
   try {
@@ -23,6 +23,7 @@
     packExtreme: remote.packExtreme === true,
     disableAnimations: remote.disableAnimations !== false,
     disableBackdropFilters: remote.disableBackdropFilters !== false,
+    toolMode: String(remote.toolMode || native.toolMode || 'minimal'),
   };
 
   const state = {
@@ -33,6 +34,8 @@
     turns: [],
     observed: new Set(),
     records: new WeakMap(),
+    toolRecords: new WeakMap(),
+    toolGroups: new Set(),
     mutationObserver: null,
     intersectionObserver: null,
     refreshQueued: false,
@@ -43,6 +46,7 @@
     longTaskMs: 0,
     destroyed: false,
     routeKey: location.pathname + location.search,
+    lastToolCounts: { groups: 0, collapsed: 0 },
   };
 
   const STYLE_ID = 'cgpt-web-perf-style';
@@ -133,6 +137,48 @@
       [data-cgp-media-suspended="1"] {
         visibility: hidden !important;
       }
+
+      [data-cgp-tool-group="1"] {
+        content-visibility: auto;
+        contain: layout style paint;
+        contain-intrinsic-size: auto 48px;
+      }
+
+      .cgp-tool-summary {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 36px;
+        margin: 2px 0;
+        padding: 7px 10px;
+        border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+        border-radius: 10px;
+        background: color-mix(in srgb, Canvas 94%, transparent);
+        color: CanvasText;
+        font: 12px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+        text-align: left;
+        opacity: .78;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .cgp-tool-summary:hover {
+        opacity: 1;
+      }
+
+      [data-cgp-tool-collapsed="1"] > :not(.cgp-tool-summary) {
+        display: none !important;
+      }
+
+      [data-cgp-tool-collapsed="1"] {
+        min-height: 40px !important;
+        max-height: 48px !important;
+        overflow: hidden !important;
+        contain: layout style paint !important;
+      }
+
+      [data-cgp-tool-active="1"] > .cgp-tool-summary {
+        display: none !important;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -197,6 +243,210 @@
         '[data-testid="stop-button"], button[aria-label*="Stop"], button[aria-label*="停止"], button[data-testid*="stop"]'
       )
     );
+  }
+
+  const TOOL_GROUP_RE = /^(?:已调用工具|调用工具|工具调用|Called tools?|Tool calls?|Tools called)\s*$/i;
+  const TOOL_ACTION_RE = /(?:Ran command|Run command|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|运行命令|执行命令|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
+  const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
+  const TOOL_NAME_RE = /\b(?:mcp[a-z0-9_-]+|mcpoffice|mcpdebian|mcphome|web|python|container|functions|image_gen|automations|genui)\b/gi;
+
+  function normalizedText(node) {
+    return String(node?.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function toolRecordFor(group) {
+    let record = state.toolRecords.get(group);
+    if (!record) {
+      record = {
+        manualExpanded: false,
+        summaryButton: null,
+      };
+      state.toolRecords.set(group, record);
+    }
+    return record;
+  }
+
+  function toolActionNodes(scope) {
+    return Array.from(
+      scope.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
+    ).filter((node) => TOOL_ACTION_RE.test(normalizedText(node)));
+  }
+
+  function findToolGroupContainer(heading, turn) {
+    let node = heading.parentElement;
+
+    for (let depth = 0; node && node !== turn && depth < 7; depth += 1, node = node.parentElement) {
+      const role = node.getAttribute?.('role');
+      if (node.tagName === 'BUTTON' || node.tagName === 'SUMMARY' || role === 'button') {
+        continue;
+      }
+
+      const text = normalizedText(node);
+      if (!text || text.length > 30000) continue;
+
+      const actions = toolActionNodes(node);
+      if (actions.length > 0) return node;
+    }
+
+    return null;
+  }
+
+  function findToolGroups(turn) {
+    const headings = Array.from(
+      turn.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
+    ).filter((node) => TOOL_GROUP_RE.test(normalizedText(node)));
+
+    const groups = [];
+    for (const heading of headings) {
+      const group = findToolGroupContainer(heading, turn);
+      if (!group) continue;
+      if (groups.some((existing) => existing === group || existing.contains(group))) continue;
+
+      for (let i = groups.length - 1; i >= 0; i -= 1) {
+        if (group.contains(groups[i])) groups.splice(i, 1);
+      }
+      groups.push(group);
+    }
+    return groups;
+  }
+
+  function toolGroupNeedsAttention(group) {
+    const interactiveText = Array.from(
+      group.querySelectorAll('button,[role="button"],summary,[aria-live],[aria-label]')
+    )
+      .map((node) => `${normalizedText(node)} ${node.getAttribute?.('aria-label') || ''}`)
+      .join(' ');
+
+    return TOOL_ATTENTION_RE.test(interactiveText);
+  }
+
+  function toolSummary(group) {
+    const text = normalizedText(group);
+    const actions = toolActionNodes(group);
+    const names = Array.from(new Set(text.match(TOOL_NAME_RE) || []))
+      .slice(0, 3);
+
+    const lineMatches = Array.from(text.matchAll(/(\d{1,6})\s*(?:lines?|行)\b/gi));
+    const lineCount = lineMatches.reduce((max, match) => Math.max(max, Number(match[1]) || 0), 0);
+    const chinese = /已调用工具|调用工具|工具调用/.test(text) ||
+      (document.documentElement.lang || '').toLowerCase().startsWith('zh');
+
+    const count = Math.max(1, actions.length);
+    const parts = [
+      chinese ? `🛠 ${count} 次工具调用` : `🛠 ${count} tool call${count === 1 ? '' : 's'}`,
+    ];
+
+    if (names.length) parts.push(names.join(' · '));
+    if (lineCount > 0) parts.push(chinese ? `${lineCount} 行` : `${lineCount} lines`);
+
+    return parts.join(' · ');
+  }
+
+  function ensureToolSummaryButton(group) {
+    const record = toolRecordFor(group);
+    if (record.summaryButton?.isConnected) return record.summaryButton;
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cgp-tool-summary';
+    button.setAttribute('data-cgp-owned', '1');
+
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const expanded = group.getAttribute('data-cgp-tool-collapsed') !== '1';
+      record.manualExpanded = !expanded;
+      group.setAttribute('data-cgp-tool-collapsed', expanded ? '1' : '0');
+      button.textContent = expanded
+        ? toolSummary(group)
+        : `${toolSummary(group)} · ${/zh/i.test(document.documentElement.lang || '') ? '收起' : 'collapse'}`;
+    }, true);
+
+    try {
+      group.prepend(button);
+    } catch (_) {
+      group.appendChild(button);
+    }
+
+    record.summaryButton = button;
+    return button;
+  }
+
+  function optimizeToolGroups(turns) {
+    let groups = 0;
+    let collapsed = 0;
+    const seen = new Set();
+
+    for (const turn of turns) {
+      if (!(turn instanceof HTMLElement)) continue;
+
+      for (const group of findToolGroups(turn)) {
+        if (!(group instanceof HTMLElement) || seen.has(group)) continue;
+        seen.add(group);
+        state.toolGroups.add(group);
+        groups += 1;
+
+        group.setAttribute('data-cgp-tool-group', '1');
+
+        const active = toolGroupNeedsAttention(group);
+        group.setAttribute('data-cgp-tool-active', active ? '1' : '0');
+
+        const button = ensureToolSummaryButton(group);
+        button.textContent = toolSummary(group);
+
+        const record = toolRecordFor(group);
+        const toolMode = config.toolMode === 'full' ? 'full' :
+          (config.toolMode === 'auto' ? 'auto' : 'minimal');
+
+        let shouldCollapse = false;
+        if (!active && !record.manualExpanded) {
+          if (toolMode === 'minimal') {
+            shouldCollapse = true;
+          } else if (toolMode === 'auto') {
+            shouldCollapse = viewportDistance(group) > 0.4 || toolActionNodes(group).length > 1;
+          }
+        }
+
+        if (toolMode === 'full' || active || record.manualExpanded) {
+          group.setAttribute('data-cgp-tool-collapsed', '0');
+        } else if (shouldCollapse) {
+          group.setAttribute('data-cgp-tool-collapsed', '1');
+          collapsed += 1;
+        }
+      }
+    }
+
+    for (const group of Array.from(state.toolGroups)) {
+      if (!group.isConnected) {
+        state.toolGroups.delete(group);
+        continue;
+      }
+      if (!seen.has(group) && group.getAttribute('data-cgp-tool-active') !== '1') {
+        group.removeAttribute('data-cgp-tool-group');
+        group.removeAttribute('data-cgp-tool-collapsed');
+        group.removeAttribute('data-cgp-tool-active');
+        group.querySelector(':scope > .cgp-tool-summary')?.remove();
+        state.toolGroups.delete(group);
+      }
+    }
+
+    state.lastToolCounts = { groups, collapsed };
+    return state.lastToolCounts;
+  }
+
+  function restoreToolGroups() {
+    for (const group of Array.from(state.toolGroups)) {
+      if (!(group instanceof HTMLElement) || !group.isConnected) continue;
+      group.removeAttribute('data-cgp-tool-group');
+      group.removeAttribute('data-cgp-tool-collapsed');
+      group.removeAttribute('data-cgp-tool-active');
+      group.querySelector(':scope > .cgp-tool-summary')?.remove();
+    }
+    state.toolGroups.clear();
+    state.lastToolCounts = { groups: 0, collapsed: 0 };
   }
 
   function resolveMode(turnCount) {
@@ -450,6 +700,7 @@
       }
     }
 
+    optimizeToolGroups(turns);
     state.lastCounts = { hot, warm, cold, packed };
   }
 
@@ -533,6 +784,8 @@
       warm: counts.warm,
       cold: counts.cold,
       packed: counts.packed,
+      toolGroups: state.lastToolCounts.groups,
+      toolCollapsed: state.lastToolCounts.collapsed,
       domNodes: document.getElementsByTagName('*').length,
       longTaskMs: Math.round(state.longTaskMs),
       streaming: isStreaming(),
@@ -550,6 +803,27 @@
 
   function setKeepRecent(value) {
     state.keepRecent = clamp(Number(value), 8, 40);
+    scheduleRefresh(0);
+  }
+
+  function setToolMode(value) {
+    const allowed = new Set(['full', 'auto', 'minimal']);
+    config.toolMode = allowed.has(String(value)) ? String(value) : 'minimal';
+
+    if (config.toolMode === 'full') {
+      for (const group of Array.from(state.toolGroups)) {
+        if (!(group instanceof HTMLElement) || !group.isConnected) continue;
+        group.setAttribute('data-cgp-tool-collapsed', '0');
+        const record = toolRecordFor(group);
+        record.manualExpanded = true;
+      }
+    } else {
+      for (const group of Array.from(state.toolGroups)) {
+        const record = toolRecordFor(group);
+        record.manualExpanded = false;
+      }
+    }
+
     scheduleRefresh(0);
   }
 
@@ -587,6 +861,8 @@
       }
     }
 
+    restoreToolGroups();
+
     ROOT_CLASSES.forEach((name) => document.documentElement?.classList.remove(name));
     document.getElementById(STYLE_ID)?.remove();
   }
@@ -595,6 +871,7 @@
     version: ENGINE_VERSION,
     setMode,
     setKeepRecent,
+    setToolMode,
     onMemoryWarning,
     refresh: () => scheduleRefresh(0),
     getState: () => ({
@@ -604,6 +881,8 @@
       keepRecent: state.keepRecent,
       memoryPressure: state.memoryPressure,
       turns: state.turns.length,
+      toolMode: config.toolMode,
+      toolCounts: state.lastToolCounts,
       counts: state.lastCounts || {},
     }),
     destroy,
