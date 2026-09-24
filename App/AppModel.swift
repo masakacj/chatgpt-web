@@ -34,14 +34,15 @@ final class AppModel: ObservableObject {
         self.optimizationMode = savedMode
 
         let savedKeep = UserDefaults.standard.integer(forKey: "keepRecentTurns")
-        self.keepRecentTurns = savedKeep == 0 ? 18 : min(max(savedKeep, 8), 40)
+        let initialKeepRecentTurns = savedKeep == 0 ? 18 : min(max(savedKeep, 8), 40)
+        self.keepRecentTurns = initialKeepRecentTurns
 
         self.web = WebViewStore(
             performanceScript: scripts.bestAvailableScript(),
             engineVersion: scripts.currentVersion,
             remoteConfig: scripts.currentConfig,
             mode: savedMode,
-            keepRecentTurns: self.keepRecentTurns
+            keepRecentTurns: initialKeepRecentTurns
         )
 
         scripts.onInstalledUpdate = { [weak self] in

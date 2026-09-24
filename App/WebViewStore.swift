@@ -70,10 +70,6 @@ final class WebViewStore: NSObject, ObservableObject {
         loadHome()
     }
 
-    deinit {
-        userContentController.removeScriptMessageHandler(forName: "perf")
-    }
-
     func loadHome() {
         webView.load(URLRequest(url: AppConfig.homeURL))
     }
@@ -250,7 +246,7 @@ final class WebViewStore: NSObject, ObservableObject {
 }
 
 extension WebViewStore: WKScriptMessageHandler {
-    nonisolated func userContentController(
+    func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {

@@ -6,6 +6,8 @@
   "scripts": {
     "validate:remote": "node scripts/validate-remote.mjs",
     "sync:github": "node scripts/github-sync.mjs",
-    "release:tag": "node scripts/github-sync.mjs --tag"
+    "release:tag": "node scripts/github-sync.mjs --tag",
+    "status:github": "node scripts/github-status.mjs",
+    "log:github": "node scripts/github-job-log.mjs"
   }
 }
