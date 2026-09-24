@@ -1,0 +1,63 @@
+name: Safari Userscript
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate
+        run: npm run check
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+          cp safari/chatgpt-safari.user.js dist/ChatGPT-Safari-Lite.user.js
+          (
+            cd dist
+            sha256sum ChatGPT-Safari-Lite.user.js > ChatGPT-Safari-Lite.user.js.sha256
+            zip -q ChatGPT-Safari-Lite.zip ChatGPT-Safari-Lite.user.js
+            sha256sum ChatGPT-Safari-Lite.zip > ChatGPT-Safari-Lite.zip.sha256
+          )
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatGPT-Safari-Lite
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "ChatGPT Safari Lite $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
