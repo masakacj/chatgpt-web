@@ -5,84 +5,90 @@ struct ContentView: View {
     @State private var showingSettings = false
 
     var body: some View {
-        ZStack {
-            ChatGPTWebView(store: model.web)
-                .ignoresSafeArea(edges: .bottom)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            PerfToolbar(
-                web: model.web,
-                mode: model.optimizationMode,
-                openSettings: { showingSettings = true }
-            )
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView(
-                model: model,
-                scripts: model.scripts,
-                updates: model.updates,
-                web: model.web
-            )
-        }
+        ChatGPTWebView(store: model.web)
+            .ignoresSafeArea(edges: .bottom)
+            .overlay(alignment: .topTrailing) {
+                FloatingControlButton(
+                    web: model.web,
+                    mode: model.optimizationMode,
+                    openSettings: { showingSettings = true }
+                )
+                .padding(.top, 8)
+                .padding(.trailing, 10)
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView(
+                    model: model,
+                    scripts: model.scripts,
+                    updates: model.updates,
+                    web: model.web
+                )
+            }
     }
 }
 
-private struct PerfToolbar: View {
+private struct FloatingControlButton: View {
     @ObservedObject var web: WebViewStore
     let mode: OptimizationMode
     let openSettings: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
+        Menu {
+            Section {
+                Label(statusText, systemImage: web.metrics.streaming ? "waveform" : "bolt.fill")
+                    .foregroundStyle(.secondary)
+            }
+
             Button(action: web.goBack) {
-                Image(systemName: "chevron.left")
+                Label("返回", systemImage: "chevron.left")
             }
             .disabled(!web.webView.canGoBack)
 
             Button(action: web.goForward) {
-                Image(systemName: "chevron.right")
+                Label("前进", systemImage: "chevron.right")
             }
             .disabled(!web.webView.canGoForward)
 
             Button(action: web.reload) {
-                Image(systemName: "arrow.clockwise")
+                Label("刷新", systemImage: "arrow.clockwise")
             }
 
             Divider()
-                .frame(height: 20)
-
-            HStack(spacing: 5) {
-                Image(systemName: web.metrics.streaming ? "waveform" : "bolt.fill")
-                Text(statusText)
-                    .font(.caption.monospacedDigit())
-                    .lineLimit(1)
-            }
-            .foregroundStyle(.secondary)
-
-            Spacer(minLength: 4)
-
-            if web.isLoading {
-                ProgressView()
-                    .controlSize(.small)
-            }
 
             Button(action: openSettings) {
-                Image(systemName: "gearshape.fill")
+                Label("设置", systemImage: "gearshape")
             }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: 38, height: 38)
+                    .overlay {
+                        Circle()
+                            .stroke(.primary.opacity(0.10), lineWidth: 0.5)
+                    }
+                    .shadow(radius: 4, y: 1)
+
+                if web.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: web.metrics.streaming ? "waveform" : "bolt.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary.opacity(0.82))
+                }
+            }
+            .contentShape(Circle())
+            .accessibilityLabel("ChatGPT Web 控制")
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 14)
-        .frame(height: 42)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Divider()
-        }
     }
 
     private var statusText: String {
         if web.metrics.turns == 0 {
-            return mode.title
+            return "性能：\(mode.title)"
         }
+
         return "\(web.metrics.effectiveMode) · \(web.metrics.turns)轮 · C\(web.metrics.cold)"
     }
 }
