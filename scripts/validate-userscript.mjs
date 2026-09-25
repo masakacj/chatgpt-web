@@ -248,6 +248,21 @@ requireText(
 );
 requireText(
   gesture,
+  'function findSidebarDrawer()',
+  'robust sidebar drawer detector'
+);
+requireText(
+  gesture,
+  'function dispatchEscape()',
+  'escape close fallback'
+);
+requireText(
+  gesture,
+  'function clickSidebarBackdrop()',
+  'backdrop close fallback'
+);
+requireText(
+  gesture,
   "window.addEventListener('touchstart'",
   'window-capture touchstart listener'
 );
@@ -275,6 +290,11 @@ requireText(
   gesture,
   'event.stopImmediatePropagation();',
   'ChatGPT gesture suppression'
+);
+requireText(
+  gesture,
+  "} else if (rightEdgeClose) {\n      closeSidebar();",
+  'unconditional right-edge close attempt'
 );
 requireText(
   gesture,
