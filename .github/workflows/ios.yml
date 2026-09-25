@@ -1,0 +1,108 @@
+name: iOS IPA
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate unified userscript
+        run: npm run check
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned device app
+        run: |
+          set -euo pipefail
+          rm -rf DerivedData dist
+          xcodebuild \
+            -project ChatGPTWeb.xcodeproj \
+            -scheme ChatGPTWeb \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$PWD/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -d "$APP"
+
+          VERSION="$(node -p "require('./package.json').version")"
+          BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
+
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+
+          IPA="ChatGPT-Web-Unified-$VERSION-$BUILD-unsigned.ipa"
+          (
+            cd dist
+            zip -qry "$IPA" Payload
+            rm -rf Payload
+            shasum -a 256 "$IPA" > "$IPA.sha256"
+          )
+
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatGPT-Web-Unified-IPA
+          path: |
+            dist/*.ipa
+            dist/*.sha256
+          if-no-files-found: error
+
+      - name: Attach IPA to version release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="v$VERSION"
+          fi
+
+          for i in {1..18}; do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" "dist/$IPA" "dist/$IPA.sha256" --clobber
+              exit 0
+            fi
+            sleep 5
+          done
+
+          gh release create "$TAG" "dist/$IPA" "dist/$IPA.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "ChatGPT Web Unified $TAG" \
+            --generate-notes
