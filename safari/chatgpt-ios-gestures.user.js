@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.2
+// @version      0.1.3
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.2';
+  const VERSION = '0.1.3';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -26,7 +26,6 @@
   }
 
   const CONFIG = Object.freeze({
-    gestureRegionMaxRatio: 0.98,
     triggerPx: 18,
     axisRatio: 0.90,
     maxDurationMs: 1500,
@@ -179,18 +178,15 @@
     if (state.destroyed || event.touches?.length !== 1) return;
 
     const touch = event.touches[0];
-    const maxX = window.innerWidth * CONFIG.gestureRegionMaxRatio;
 
-    state.gesture = touch.clientX <= maxX
-      ? {
-          x: touch.clientX,
-          y: touch.clientY,
-          at: performance.now(),
-          open: isSidebarOpen(),
-          claimed: false,
-          fired: false,
-        }
-      : null;
+    state.gesture = {
+      x: touch.clientX,
+      y: touch.clientY,
+      at: performance.now(),
+      open: isSidebarOpen(),
+      claimed: false,
+      fired: false,
+    };
   }
 
   function move(event) {
@@ -243,19 +239,19 @@
   }
 
   function install() {
-    document.addEventListener('touchstart', start, {
+    window.addEventListener('touchstart', start, {
       passive: true,
       capture: true,
     });
-    document.addEventListener('touchmove', move, {
+    window.addEventListener('touchmove', move, {
       passive: false,
       capture: true,
     });
-    document.addEventListener('touchend', end, {
+    window.addEventListener('touchend', end, {
       passive: true,
       capture: true,
     });
-    document.addEventListener('touchcancel', end, {
+    window.addEventListener('touchcancel', end, {
       passive: true,
       capture: true,
     });
@@ -265,10 +261,10 @@
     if (state.destroyed) return;
     state.destroyed = true;
 
-    document.removeEventListener('touchstart', start, true);
-    document.removeEventListener('touchmove', move, true);
-    document.removeEventListener('touchend', end, true);
-    document.removeEventListener('touchcancel', end, true);
+    window.removeEventListener('touchstart', start, true);
+    window.removeEventListener('touchmove', move, true);
+    window.removeEventListener('touchend', end, true);
+    window.removeEventListener('touchcancel', end, true);
 
     state.gesture = null;
 
