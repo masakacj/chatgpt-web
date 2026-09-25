@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.3
+// @version      0.1.4
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.3';
+  const VERSION = '0.1.4';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -26,6 +26,7 @@
   }
 
   const CONFIG = Object.freeze({
+    edgeStartPx: 96,
     triggerPx: 18,
     axisRatio: 0.90,
     maxDurationMs: 1500,
@@ -178,15 +179,26 @@
     if (state.destroyed || event.touches?.length !== 1) return;
 
     const touch = event.touches[0];
+    const width = window.innerWidth;
 
-    state.gesture = {
-      x: touch.clientX,
-      y: touch.clientY,
-      at: performance.now(),
-      open: isSidebarOpen(),
-      claimed: false,
-      fired: false,
-    };
+    const edge =
+      touch.clientX <= CONFIG.edgeStartPx
+        ? 'left'
+        : touch.clientX >= width - CONFIG.edgeStartPx
+          ? 'right'
+          : null;
+
+    state.gesture = edge
+      ? {
+          x: touch.clientX,
+          y: touch.clientY,
+          at: performance.now(),
+          edge,
+          open: isSidebarOpen(),
+          claimed: false,
+          fired: false,
+        }
+      : null;
   }
 
   function move(event) {
@@ -219,18 +231,28 @@
 
     if (gesture.fired) return;
 
-    const shouldClose =
-      gesture.open && dx >= CONFIG.triggerPx;
+    const leftEdgeOpen =
+      gesture.edge === 'left' &&
+      dx >= CONFIG.triggerPx;
 
-    const shouldOpen =
-      !gesture.open && dx <= -CONFIG.triggerPx;
+    const rightEdgeClose =
+      gesture.edge === 'right' &&
+      dx <= -CONFIG.triggerPx;
+
+    if (!leftEdgeOpen && !rightEdgeClose) {
+      return;
+    }
 
     gesture.fired = true;
 
-    if (shouldClose) {
-      closeSidebar();
-    } else if (shouldOpen) {
-      openSidebar();
+    if (leftEdgeOpen) {
+      if (!gesture.open) {
+        openSidebar();
+      }
+    } else if (rightEdgeClose) {
+      if (gesture.open) {
+        closeSidebar();
+      }
     }
   }
 
