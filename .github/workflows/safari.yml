@@ -1,4 +1,4 @@
-name: Safari Userscript
+name: Unified ChatGPT Userscript
 
 on:
   push:
@@ -33,18 +33,18 @@ jobs:
           set -euo pipefail
           rm -rf dist
           mkdir -p dist
-          cp safari/chatgpt-safari.user.js dist/ChatGPT-Safari-Lite.user.js
+          cp safari/chatgpt-safari.user.js dist/ChatGPT-Web-Unified.user.js
           (
             cd dist
-            sha256sum ChatGPT-Safari-Lite.user.js > ChatGPT-Safari-Lite.user.js.sha256
-            zip -q ChatGPT-Safari-Lite.zip ChatGPT-Safari-Lite.user.js
-            sha256sum ChatGPT-Safari-Lite.zip > ChatGPT-Safari-Lite.zip.sha256
+            sha256sum ChatGPT-Web-Unified.user.js > ChatGPT-Web-Unified.user.js.sha256
+            zip -q ChatGPT-Web-Unified.zip ChatGPT-Web-Unified.user.js
+            sha256sum ChatGPT-Web-Unified.zip > ChatGPT-Web-Unified.zip.sha256
           )
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ChatGPT-Safari-Lite
+          name: ChatGPT-Web-Unified
           path: dist/*
           if-no-files-found: error
 
@@ -64,11 +64,11 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
             gh release edit "$TAG" \
-              --title "ChatGPT Safari Lite $TAG" \
+              --title "ChatGPT Web Unified $TAG" \
               --target "$GITHUB_SHA"
           else
             gh release create "$TAG" dist/* \
               --target "$GITHUB_SHA" \
-              --title "ChatGPT Safari Lite $TAG" \
+              --title "ChatGPT Web Unified $TAG" \
               --generate-notes
           fi
