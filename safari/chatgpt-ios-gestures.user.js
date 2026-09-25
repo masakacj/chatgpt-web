@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.6
+// @version      0.1.7
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.6';
+  const VERSION = '0.1.7';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -140,7 +140,7 @@
     if (!(node instanceof HTMLElement) || !visible(node)) return false;
 
     const range = node.scrollHeight - node.clientHeight;
-    if (range < 24 || node.clientHeight < 72) return false;
+    if (range < 2 || node.clientHeight < 24) return false;
 
     const style = getComputedStyle(node);
     const overflowY = String(style.overflowY || '');
@@ -150,75 +150,128 @@
       node.matches?.(
         '[data-radix-scroll-area-viewport],' +
         '[class*="overflow-y-auto"],' +
-        '[class*="overflow-auto"]'
+        '[class*="overflow-auto"],' +
+        '[class*="scroll"]'
       ) ||
-      range >= 120
+      range >= 80
     );
   }
 
-  function findSidebarScrollContainer(target = null) {
-    const drawer = findSidebarDrawer();
-    if (!(drawer instanceof HTMLElement)) return null;
+  function canScrollBy(node, delta) {
+    if (!(node instanceof HTMLElement) || !isScrollable(node)) return false;
 
-    let node = target instanceof HTMLElement
-      ? target
-      : target?.parentElement;
+    const max = Math.max(0, node.scrollHeight - node.clientHeight);
+    if (max <= 0) return false;
 
-    while (
-      node instanceof HTMLElement &&
-      drawer.contains(node)
-    ) {
-      if (isScrollable(node)) {
-        return node;
-      }
-      if (node === drawer) break;
-      node = node.parentElement;
+    if (delta > 0) {
+      return node.scrollTop < max - 1;
     }
 
-    const candidates = [
-      drawer,
-      ...drawer.querySelectorAll([
-        '[data-radix-scroll-area-viewport]',
-        '[class*="overflow-y-auto"]',
-        '[class*="overflow-auto"]',
-        '[style*="overflow-y"]',
-        'nav',
-        'section',
-        'main',
-        'div',
-      ].join(',')),
+    if (delta < 0) {
+      return node.scrollTop > 1;
+    }
+
+    return true;
+  }
+
+  function uniquePush(list, node) {
+    if (!(node instanceof HTMLElement)) return;
+    if (!list.includes(node)) list.push(node);
+  }
+
+  function ancestorsOf(node) {
+    const result = [];
+    let current = node instanceof HTMLElement
+      ? node
+      : node?.parentElement;
+
+    while (current instanceof HTMLElement) {
+      uniquePush(result, current);
+      current = current.parentElement;
+    }
+
+    return result;
+  }
+
+  function pointElements(point) {
+    if (!point) return [];
+
+    try {
+      return document.elementsFromPoint(point.x, point.y)
+        .filter((node) => node instanceof HTMLElement);
+    } catch (_) {
+      const single = document.elementFromPoint(point.x, point.y);
+      return single instanceof HTMLElement ? [single] : [];
+    }
+  }
+
+  function globalScrollCandidates(event, point) {
+    const candidates = [];
+
+    const touchTargets = Array.from(event.touches || [])
+      .map((touch) => touch.target)
+      .filter((node) => node instanceof HTMLElement);
+
+    for (const node of [
+      ...pointElements(point),
+      ...touchTargets,
+    ]) {
+      for (const ancestor of ancestorsOf(node)) {
+        if (isScrollable(ancestor)) {
+          uniquePush(candidates, ancestor);
+        }
+      }
+    }
+
+    const targeted = [
+      '[data-radix-scroll-area-viewport]',
+      '[class*="overflow-y-auto"]',
+      '[class*="overflow-auto"]',
+      '[class*="scroll"]',
+      '[style*="overflow-y"]',
+      'aside',
+      'nav',
+      'main',
+      'section',
     ];
 
-    let best = null;
-    let bestScore = -1;
+    for (const node of document.querySelectorAll(targeted.join(','))) {
+      if (!(node instanceof HTMLElement) || !isScrollable(node)) continue;
 
-    for (const candidate of candidates) {
-      if (!(candidate instanceof HTMLElement) || !isScrollable(candidate)) {
-        continue;
-      }
-
-      const range = candidate.scrollHeight - candidate.clientHeight;
-      const style = getComputedStyle(candidate);
-      const explicitScrollable =
-        /(auto|scroll|overlay)/i.test(String(style.overflowY || '')) ||
-        candidate.matches?.(
-          '[data-radix-scroll-area-viewport],' +
-          '[class*="overflow-y-auto"],' +
-          '[class*="overflow-auto"]'
-        );
-
-      const score =
-        (explicitScrollable ? 100000 : 0) +
-        range +
-        Math.min(candidate.clientHeight, 1200);
-
-      if (score > bestScore) {
-        best = candidate;
-        bestScore = score;
+      const rect = node.getBoundingClientRect();
+      if (
+        point &&
+        point.x >= rect.left &&
+        point.x <= rect.right &&
+        point.y >= rect.top &&
+        point.y <= rect.bottom
+      ) {
+        uniquePush(candidates, node);
       }
     }
 
-    return best;
+    const root = document.scrollingElement;
+
+    if (
+      root instanceof HTMLElement &&
+      root.scrollHeight - root.clientHeight > 2
+    ) {
+      uniquePush(candidates, root);
+    }
+
+    return candidates;
+  }
+
+  function pickScrollContainer(event, point, delta) {
+    const candidates = globalScrollCandidates(event, point);
+
+    for (const node of candidates) {
+      if (canScrollBy(node, delta)) {
+        return node;
+      }
+    }
+
+    return candidates.find(isScrollable) || null;
   }
 
   function touchCenter(touches) {
@@ -234,36 +287,22 @@
   }
 
   function beginTwoFingerScroll(event) {
-    if (event.touches?.length !== 2 || !isSidebarOpen()) {
+    if (event.touches?.length !== 2) {
       return false;
     }
 
     const point = touchCenter(event.touches);
-    const target =
-      event.touches[0]?.target instanceof HTMLElement
-        ? event.touches[0].target
-        : event.target;
-
-    const scroller = findSidebarScrollContainer(target);
-
-    if (!point || !(scroller instanceof HTMLElement)) {
-      return false;
-    }
+    if (!point) return false;
 
     state.gesture = null;
     state.twoFingerScroll = {
-      scroller,
       startX: point.x,
       startY: point.y,
       lastX: point.x,
       lastY: point.y,
+      scroller: null,
       claimed: false,
     };
-
-    if (event.cancelable) {
-      event.preventDefault();
-    }
-    event.stopImmediatePropagation();
 
     return true;
   }
@@ -292,17 +331,53 @@
       return true;
     }
 
-    scroll.claimed = true;
+    const deltaY = point.y - scroll.lastY;
+    const scrollDelta =
+      -deltaY * CONFIG.twoFingerScrollMultiplier;
+
+    if (!scroll.claimed) {
+      scroll.claimed = true;
+    }
 
     if (event.cancelable) {
       event.preventDefault();
     }
     event.stopImmediatePropagation();
 
-    const deltaY = point.y - scroll.lastY;
+    if (
+      !(scroll.scroller instanceof HTMLElement) ||
+      !canScrollBy(scroll.scroller, scrollDelta)
+    ) {
+      scroll.scroller = pickScrollContainer(
+        event,
+        point,
+        scrollDelta
+      );
+    }
 
-    scroll.scroller.scrollTop -=
-      deltaY * CONFIG.twoFingerScrollMultiplier;
+    if (scroll.scroller instanceof HTMLElement) {
+      const before = scroll.scroller.scrollTop;
+      scroll.scroller.scrollTop += scrollDelta;
+
+      if (
+        Math.abs(scroll.scroller.scrollTop - before) < 0.5 &&
+        Math.abs(scrollDelta) > 0.5
+      ) {
+        const next = pickScrollContainer(
+          event,
+          point,
+          scrollDelta
+        );
+
+        if (
+          next instanceof HTMLElement &&
+          next !== scroll.scroller
+        ) {
+          scroll.scroller = next;
+          scroll.scroller.scrollTop += scrollDelta;
+        }
+      }
+    }
 
     scroll.lastX = point.x;
     scroll.lastY = point.y;
@@ -434,12 +509,14 @@
     if (state.destroyed) return;
 
     if (event.touches?.length === 2) {
+      state.gesture = null;
       beginTwoFingerScroll(event);
       return;
     }
 
     if (event.touches?.length !== 1) {
       state.gesture = null;
+      state.twoFingerScroll = null;
       return;
     }
 
