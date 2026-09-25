@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.4
+// @version      0.1.5
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.4';
+  const VERSION = '0.1.5';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -103,6 +103,35 @@
     return false;
   }
 
+  function findSidebarDrawer() {
+    const selectors = [
+      '[data-testid="sidebar"]',
+      '[data-testid*="sidebar"]',
+      'aside',
+      'nav[aria-label*="Chat"]',
+      'nav[aria-label*="聊天"]',
+    ];
+
+    for (const selector of selectors) {
+      for (const node of document.querySelectorAll(selector)) {
+        if (!(node instanceof HTMLElement) || !visible(node)) continue;
+
+        const rect = node.getBoundingClientRect();
+        const tallEnough = rect.height >= window.innerHeight * 0.55;
+        const drawerWidth =
+          rect.width >= 180 &&
+          rect.width <= Math.min(520, window.innerWidth * 0.96);
+        const leftAnchored = rect.left <= 24 && rect.right > 120;
+
+        if (tallEnough && drawerWidth && leftAnchored) {
+          return node;
+        }
+      }
+    }
+
+    return null;
+  }
+
   function isSidebarOpen() {
     const control = document.querySelector(
       '[data-testid="sidebar-button"][aria-expanded="true"],' +
@@ -117,29 +146,64 @@
 
     if (visible(control)) return true;
 
-    const candidates = [
-      'aside nav',
-      '[data-testid*="sidebar"] nav',
-      'nav[aria-label*="Chat"]',
-      'nav[aria-label*="聊天"]',
+    return Boolean(findSidebarDrawer());
+  }
+
+  function dispatchEscape() {
+    const init = {
+      key: 'Escape',
+      code: 'Escape',
+      keyCode: 27,
+      which: 27,
+      bubbles: true,
+      cancelable: true,
+    };
+
+    for (const target of [
+      document.activeElement,
+      document,
+      window,
+    ]) {
+      try {
+        target?.dispatchEvent?.(
+          new KeyboardEvent('keydown', init)
+        );
+        target?.dispatchEvent?.(
+          new KeyboardEvent('keyup', init)
+        );
+      } catch (_) {}
+    }
+  }
+
+  function clickSidebarBackdrop() {
+    const y = Math.max(
+      80,
+      Math.min(window.innerHeight - 80, window.innerHeight * 0.5)
+    );
+
+    const points = [
+      [window.innerWidth - 4, y],
+      [window.innerWidth - 24, y],
+      [window.innerWidth * 0.78, y],
     ];
 
-    for (const selector of candidates) {
-      const nav = document.querySelector(selector);
-      if (!(nav instanceof HTMLElement)) continue;
+    for (const [x, py] of points) {
+      const node = document.elementFromPoint(x, py);
+      if (!(node instanceof HTMLElement)) continue;
 
-      const rect = nav.getBoundingClientRect();
-      if (rect.width > 140 && rect.right > 40) {
+      const drawer = findSidebarDrawer();
+      if (drawer?.contains(node)) continue;
+
+      try {
+        node.click();
         return true;
-      }
+      } catch (_) {}
     }
 
     return false;
   }
 
   function closeSidebar() {
-    if (!isSidebarOpen()) return true;
-
     if (clickFirst([
       '[data-testid="close-sidebar-button"]',
       '[data-testid="sidebar-button"][aria-expanded="true"]',
@@ -172,7 +236,15 @@
       }
     }
 
-    return false;
+    dispatchEscape();
+
+    window.setTimeout(() => {
+      if (isSidebarOpen()) {
+        clickSidebarBackdrop();
+      }
+    }, 40);
+
+    return true;
   }
 
   function start(event) {
@@ -250,9 +322,7 @@
         openSidebar();
       }
     } else if (rightEdgeClose) {
-      if (gesture.open) {
-        closeSidebar();
-      }
+      closeSidebar();
     }
   }
 
