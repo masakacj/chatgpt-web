@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.0
+// @version      0.1.1
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -26,12 +26,13 @@
   }
 
   const CONFIG = Object.freeze({
-    openStartPx: 96,
-    closeRegionMaxPx: 480,
-    closeRegionRatio: 0.88,
-    triggerPx: 20,
-    axisRatio: 0.95,
-    maxDurationMs: 1400,
+    openRegionMinPx: 72,
+    openRegionMaxRatio: 0.96,
+    closeRegionMaxPx: 520,
+    closeRegionRatio: 0.92,
+    triggerPx: 18,
+    axisRatio: 0.90,
+    maxDurationMs: 1500,
   });
 
   const state = {
@@ -182,14 +183,23 @@
 
     const touch = event.touches[0];
     const open = isSidebarOpen();
+
     const closeStartPx = Math.min(
       CONFIG.closeRegionMaxPx,
-      Math.max(220, window.innerWidth * CONFIG.closeRegionRatio)
+      Math.max(240, window.innerWidth * CONFIG.closeRegionRatio)
+    );
+
+    const openMaxPx = Math.max(
+      CONFIG.openRegionMinPx + 120,
+      window.innerWidth * CONFIG.openRegionMaxRatio
     );
 
     const eligible = open
       ? touch.clientX <= closeStartPx
-      : touch.clientX <= CONFIG.openStartPx;
+      : (
+          touch.clientX >= CONFIG.openRegionMinPx &&
+          touch.clientX <= openMaxPx
+        );
 
     state.gesture = eligible
       ? {
@@ -215,15 +225,23 @@
       return;
     }
 
-    const horizontal =
-      dx >= CONFIG.triggerPx &&
+    const horizontalIntent =
+      Math.abs(dx) >= CONFIG.triggerPx &&
       Math.abs(dx) >= Math.abs(dy) * CONFIG.axisRatio;
 
-    if (!horizontal) return;
+    if (!horizontalIntent) return;
+
+    const shouldClose =
+      gesture.open && dx >= CONFIG.triggerPx;
+
+    const shouldOpen =
+      !gesture.open && dx <= -CONFIG.triggerPx;
+
+    if (!shouldClose && !shouldOpen) return;
 
     gesture.fired = true;
 
-    if (gesture.open) {
+    if (shouldClose) {
       closeSidebar();
     } else {
       openSidebar();
