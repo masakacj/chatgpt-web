@@ -1,6 +1,6 @@
 {
-  "name": "chatgpt-safari-lite",
-  "version": "0.2.2",
+  "name": "chatgpt-web-unified",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
