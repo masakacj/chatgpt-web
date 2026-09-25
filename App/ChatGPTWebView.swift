@@ -29,6 +29,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.allowsInlineMediaPlayback = true
 
         let webView = WKWebView(
             frame: .zero,
@@ -59,6 +60,16 @@ struct ChatGPTWebView: UIViewRepresentable {
         sidebarGesture.maximumNumberOfTouches = 1
         sidebarGesture.cancelsTouchesInView = true
         webView.addGestureRecognizer(sidebarGesture)
+
+        let closeSidebarGesture = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleCloseSidebarPan(_:))
+        )
+        closeSidebarGesture.name = "closeSidebarGesture"
+        closeSidebarGesture.maximumNumberOfTouches = 1
+        closeSidebarGesture.cancelsTouchesInView = false
+        closeSidebarGesture.delegate = context.coordinator
+        webView.addGestureRecognizer(closeSidebarGesture)
 
         var request = URLRequest(
             url: URL(string: "https://chatgpt.com/")!
@@ -135,7 +146,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         NSObject,
         WKNavigationDelegate,
         WKUIDelegate,
-        WKScriptMessageHandler
+        WKScriptMessageHandler,
+        UIGestureRecognizerDelegate
     {
         static let nativeMessageHandler = "chatGPTNative"
 
@@ -144,6 +156,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var activeScript: UnifiedScriptPayload?
         private var checkingUpdate = false
         private var sidebarGestureOpened = false
+        private var sidebarGestureClosed = false
 
         weak var webView: WKWebView?
 
@@ -255,6 +268,107 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             default:
                 break
+            }
+        }
+
+        @objc func handleCloseSidebarPan(
+            _ gesture: UIPanGestureRecognizer
+        ) {
+            guard let webView else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                sidebarGestureClosed = false
+
+            case .changed:
+                guard !sidebarGestureClosed else {
+                    return
+                }
+
+                let translation = gesture.translation(in: webView)
+                let velocity = gesture.velocity(in: webView)
+
+                let horizontalEnough =
+                    translation.x >= 56 &&
+                    translation.x > abs(translation.y) * 1.2
+
+                guard
+                    horizontalEnough,
+                    velocity.x > 0
+                else {
+                    return
+                }
+
+                sidebarGestureClosed = true
+
+                webView.evaluateJavaScript(
+                    """
+                    (() => {
+                      if (!window.ChatGPTWeb?.isSidebarOpen?.()) {
+                        return false;
+                      }
+                      return window.ChatGPTWeb?.closeSidebar?.() ?? false;
+                    })()
+                    """
+                )
+
+            case .ended, .cancelled, .failed:
+                sidebarGestureClosed = false
+
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(
+            _ gestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard
+                gestureRecognizer.name == "closeSidebarGesture",
+                let pan = gestureRecognizer as? UIPanGestureRecognizer,
+                let webView
+            else {
+                return true
+            }
+
+            // Keep the leftmost edge exclusively for the sidebar-open gesture.
+            let location = pan.location(in: webView)
+            if location.x <= 28 {
+                return false
+            }
+
+            let velocity = pan.velocity(in: webView)
+
+            return velocity.x > 0 &&
+                abs(velocity.x) > abs(velocity.y) * 1.2
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+            initiatedByFrame frame: WKFrameInfo,
+            type: WKMediaCaptureType,
+            decisionHandler: @escaping (WKPermissionDecision) -> Void
+        ) {
+            let host = origin.host.lowercased()
+            let trusted =
+                host == "chatgpt.com" ||
+                host.hasSuffix(".chatgpt.com")
+
+            guard trusted else {
+                decisionHandler(.deny)
+                return
+            }
+
+            switch type {
+            case .microphone:
+                decisionHandler(.grant)
+            case .camera, .cameraAndMicrophone:
+                decisionHandler(.prompt)
+            @unknown default:
+                decisionHandler(.prompt)
             }
         }
 
