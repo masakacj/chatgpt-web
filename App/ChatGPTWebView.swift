@@ -213,8 +213,6 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         func startHotUpdate() {
             guard !checkingUpdate else {
-                updateStatus = "checking"
-                gestureUpdateStatus = "checking"
                 updateRuntimeStatus()
                 return
             }
@@ -229,26 +227,16 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
-                var latestScript: UnifiedScriptPayload?
-                var latestGesture: UnifiedScriptPayload?
+                async let sharedResult =
+                    self.fetchSharedUpdateResult()
 
-                var scriptFailed = false
-                var gestureFailed = false
+                async let gestureResult =
+                    self.fetchGestureUpdateResult()
 
-                do {
-                    latestScript =
-                        try await self.scriptStore.fetchLatest()
-                } catch {
-                    scriptFailed = true
-                }
-
-                do {
-                    latestGesture =
-                        try await self.scriptStore
-                            .fetchLatestGestureScript()
-                } catch {
-                    gestureFailed = true
-                }
+                let results = await (
+                    sharedResult,
+                    gestureResult
+                )
 
                 await MainActor.run { [weak self] in
                     guard let self else {
@@ -259,14 +247,12 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                     let scriptChanged =
                         self.applyScriptResult(
-                            latestScript,
-                            failed: scriptFailed
+                            results.0
                         )
 
                     let gestureChanged =
                         self.applyGestureResult(
-                            latestGesture,
-                            failed: gestureFailed
+                            results.1
                         )
 
                     self.installForFutureNavigations()
@@ -291,50 +277,88 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
         }
 
-        private func applyScriptResult(
-            _ latest: UnifiedScriptPayload?,
-            failed: Bool
-        ) -> Bool {
-            guard let latest else {
-                updateStatus =
-                    failed ? "offline" : updateStatus
-                return false
+        private func fetchSharedUpdateResult()
+            async -> Result<UnifiedScriptPayload, Error>
+        {
+            do {
+                return .success(
+                    try await scriptStore.fetchLatest()
+                )
+            } catch {
+                return .failure(error)
+            }
+        }
+
+        private func fetchGestureUpdateResult()
+            async -> Result<UnifiedScriptPayload, Error>
+        {
+            do {
+                return .success(
+                    try await scriptStore
+                        .fetchLatestGestureScript()
+                )
+            } catch {
+                return .failure(error)
+            }
+        }
+
+        private func failureStatus(
+            _ error: Error
+        ) -> String {
+            if let urlError = error as? URLError,
+               urlError.code == .timedOut {
+                return "timeout"
             }
 
-            let changed =
-                activeScript?.version != latest.version ||
-                activeScript?.source != latest.source
+            return "offline"
+        }
 
-            activeScript = latest
-            updateStatus =
-                changed ? "updated" : "latest"
+        private func applyScriptResult(
+            _ result:
+                Result<UnifiedScriptPayload, Error>
+        ) -> Bool {
+            switch result {
+            case .success(let latest):
+                let changed =
+                    activeScript?.version != latest.version ||
+                    activeScript?.source != latest.source
 
-            return changed
+                activeScript = latest
+                updateStatus =
+                    changed ? "updated" : "latest"
+
+                return changed
+
+            case .failure(let error):
+                updateStatus =
+                    failureStatus(error)
+                return false
+            }
         }
 
         private func applyGestureResult(
-            _ latest: UnifiedScriptPayload?,
-            failed: Bool
+            _ result:
+                Result<UnifiedScriptPayload, Error>
         ) -> Bool {
-            guard let latest else {
+            switch result {
+            case .success(let latest):
+                let changed =
+                    activeGestureScript?.version !=
+                        latest.version ||
+                    activeGestureScript?.source !=
+                        latest.source
+
+                activeGestureScript = latest
                 gestureUpdateStatus =
-                    failed
-                    ? "offline"
-                    : gestureUpdateStatus
+                    changed ? "updated" : "latest"
+
+                return changed
+
+            case .failure(let error):
+                gestureUpdateStatus =
+                    failureStatus(error)
                 return false
             }
-
-            let changed =
-                activeGestureScript?.version !=
-                    latest.version ||
-                activeGestureScript?.source !=
-                    latest.source
-
-            activeGestureScript = latest
-            gestureUpdateStatus =
-                changed ? "updated" : "latest"
-
-            return changed
         }
 
         func userContentController(
