@@ -76,6 +76,12 @@ jobs:
           plutil -p "$APP/Info.plist" | grep -q "CFBundleIcons"
           plutil -p "$APP/Info.plist" | grep -q "AppIcon"
 
+      - name: Verify microphone permission
+        run: |
+          set -euo pipefail
+          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          plutil -p "$APP/Info.plist" | grep -q "NSMicrophoneUsageDescription"
+
       - name: Package unsigned IPA
         run: |
           set -euo pipefail
