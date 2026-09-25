@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.0
+// @version      0.3.1
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,12 +14,13 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
   const HOST_ID = 'cgpt-safari-lite-host';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
+  const CONTROL_MIGRATION_KEY = 'cgpt-unified-control-visible-v031';
   const CONVERSATION_STATE_KEY = 'cgpt-safari-conversation-state-v1';
   const STATE_CHANNEL = 'cgpt-safari-conversation-state';
   const SETTLE_MS = 2800;
@@ -48,6 +49,7 @@
     activeRouteSince: Date.now(),
     settlingSince: 0,
     conversationStates: loadConversationStates(),
+    nativeStatus: { ...(window.__CHATGPT_NATIVE__ || {}) },
     channel: null,
     ui: null,
   };
@@ -60,9 +62,13 @@
   function loadSettings() {
     try {
       const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      const shouldRestoreControl = localStorage.getItem(CONTROL_MIGRATION_KEY) !== '1';
+      if (shouldRestoreControl) {
+        localStorage.setItem(CONTROL_MIGRATION_KEY, '1');
+      }
       return {
         enabled: stored.enabled !== false,
-        showControl: stored.showControl !== false,
+        showControl: shouldRestoreControl ? true : stored.showControl !== false,
       };
     } catch (_) {
       return { ...defaults };
@@ -557,7 +563,7 @@
 
     const foot = document.createElement('div');
     foot.className = 'foot';
-    foot.textContent = 'v' + VERSION + ' · PC / iOS 同一脚本';
+    foot.textContent = versionLine();
 
     panel.append(title, status, perfRow, reloadRow, restoreRow, hideRow, foot);
     wrap.append(button, panel);
@@ -592,7 +598,37 @@
       state.ui = null;
     });
 
-    state.ui = { host, button, panel, status, perfSwitch };
+    state.ui = { host, button, panel, status, perfSwitch, foot };
+    updateUI(turnCandidates().length);
+  }
+
+  function updateStatusLabel() {
+    const status = String(state.nativeStatus?.updateStatus || '');
+    switch (status) {
+      case 'checking': return '检查更新中';
+      case 'latest': return '已是最新';
+      case 'updated': return '已热更';
+      case 'cached': return '缓存版';
+      case 'bundled': return '内置版';
+      case 'offline': return '离线 · 使用本地版';
+      case 'error': return '更新检查失败';
+      default: return state.nativeStatus?.hotUpdate ? '热更已启用' : '自动更新';
+    }
+  }
+
+  function versionLine() {
+    const appVersion = state.nativeStatus?.appVersion;
+    if (appVersion) {
+      return '脚本 v' + VERSION + ' · IPA ' + appVersion + ' · ' + updateStatusLabel();
+    }
+    return '脚本 v' + VERSION + ' · PC / iOS 同一脚本';
+  }
+
+  function setNativeStatus(next) {
+    if (!next || typeof next !== 'object') return;
+    state.nativeStatus = { ...state.nativeStatus, ...next };
+    window.__CHATGPT_NATIVE__ = { ...(window.__CHATGPT_NATIVE__ || {}), ...next };
+    if (state.ui?.foot) state.ui.foot.textContent = versionLine();
     updateUI(turnCandidates().length);
   }
 
@@ -615,6 +651,8 @@
       turnCount + ' 轮 · 已优化 ' +
       state.optimizedTurns.size + ' 轮 · ' +
       statusLabel(chatStatus);
+
+    if (ui.foot) ui.foot.textContent = versionLine();
   }
 
   function setupObservers() {
@@ -683,6 +721,7 @@
         ? state.conversationStates[currentConversationId()]?.status || null
         : null,
       conversationStates: { ...state.conversationStates },
+      nativeStatus: { ...state.nativeStatus },
       route: location.pathname + location.search,
     };
   }
@@ -722,6 +761,7 @@
     version: VERSION,
     getState,
     setEnabled,
+    setNativeStatus,
     showControl,
     refresh: () => scheduleRefresh(0),
     destroy,
