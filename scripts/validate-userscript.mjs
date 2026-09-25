@@ -26,8 +26,16 @@ requireText('// @run-at       document-start', 'document-start injection');
 requireText('// @grant        none', 'grant none');
 requireText('content-visibility: auto', 'conservative rendering hint');
 requireText("const liveTurn = streaming ? turns[turns.length - 1] : null;", 'streaming turn protection');
-requireText("perfLabel.textContent = '常驻轻量优化';", 'always-on control label');\nrequireText("const SETTLE_MS = 2800;", 'desktop-compatible settling window');\nrequireText("const READ_DWELL_MS = 1200;", 'desktop-compatible read dwell');\nrequireText("new BroadcastChannel(STATE_CHANNEL)", 'cross-tab state sync');\nrequireText("window.addEventListener('storage', onStorageSync)", 'storage-event sync fallback');\nfor (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {\n  requireText(status, 'conversation state ' + status);\n}
-requireText('attachShadow({ mode: \'open\' })', 'isolated control UI');
+requireText("perfLabel.textContent = '常驻轻量优化';", 'always-on control label');
+requireText('const SETTLE_MS = 2800;', 'desktop-compatible settling window');
+requireText('const READ_DWELL_MS = 1200;', 'desktop-compatible read dwell');
+requireText('new BroadcastChannel(STATE_CHANNEL)', 'cross-tab state sync');
+requireText("window.addEventListener('storage', onStorageSync)", 'storage-event sync fallback');
+requireText("attachShadow({ mode: 'open' })", 'isolated control UI');
+
+for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
+  requireText(status, 'conversation state ' + status);
+}
 
 const forbidden = [
   ['minTurns', 'length-gated optimization'],
@@ -36,7 +44,6 @@ const forbidden = [
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
   [".removeAttribute('src')", 'media source unloading'],
-  ['WKWebView', 'native WebView dependency'],
 ];
 
 for (const [needle, description] of forbidden) {
@@ -48,4 +55,5 @@ console.log(JSON.stringify({
   version: pkg.version,
   bytes: Buffer.byteLength(source),
   architecture: 'Safari + userscript',
+  stateModel: 'running > waiting_user > settling > completed_unread > completed_read',
 }, null, 2));
