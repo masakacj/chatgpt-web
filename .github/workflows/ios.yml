@@ -68,6 +68,15 @@ jobs:
           grep -q "ChatGPT Web Unified" "$SCRIPT"
           grep -q "@version      $VERSION" "$SCRIPT"
 
+      - name: Verify bundled iOS gesture script
+        run: |
+          set -euo pipefail
+          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          GESTURE="$APP/chatgpt-ios-gestures.user.js"
+          test -f "$GESTURE"
+          grep -q "ChatGPT Web iOS Gestures" "$GESTURE"
+          cmp safari/chatgpt-ios-gestures.user.js "$GESTURE"
+
       - name: Verify app icon
         run: |
           set -euo pipefail
