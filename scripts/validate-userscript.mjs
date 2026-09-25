@@ -233,13 +233,13 @@ requireText(
 );
 requireText(
   gesture,
-  "document.addEventListener('touchstart'",
-  'touchstart listener'
+  "window.addEventListener('touchstart'",
+  'window-capture touchstart listener'
 );
 requireText(
   gesture,
-  "document.addEventListener('touchmove'",
-  'touchmove listener'
+  "window.addEventListener('touchmove'",
+  'window-capture touchmove listener'
 );
 requireText(
   gesture,
@@ -255,6 +255,11 @@ requireText(
   gesture,
   'function isSidebarOpen()',
   'sidebar state detector'
+);
+requireText(
+  gesture,
+  'event.stopImmediatePropagation();',
+  'ChatGPT gesture suppression'
 );
 requireText(
   gesture,
