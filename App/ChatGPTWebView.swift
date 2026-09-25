@@ -12,6 +12,11 @@ struct ChatGPTWebView: UIViewRepresentable {
         let controller = WKUserContentController()
         let initialScript = scriptStore.bestLocalScript()
 
+        controller.add(
+            context.coordinator,
+            name: Coordinator.nativeMessageHandler
+        )
+
         installUserScripts(
             on: controller,
             payload: initialScript,
@@ -25,10 +30,17 @@ struct ChatGPTWebView: UIViewRepresentable {
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = WKWebView(
+            frame: .zero,
+            configuration: configuration
+        )
+
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = true
+
+        // Disable WebKit history swipes. Left edge is reserved for Chat sidebar.
+        webView.allowsBackForwardNavigationGestures = false
+
         webView.allowsLinkPreview = true
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
@@ -39,7 +51,18 @@ struct ChatGPTWebView: UIViewRepresentable {
             initialScript: initialScript
         )
 
-        var request = URLRequest(url: URL(string: "https://chatgpt.com/")!)
+        let sidebarGesture = UIScreenEdgePanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleLeftEdgePan(_:))
+        )
+        sidebarGesture.edges = .left
+        sidebarGesture.maximumNumberOfTouches = 1
+        sidebarGesture.cancelsTouchesInView = true
+        webView.addGestureRecognizer(sidebarGesture)
+
+        var request = URLRequest(
+            url: URL(string: "https://chatgpt.com/")!
+        )
         request.cachePolicy = .useProtocolCachePolicy
         webView.load(request)
 
@@ -48,7 +71,19 @@ struct ChatGPTWebView: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(
+        _ uiView: WKWebView,
+        context: Context
+    ) {}
+
+    static func dismantleUIView(
+        _ uiView: WKWebView,
+        coordinator: Coordinator
+    ) {
+        uiView.configuration.userContentController.removeScriptMessageHandler(
+            forName: Coordinator.nativeMessageHandler
+        )
+    }
 
     private func installUserScripts(
         on controller: WKUserContentController,
@@ -71,7 +106,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         )
 
-        guard let payload else { return }
+        guard let payload else {
+            return
+        }
 
         controller.addUserScript(
             WKUserScript(
@@ -94,10 +131,20 @@ struct ChatGPTWebView: UIViewRepresentable {
         )
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator:
+        NSObject,
+        WKNavigationDelegate,
+        WKUIDelegate,
+        WKScriptMessageHandler
+    {
+        static let nativeMessageHandler = "chatGPTNative"
+
         private let scriptStore: UnifiedScriptStore
         private var contentController: WKUserContentController?
         private var activeScript: UnifiedScriptPayload?
+        private var checkingUpdate = false
+        private var sidebarGestureOpened = false
+
         weak var webView: WKWebView?
 
         init(scriptStore: UnifiedScriptStore) {
@@ -115,23 +162,105 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         func startHotUpdate() {
+            guard !checkingUpdate else {
+                updateRuntimeStatus("checking")
+                return
+            }
+
+            checkingUpdate = true
+            updateRuntimeStatus("checking")
+
             Task { [weak self] in
-                guard let self else { return }
+                guard let self else {
+                    return
+                }
 
                 do {
                     let latest = try await self.scriptStore.fetchLatest()
-                    DispatchQueue.main.async { [weak self] in
-                        self?.applyHotUpdate(latest)
+
+                    await MainActor.run { [weak self] in
+                        guard let self else {
+                            return
+                        }
+
+                        self.checkingUpdate = false
+                        self.applyHotUpdate(latest)
                     }
                 } catch {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.updateRuntimeStatus("offline")
+                    await MainActor.run { [weak self] in
+                        guard let self else {
+                            return
+                        }
+
+                        self.checkingUpdate = false
+                        self.updateRuntimeStatus("offline")
                     }
                 }
             }
         }
 
-        private func applyHotUpdate(_ latest: UnifiedScriptPayload) {
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            guard
+                message.name == Self.nativeMessageHandler,
+                let body = message.body as? [String: Any],
+                body["type"] as? String == "check-update"
+            else {
+                return
+            }
+
+            startHotUpdate()
+        }
+
+        @objc func handleLeftEdgePan(
+            _ gesture: UIScreenEdgePanGestureRecognizer
+        ) {
+            guard let webView else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                sidebarGestureOpened = false
+
+            case .changed:
+                guard !sidebarGestureOpened else {
+                    return
+                }
+
+                let translation = gesture.translation(in: webView)
+                let velocity = gesture.velocity(in: webView)
+
+                let horizontalEnough =
+                    translation.x >= 46 &&
+                    translation.x > abs(translation.y) * 1.15
+
+                guard
+                    horizontalEnough,
+                    velocity.x >= 0
+                else {
+                    return
+                }
+
+                sidebarGestureOpened = true
+
+                webView.evaluateJavaScript(
+                    "window.ChatGPTWeb?.openSidebar?.() ?? false"
+                )
+
+            case .ended, .cancelled, .failed:
+                sidebarGestureOpened = false
+
+            default:
+                break
+            }
+        }
+
+        private func applyHotUpdate(
+            _ latest: UnifiedScriptPayload
+        ) {
             let changed =
                 activeScript?.version != latest.version ||
                 activeScript?.source != latest.source
@@ -152,7 +281,9 @@ struct ChatGPTWebView: UIViewRepresentable {
         private func installForFutureNavigations(
             _ payload: UnifiedScriptPayload
         ) {
-            guard let controller = contentController else { return }
+            guard let controller = contentController else {
+                return
+            }
 
             controller.removeAllUserScripts()
 
@@ -181,7 +312,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             _ payload: UnifiedScriptPayload,
             updateStatus: String
         ) {
-            guard let webView else { return }
+            guard let webView else {
+                return
+            }
 
             let bootstrap = scriptStore.nativeBootstrap(
                 scriptVersion: payload.version,
@@ -198,8 +331,12 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
         }
 
-        private func updateRuntimeStatus(_ status: String) {
-            guard let webView else { return }
+        private func updateRuntimeStatus(
+            _ status: String
+        ) {
+            guard let webView else {
+                return
+            }
 
             let version = activeScript?.version ?? "missing"
             let origin = activeScript?.origin ?? "none"
@@ -214,7 +351,12 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         private func ensureScriptIsRunning() {
-            guard let webView, let activeScript else { return }
+            guard
+                let webView,
+                let activeScript
+            else {
+                return
+            }
 
             webView.evaluateJavaScript(
                 "typeof window.ChatGPTWeb === 'object'"
@@ -228,7 +370,8 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                 self.injectIntoCurrentPage(
                     activeScript,
-                    updateStatus: activeScript.origin == "cached"
+                    updateStatus:
+                        activeScript.origin == "cached"
                         ? "cached"
                         : "bundled"
                 )
@@ -254,7 +397,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             return nil
         }
 
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        func webViewWebContentProcessDidTerminate(
+            _ webView: WKWebView
+        ) {
             webView.reload()
         }
 
@@ -264,7 +409,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             withError error: Error
         ) {
             let nsError = error as NSError
-            guard nsError.code != NSURLErrorCancelled else { return }
+            guard nsError.code != NSURLErrorCancelled else {
+                return
+            }
         }
 
         func webView(
@@ -273,11 +420,18 @@ struct ChatGPTWebView: UIViewRepresentable {
             initiatedByFrame frame: WKFrameInfo,
             completionHandler: @escaping () -> Void
         ) {
-            presentAlert(title: nil, message: message, actions: [
-                UIAlertAction(title: "OK", style: .default) { _ in
-                    completionHandler()
-                }
-            ])
+            presentAlert(
+                title: nil,
+                message: message,
+                actions: [
+                    UIAlertAction(
+                        title: "OK",
+                        style: .default
+                    ) { _ in
+                        completionHandler()
+                    }
+                ]
+            )
         }
 
         func webView(
@@ -286,14 +440,24 @@ struct ChatGPTWebView: UIViewRepresentable {
             initiatedByFrame frame: WKFrameInfo,
             completionHandler: @escaping (Bool) -> Void
         ) {
-            presentAlert(title: nil, message: message, actions: [
-                UIAlertAction(title: "Cancel", style: .cancel) { _ in
-                    completionHandler(false)
-                },
-                UIAlertAction(title: "OK", style: .default) { _ in
-                    completionHandler(true)
-                }
-            ])
+            presentAlert(
+                title: nil,
+                message: message,
+                actions: [
+                    UIAlertAction(
+                        title: "Cancel",
+                        style: .cancel
+                    ) { _ in
+                        completionHandler(false)
+                    },
+                    UIAlertAction(
+                        title: "OK",
+                        style: .default
+                    ) { _ in
+                        completionHandler(true)
+                    }
+                ]
+            )
         }
 
         private func presentAlert(
@@ -301,7 +465,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             message: String,
             actions: [UIAlertAction]
         ) {
-            guard let presenter = topViewController() else { return }
+            guard let presenter = topViewController() else {
+                return
+            }
 
             let alert = UIAlertController(
                 title: title,
@@ -310,13 +476,16 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
 
             actions.forEach(alert.addAction)
-            presenter.present(alert, animated: true)
+            presenter.present(
+                alert,
+                animated: true
+            )
         }
 
         private func topViewController() -> UIViewController? {
             guard
                 let scene = UIApplication.shared.connectedScenes
-                    .compactMap({ $0 as? UIWindowScene })
+                    .compactMap { $0 as? UIWindowScene }
                     .first(where: {
                         $0.activationState == .foregroundActive
                     }),
@@ -328,9 +497,11 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             var current = root
+
             while let presented = current.presentedViewController {
                 current = presented
             }
+
             return current
         }
     }
