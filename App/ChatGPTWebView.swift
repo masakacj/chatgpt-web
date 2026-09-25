@@ -99,10 +99,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         private func presentAlert(title: String?, message: String, actions: [UIAlertAction]) {
-            guard let presenter = topViewController() else {
-                actions.first?.handler?(actions.first!)
-                return
-            }
+            guard let presenter = topViewController() else { return }
 
             let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
             actions.forEach(alert.addAction)
