@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.1
+// @version      0.3.2
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.1';
+  const VERSION = '0.3.2';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -26,6 +26,10 @@
   const SETTLE_MS = 2800;
   const READ_DWELL_MS = 1200;
   const STATE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+  const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called)/i;
+  const TOOL_ACTION_RE = /(?:Ran command|Run command|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|运行命令|执行命令|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
+  const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
 
   try {
     window[GLOBAL_KEY]?.destroy?.();
@@ -44,6 +48,9 @@
     refreshTimer: 0,
     statusTimer: 0,
     optimizedTurns: new Set(),
+    toolGroups: new Set(),
+    toolRecords: new WeakMap(),
+    toolCounts: { groups: 0, collapsed: 0 },
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
     activeRouteSince: Date.now(),
@@ -359,6 +366,40 @@
       '  content-visibility: auto !important;',
       '  contain-intrinsic-size: auto 720px !important;',
       '}',
+      '[data-cgpt-tool-group="1"] {',
+      '  content-visibility: auto !important;',
+      '  contain: layout style paint !important;',
+      '  contain-intrinsic-size: auto 42px !important;',
+      '}',
+      '[data-cgpt-tool-collapsed="1"] {',
+      '  display: block !important;',
+      '  min-height: 38px !important;',
+      '  max-height: 42px !important;',
+      '  overflow: hidden !important;',
+      '  contain: strict !important;',
+      '}',
+      '[data-cgpt-tool-collapsed="1"] > * {',
+      '  display: none !important;',
+      '}',
+      '[data-cgpt-tool-collapsed="1"]::before {',
+      '  content: attr(data-cgpt-tool-summary);',
+      '  display: block;',
+      '  box-sizing: border-box;',
+      '  min-height: 38px;',
+      '  padding: 9px 11px;',
+      '  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);',
+      '  border-radius: 10px;',
+      '  opacity: .64;',
+      '  font: 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;',
+      '  white-space: nowrap;',
+      '  overflow: hidden;',
+      '  text-overflow: ellipsis;',
+      '}',
+      '[data-cgpt-tool-collapsed="1"] *,',
+      '[data-cgpt-tool-collapsed="1"]::before {',
+      '  animation: none !important;',
+      '  transition: none !important;',
+      '}',
       'a[data-cgpt-safari-chat-state] { position: relative !important; }',
       'a[data-cgpt-safari-chat-state]::after { content: ""; position: absolute; right: 30px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: none; }',
       'a[data-cgpt-safari-chat-state="running"]::after { background: #34c759; animation: cgpt-safari-pulse 1.15s ease-in-out infinite; }',
@@ -397,6 +438,191 @@
     return [];
   }
 
+  function nodeLabel(node) {
+    return [
+      String(node?.textContent || '').replace(/\s+/g, ' ').trim(),
+      node?.getAttribute?.('aria-label') || '',
+      node?.getAttribute?.('title') || '',
+    ].join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function toolActionNodes(scope) {
+    return Array.from(
+      scope.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
+    ).filter((node) => {
+      const text = nodeLabel(node);
+      return TOOL_ACTION_RE.test(text) && !TOOL_GROUP_RE.test(text);
+    });
+  }
+
+  function findToolGroupContainer(heading, turn) {
+    let node = heading.parentElement;
+
+    for (
+      let depth = 0;
+      node && node !== turn && depth < 7;
+      depth += 1, node = node.parentElement
+    ) {
+      const role = node.getAttribute?.('role');
+      if (
+        node.tagName === 'BUTTON' ||
+        node.tagName === 'SUMMARY' ||
+        role === 'button'
+      ) {
+        continue;
+      }
+
+      if (
+        node.children.length >= 2 ||
+        toolActionNodes(node).length > 0
+      ) {
+        return node;
+      }
+    }
+
+    return null;
+  }
+
+  function findToolGroups(turn) {
+    const headings = Array.from(
+      turn.querySelectorAll(
+        'button,[role="button"],summary,[aria-expanded]'
+      )
+    ).filter((node) => TOOL_GROUP_RE.test(nodeLabel(node)));
+
+    const groups = [];
+
+    for (const heading of headings) {
+      const group = findToolGroupContainer(heading, turn);
+      if (!(group instanceof HTMLElement)) continue;
+      if (
+        groups.some(
+          (existing) =>
+            existing === group ||
+            existing.contains(group)
+        )
+      ) {
+        continue;
+      }
+
+      for (let index = groups.length - 1; index >= 0; index -= 1) {
+        if (group.contains(groups[index])) {
+          groups.splice(index, 1);
+        }
+      }
+
+      groups.push(group);
+    }
+
+    return groups;
+  }
+
+  function toolGroupNeedsAttention(group) {
+    const nodes = Array.from(
+      group.querySelectorAll(
+        'button,[role="button"],summary,[aria-live],[aria-label],[aria-busy="true"],[role="progressbar"]'
+      )
+    );
+
+    return nodes.some((node) => {
+      if (
+        node.matches?.(
+          '[aria-busy="true"],[role="progressbar"],[data-state="loading"],[data-loading="true"]'
+        )
+      ) {
+        return true;
+      }
+      return TOOL_ATTENTION_RE.test(nodeLabel(node));
+    });
+  }
+
+  function toolSummary(group) {
+    let record = state.toolRecords.get(group);
+    if (!record) {
+      record = {};
+      state.toolRecords.set(group, record);
+    }
+
+    if (record.summary) return record.summary;
+
+    const count = Math.max(1, toolActionNodes(group).length);
+    const chinese =
+      (document.documentElement.lang || '')
+        .toLowerCase()
+        .startsWith('zh');
+
+    record.summary = chinese
+      ? '🛠 工具过程 · ' + count + ' 项 · 已折叠'
+      : '🛠 Tool process · ' + count + ' item' +
+        (count === 1 ? '' : 's') + ' · collapsed';
+
+    return record.summary;
+  }
+
+  function optimizeToolGroups(turns, liveTurn) {
+    let groups = 0;
+    let collapsed = 0;
+    const seen = new Set();
+
+    for (const turn of turns) {
+      if (!(turn instanceof HTMLElement)) continue;
+
+      for (const group of findToolGroups(turn)) {
+        if (seen.has(group)) continue;
+        seen.add(group);
+        state.toolGroups.add(group);
+        groups += 1;
+
+        const active =
+          turn === liveTurn ||
+          toolGroupNeedsAttention(group) ||
+          group.matches(':focus-within');
+
+        group.setAttribute('data-cgpt-tool-group', '1');
+
+        if (active) {
+          group.removeAttribute('data-cgpt-tool-collapsed');
+          group.removeAttribute('data-cgpt-tool-summary');
+        } else {
+          group.setAttribute('data-cgpt-tool-collapsed', '1');
+          group.setAttribute(
+            'data-cgpt-tool-summary',
+            toolSummary(group)
+          );
+          collapsed += 1;
+        }
+      }
+    }
+
+    for (const group of Array.from(state.toolGroups)) {
+      if (!group.isConnected) {
+        state.toolGroups.delete(group);
+        continue;
+      }
+
+      if (!seen.has(group)) {
+        group.removeAttribute('data-cgpt-tool-group');
+        group.removeAttribute('data-cgpt-tool-collapsed');
+        group.removeAttribute('data-cgpt-tool-summary');
+        state.toolGroups.delete(group);
+      }
+    }
+
+    state.toolCounts = { groups, collapsed };
+  }
+
+  function restoreToolGroups() {
+    for (const group of Array.from(state.toolGroups)) {
+      if (!(group instanceof HTMLElement)) continue;
+      group.removeAttribute('data-cgpt-tool-group');
+      group.removeAttribute('data-cgpt-tool-collapsed');
+      group.removeAttribute('data-cgpt-tool-summary');
+    }
+
+    state.toolGroups.clear();
+    state.toolCounts = { groups: 0, collapsed: 0 };
+  }
+
   function restoreOptimizedTurns() {
     for (const turn of Array.from(state.optimizedTurns)) {
       if (turn instanceof HTMLElement) {
@@ -411,6 +637,7 @@
 
     if (!state.settings.enabled) {
       restoreOptimizedTurns();
+      restoreToolGroups();
       updateUI(turns.length);
       return;
     }
@@ -440,6 +667,7 @@
     }
 
     state.optimizedTurns = nextOptimized;
+    optimizeToolGroups(turns, liveTurn);
     updateUI(turns.length);
   }
 
@@ -650,7 +878,10 @@
       mode + ' · ' +
       turnCount + ' 轮 · 已优化 ' +
       state.optimizedTurns.size + ' 轮 · ' +
-      statusLabel(chatStatus);
+      statusLabel(chatStatus) +
+      (state.toolCounts.collapsed > 0
+        ? ' · 工具折叠 ' + state.toolCounts.collapsed
+        : '');
 
     if (ui.foot) ui.foot.textContent = versionLine();
   }
@@ -715,6 +946,7 @@
       enabled: state.settings.enabled,
       turns: turns.length,
       optimizedTurns: state.optimizedTurns.size,
+      toolGroups: { ...state.toolCounts },
       streaming: isStreaming(),
       conversationId: currentConversationId(),
       conversationStatus: currentConversationId()
@@ -741,6 +973,7 @@
     try { state.channel?.close?.(); } catch (_) {}
 
     restoreOptimizedTurns();
+    restoreToolGroups();
     for (const anchor of document.querySelectorAll('[data-cgpt-safari-chat-state]')) {
       anchor.removeAttribute('data-cgpt-safari-chat-state');
     }
