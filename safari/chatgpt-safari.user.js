@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.8
+// @version      0.3.9
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.8';
+  const VERSION = '0.3.9';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -47,6 +47,7 @@
     observer: null,
     refreshTimer: 0,
     statusTimer: 0,
+    updateWatchdogTimer: 0,
     optimizedTurns: new Set(),
     toolGroups: new Set(),
     toolRecords: new WeakMap(),
@@ -706,7 +707,25 @@
       setNativeStatus({
         ...(window.__CHATGPT_NATIVE__ || {}),
         updateStatus: 'checking',
+        ...(window.__CHATGPT_NATIVE__?.gestureVersion
+          ? { gestureUpdateStatus: 'checking' }
+          : {}),
       });
+
+      clearTimeout(state.updateWatchdogTimer);
+      state.updateWatchdogTimer = window.setTimeout(() => {
+        if (
+          state.nativeStatus?.updateStatus === 'checking'
+        ) {
+          setNativeStatus({
+            ...(window.__CHATGPT_NATIVE__ || {}),
+            updateStatus: 'timeout',
+            ...(window.__CHATGPT_NATIVE__?.gestureVersion
+              ? { gestureUpdateStatus: 'timeout' }
+              : {}),
+          });
+        }
+      }, 10000);
 
       handler.postMessage({ type: 'check-update' });
       return true;
@@ -933,6 +952,7 @@
       case 'bundled': return '内置版';
       case 'offline': return '离线 · 使用本地版';
       case 'error': return '更新检查失败';
+      case 'timeout': return '检查超时 · 使用当前版本';
       default: return state.nativeStatus?.hotUpdate ? '热更已启用' : '自动更新';
     }
   }
@@ -1004,6 +1024,7 @@
         status === 'updated' ? '已热更' :
         status === 'latest' ? '已是最新' :
         status === 'offline' ? '离线' :
+        status === 'timeout' ? '检查超时' :
         status === 'cached' ? '缓存版' :
         status === 'bundled' ? '内置版' :
         '已启用';
@@ -1090,6 +1111,7 @@
     state.destroyed = true;
 
     clearTimeout(state.refreshTimer);
+    clearTimeout(state.updateWatchdogTimer);
     clearInterval(state.statusTimer);
     state.observer?.disconnect();
 
