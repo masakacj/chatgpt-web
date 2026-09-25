@@ -37,6 +37,9 @@ requireText("const GLOBAL_KEY = 'ChatGPTWeb';", 'cross-platform global API');
 requireText("window[LEGACY_GLOBAL_KEY] = api;", 'legacy iOS API alias');
 requireText('setNativeStatus', 'native hot-update status API');
 requireText('CONTROL_MIGRATION_KEY', 'one-time control visibility restore');
+requireText("data-cgpt-tool-collapsed", 'always-on completed tool compaction');
+requireText('optimizeToolGroups(turns, liveTurn)', 'tool compaction refresh');
+requireText('restoreToolGroups()', 'tool compaction restore path');
 
 for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
   requireText(status, 'conversation state ' + status);
