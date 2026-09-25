@@ -49,15 +49,26 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="$GITHUB_REF_NAME"
           else
-            gh release create "$GITHUB_REF_NAME" dist/* \
-              --title "ChatGPT Safari Lite $GITHUB_REF_NAME" \
+            VERSION="$(node -p "require('./package.json').version")"
+            TAG="v$VERSION"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" \
+              --title "ChatGPT Safari Lite $TAG" \
+              --target "$GITHUB_SHA"
+          else
+            gh release create "$TAG" dist/* \
+              --target "$GITHUB_SHA" \
+              --title "ChatGPT Safari Lite $TAG" \
               --generate-notes
           fi
