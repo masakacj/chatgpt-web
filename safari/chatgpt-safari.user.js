@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.3
+// @version      0.3.4
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.3';
+  const VERSION = '0.3.4';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -696,6 +696,81 @@
     }, delay);
   }
 
+  function requestNativeUpdateCheck() {
+    try {
+      const handler =
+        window.webkit?.messageHandlers?.chatGPTNative;
+
+      if (!handler?.postMessage) return false;
+
+      setNativeStatus({
+        ...(window.__CHATGPT_NATIVE__ || {}),
+        updateStatus: 'checking',
+      });
+
+      handler.postMessage({ type: 'check-update' });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function openSidebar() {
+    const selectors = [
+      '[data-testid="open-sidebar-button"]',
+      'button[data-testid*="sidebar"]',
+      'button[aria-label*="Open sidebar"]',
+      'button[aria-label*="Show sidebar"]',
+      'button[aria-label*="Open navigation"]',
+      'button[aria-label*="打开侧边栏"]',
+      'button[aria-label*="显示侧边栏"]',
+      'button[aria-label*="展开侧边栏"]',
+      'button[aria-label*="打开导航"]',
+    ];
+
+    for (const selector of selectors) {
+      const button = document.querySelector(selector);
+      if (
+        button instanceof HTMLElement &&
+        button.getClientRects().length > 0
+      ) {
+        button.click();
+        return true;
+      }
+    }
+
+    const candidates = Array.from(
+      document.querySelectorAll('button,[role="button"]')
+    );
+
+    for (const button of candidates) {
+      const rect = button.getBoundingClientRect();
+      if (
+        rect.left <= 96 &&
+        rect.top <= 120 &&
+        rect.width > 20 &&
+        rect.height > 20 &&
+        rect.width < 80 &&
+        rect.height < 80
+      ) {
+        const label = [
+          button.getAttribute?.('aria-label') || '',
+          button.getAttribute?.('title') || '',
+          button.textContent || '',
+        ].join(' ').replace(/\s+/g, ' ').trim();
+
+        if (
+          /(sidebar|navigation|menu|侧边栏|导航|菜单)/i.test(label)
+        ) {
+          button.click();
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
   function createControl() {
     if (!state.settings.showControl || state.destroyed) return;
     if (!document.body || document.getElementById(HOST_ID)) return;
@@ -834,6 +909,7 @@
           ...state.nativeStatus,
           ...(window.__CHATGPT_NATIVE__ || {}),
         };
+        requestNativeUpdateCheck();
         scheduleRefresh(0);
         evaluateConversationState();
         renderConversationStates();
@@ -1078,6 +1154,8 @@
     getState,
     setEnabled,
     setNativeStatus,
+    requestNativeUpdateCheck,
+    openSidebar,
     showControl,
     refresh: () => scheduleRefresh(0),
     destroy,
