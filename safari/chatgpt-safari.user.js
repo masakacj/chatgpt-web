@@ -718,7 +718,7 @@
   function openSidebar() {
     const selectors = [
       '[data-testid="open-sidebar-button"]',
-      'button[data-testid*="sidebar"]',
+      '[data-testid="sidebar-button"][aria-expanded="false"]',
       'button[aria-label*="Open sidebar"]',
       'button[aria-label*="Show sidebar"]',
       'button[aria-label*="Open navigation"]',
@@ -760,7 +760,8 @@
         ].join(' ').replace(/\s+/g, ' ').trim();
 
         if (
-          /(sidebar|navigation|menu|侧边栏|导航|菜单)/i.test(label)
+          /(sidebar|navigation|menu|侧边栏|导航|菜单)/i.test(label) &&
+          !/(close|hide|collapse|关闭|隐藏|收起)/i.test(label)
         ) {
           button.click();
           return true;
