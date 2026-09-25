@@ -33,6 +33,19 @@ The optimization layer is deliberately browser-safe and identical on desktop and
 
 This means performance changes are made once and roll out to both platforms.
 
+## Always-on balanced optimization
+
+Optimization starts from the first conversation turn on both desktop and iOS.
+
+- every eligible conversation turn uses `content-visibility: auto`;
+- the currently streaming turn stays fully live;
+- focused / interactive content stays fully live;
+- MCP / DevSpace / tool-call process blocks remain fully visible while running or waiting for approval;
+- once the current response finishes, completed tool-process blocks collapse to a one-line summary and their children stop participating in layout/paint;
+- disabling optimization restores the official tool-process DOM display immediately.
+
+This is intentionally a middle ground: completed tool output is not deleted from memory, so ChatGPT/React state is not damaged, but the expensive process UI no longer contributes to normal rendering work. Final assistant answers are never compacted by the tool-process rule.
+
 ## Shared conversation-state model
 
 Both platforms use the same state machine:
@@ -95,6 +108,6 @@ Every push to `main` validates the canonical script and packages:
 - `ChatGPT-Web-Unified.zip`
 - SHA-256 files
 
-The release tag is derived from `package.json`, for example `v0.3.1`.
+The release tag is derived from `package.json`, for example `v0.3.2`.
 
 The earlier WKWebView iOS client and the old standalone desktop optimizer are legacy architectures and should not be maintained separately.
