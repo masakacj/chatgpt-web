@@ -27,7 +27,7 @@ requireText('// @run-at       document-start', 'document-start injection');
 requireText('// @grant        none', 'grant none');
 requireText('content-visibility: auto', 'conservative rendering hint');
 requireText("const liveTurn = streaming ? turns[turns.length - 1] : null;", 'streaming turn protection');
-requireText("perfLabel.textContent = '常驻轻量优化';", 'always-on control label');
+requireText("perfLabel.textContent = '常驻平衡优化';", 'always-on control label');
 requireText('const SETTLE_MS = 2800;', 'desktop-compatible settling window');
 requireText('const READ_DWELL_MS = 1200;', 'desktop-compatible read dwell');
 requireText('new BroadcastChannel(STATE_CHANNEL)', 'cross-tab state sync');
@@ -40,6 +40,9 @@ requireText('CONTROL_MIGRATION_KEY', 'one-time control visibility restore');
 requireText("data-cgpt-tool-collapsed", 'always-on completed tool compaction');
 requireText('optimizeToolGroups(turns, liveTurn)', 'tool compaction refresh');
 requireText('restoreToolGroups()', 'tool compaction restore path');
+requireText("makeInfoRow('脚本版本')", 'S panel script version row');
+requireText("makeInfoRow('更新状态')", 'S panel update status row');
+requireText("state.nativeStatus = {", 'S panel runtime status refresh');
 
 for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
   requireText(status, 'conversation state ' + status);
