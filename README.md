@@ -154,3 +154,15 @@ Update checks are fail-safe starting with shared core 0.3.9 / iOS shell 0.3.9.
 - the S panel has a 10-second UI watchdog;
 - timeout falls back to the current cached/bundled runtime;
 - a failed gesture update does not block the shared runtime, and vice versa.
+
+
+## Manual update retry
+
+The S panel includes a dedicated update action:
+
+- `检查更新` in the normal state;
+- `检查更新中…` while a check is running;
+- `重试更新` after offline / timeout / error;
+- `再次检查更新` after a successful or latest check.
+
+The button invokes the native updater directly and restarts the update watchdog without requiring the S panel to be closed and reopened.
