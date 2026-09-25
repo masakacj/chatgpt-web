@@ -239,12 +239,22 @@ requireText(
 requireText(
   gesture,
   'twoFingerTriggerPx: 6',
-  'two-finger sidebar scroll threshold'
+  'two-finger global scroll threshold'
 );
 requireText(
   gesture,
-  'function findSidebarScrollContainer',
-  'sidebar scroll-container discovery'
+  'function globalScrollCandidates',
+  'global scroll candidate discovery'
+);
+requireText(
+  gesture,
+  'function pickScrollContainer',
+  'dynamic scroll-container selection'
+);
+requireText(
+  gesture,
+  'document.elementsFromPoint',
+  'touch-point scroll targeting'
 );
 requireText(
   gesture,
