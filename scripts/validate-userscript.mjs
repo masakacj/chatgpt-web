@@ -50,6 +50,7 @@ requireText('closeSidebar', 'sidebar close API');
 requireText('isSidebarOpen', 'sidebar state API');
 requireText('const SIDEBAR_GESTURE = {', 'hot-updatable sidebar gesture config');
 requireText('setupSidebarGestures()', 'userscript sidebar gesture setup');
+requireText('isNativeIOSClient()', 'iOS-only gesture gate');
 requireText('teardownSidebarGestures()', 'userscript sidebar gesture teardown');
 
 for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
