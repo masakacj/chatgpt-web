@@ -99,11 +99,12 @@ Startup order for each runtime:
 
 1. use the newest valid cached copy;
 2. fall back to the copy bundled in the IPA;
-3. fetch the latest GitHub Raw source;
-4. validate metadata and runtime version;
-5. cache and hot-inject the newer script.
+3. race multiple trusted update sources in parallel;
+4. validate metadata/runtime version;
+5. choose the newest valid result;
+6. cache and hot-inject the newer script.
 
-The shared core additionally validates against `package.json`.
+The native updater races GitHub Raw, jsDelivr CDN, jsDelivr Fastly, and GitHub Contents API. A single blocked endpoint no longer blocks the update path.
 
 A failure to update one runtime does not block the other runtime.
 
@@ -150,7 +151,8 @@ Native-shell releases also attach the unsigned IPA and its SHA-256 file.
 Update checks are fail-safe starting with shared core 0.3.9 / iOS shell 0.3.9.
 
 - shared core and iOS gesture updates are checked in parallel;
-- each GitHub Raw request has an 8-second timeout;
+- each runtime also races four trusted download sources in parallel;
+- each source has a 6-second timeout;
 - the S panel has a 10-second UI watchdog;
 - timeout falls back to the current cached/bundled runtime;
 - a failed gesture update does not block the shared runtime, and vice versa.
