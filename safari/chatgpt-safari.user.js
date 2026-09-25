@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.9
+// @version      0.3.10
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.9';
+  const VERSION = '0.3.10';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -828,6 +828,14 @@
     perfSwitch.checked = state.settings.enabled;
     perfRow.append(perfLabel, perfSwitch);
 
+    const updateRow = document.createElement('div');
+    updateRow.className = 'row';
+    const update = document.createElement('button');
+    update.type = 'button';
+    update.className = 'action';
+    update.textContent = '检查更新';
+    updateRow.appendChild(update);
+
     const reloadRow = document.createElement('div');
     reloadRow.className = 'row';
     const reload = document.createElement('button');
@@ -861,6 +869,7 @@
       status,
       info,
       perfRow,
+      updateRow,
       reloadRow,
       restoreRow,
       hideRow,
@@ -893,6 +902,11 @@
       scheduleRefresh(0);
     });
 
+    update.addEventListener('click', () => {
+      requestNativeUpdateCheck();
+      updateUI(turnCandidates().length);
+    });
+
     reload.addEventListener('click', () => location.reload());
 
     restore.addEventListener('click', () => {
@@ -917,6 +931,7 @@
       panel,
       status,
       perfSwitch,
+      update,
       foot,
       scriptInfo: scriptInfo.value,
       appInfo: appInfo.value,
@@ -1006,6 +1021,29 @@
     }
     if (ui.updateInfo) {
       ui.updateInfo.textContent = updateStatusLabel();
+    }
+
+    if (ui.update) {
+      const updateStatus = String(
+        state.nativeStatus?.updateStatus || ''
+      );
+
+      const failed = [
+        'offline',
+        'timeout',
+        'error',
+      ].includes(updateStatus);
+
+      const checking = updateStatus === 'checking';
+
+      ui.update.disabled = checking;
+      ui.update.style.opacity = checking ? '.5' : '1';
+      ui.update.textContent =
+        checking ? '检查更新中…' :
+        failed ? '重试更新' :
+        ['latest', 'updated'].includes(updateStatus)
+          ? '再次检查更新'
+          : '检查更新';
     }
     if (ui.toolInfo) {
       ui.toolInfo.textContent =
