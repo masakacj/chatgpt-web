@@ -17,7 +17,6 @@ targets:
     platform: iOS
     sources:
       - path: App
-    resources:
       - path: Resources
     settings:
       base:
