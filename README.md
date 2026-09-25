@@ -69,6 +69,24 @@ ChatGPTWeb.showControl()
 
 For compatibility with existing iOS installs, `ChatGPTSafari` remains an alias of `ChatGPTWeb`.
 
+## iOS hot update
+
+The iOS IPA is only a thin WebKit shell. It does not maintain a second copy of the optimization logic.
+
+Startup order:
+
+1. load the newest valid cached Unified userscript;
+2. fall back to the userscript bundled in the IPA;
+3. check the canonical GitHub Raw script and `package.json`;
+4. validate that metadata/runtime/package versions match;
+5. cache and inject the newer script into the current page immediately.
+
+If the network check fails, the cached/bundled script continues to work.
+
+The floating **S** menu shows the active script version, IPA shell version, and update state such as `检查更新中`, `已是最新`, `已热更`, or `离线 · 使用本地版`.
+
+Future userscript-only releases do not require rebuilding or reinstalling the IPA. A new IPA is needed only when the native WebKit shell itself changes.
+
 ## Release
 
 Every push to `main` validates the canonical script and packages:
@@ -77,6 +95,6 @@ Every push to `main` validates the canonical script and packages:
 - `ChatGPT-Web-Unified.zip`
 - SHA-256 files
 
-The release tag is derived from `package.json`, for example `v0.3.0`.
+The release tag is derived from `package.json`, for example `v0.3.1`.
 
 The earlier WKWebView iOS client and the old standalone desktop optimizer are legacy architectures and should not be maintained separately.
