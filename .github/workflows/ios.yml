@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "App/**"
+      - "Resources/**"
       - "project.yml"
       - ".github/workflows/ios.yml"
   workflow_dispatch:
@@ -66,6 +67,14 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           grep -q "ChatGPT Web Unified" "$SCRIPT"
           grep -q "@version      $VERSION" "$SCRIPT"
+
+      - name: Verify app icon
+        run: |
+          set -euo pipefail
+          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -f "$APP/Assets.car"
+          plutil -p "$APP/Info.plist" | grep -q "CFBundleIcons"
+          plutil -p "$APP/Info.plist" | grep -q "AppIcon"
 
       - name: Package unsigned IPA
         run: |
