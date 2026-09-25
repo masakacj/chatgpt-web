@@ -48,6 +48,9 @@ requireText('requestNativeUpdateCheck()', 'S-triggered native update check');
 requireText('openSidebar', 'sidebar gesture API');
 requireText('closeSidebar', 'sidebar close API');
 requireText('isSidebarOpen', 'sidebar state API');
+requireText('const SIDEBAR_GESTURE = {', 'hot-updatable sidebar gesture config');
+requireText('setupSidebarGestures()', 'userscript sidebar gesture setup');
+requireText('teardownSidebarGestures()', 'userscript sidebar gesture teardown');
 
 for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
   requireText(status, 'conversation state ' + status);
