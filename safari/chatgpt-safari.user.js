@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.7
+// @version      0.3.8
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.7';
+  const VERSION = '0.3.8';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -47,7 +47,6 @@
     observer: null,
     refreshTimer: 0,
     statusTimer: 0,
-    sidebarGesture: null,
     optimizedTurns: new Set(),
     toolGroups: new Set(),
     toolRecords: new WeakMap(),
@@ -716,270 +715,6 @@
     }
   }
 
-  function openSidebar() {
-    const selectors = [
-      '[data-testid="open-sidebar-button"]',
-      '[data-testid="sidebar-button"][aria-expanded="false"]',
-      'button[aria-label*="Open sidebar"]',
-      'button[aria-label*="Show sidebar"]',
-      'button[aria-label*="Open navigation"]',
-      'button[aria-label*="打开侧边栏"]',
-      'button[aria-label*="显示侧边栏"]',
-      'button[aria-label*="展开侧边栏"]',
-      'button[aria-label*="打开导航"]',
-    ];
-
-    for (const selector of selectors) {
-      const button = document.querySelector(selector);
-      if (
-        button instanceof HTMLElement &&
-        button.getClientRects().length > 0
-      ) {
-        button.click();
-        return true;
-      }
-    }
-
-    const candidates = Array.from(
-      document.querySelectorAll('button,[role="button"]')
-    );
-
-    for (const button of candidates) {
-      const rect = button.getBoundingClientRect();
-      if (
-        rect.left <= 96 &&
-        rect.top <= 120 &&
-        rect.width > 20 &&
-        rect.height > 20 &&
-        rect.width < 80 &&
-        rect.height < 80
-      ) {
-        const label = [
-          button.getAttribute?.('aria-label') || '',
-          button.getAttribute?.('title') || '',
-          button.textContent || '',
-        ].join(' ').replace(/\s+/g, ' ').trim();
-
-        if (
-          /(sidebar|navigation|menu|侧边栏|导航|菜单)/i.test(label) &&
-          !/(close|hide|collapse|关闭|隐藏|收起)/i.test(label)
-        ) {
-          button.click();
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  function isSidebarOpen() {
-    const openButton = document.querySelector(
-      '[data-testid="sidebar-button"][aria-expanded="true"],' +
-      '[data-testid="close-sidebar-button"],' +
-      'button[aria-label*="Close sidebar"],' +
-      'button[aria-label*="Hide sidebar"],' +
-      'button[aria-label*="Collapse sidebar"],' +
-      'button[aria-label*="关闭侧边栏"],' +
-      'button[aria-label*="隐藏侧边栏"],' +
-      'button[aria-label*="收起侧边栏"]'
-    );
-
-    if (
-      openButton instanceof HTMLElement &&
-      openButton.getClientRects().length > 0
-    ) {
-      return true;
-    }
-
-    const nav = document.querySelector(
-      'nav[aria-label*="Chat"],' +
-      'aside nav,' +
-      '[data-testid*="sidebar"] nav'
-    );
-
-    if (!(nav instanceof HTMLElement)) return false;
-
-    const rect = nav.getBoundingClientRect();
-    return rect.width > 120 && rect.right > 0;
-  }
-
-  function closeSidebar() {
-    const selectors = [
-      '[data-testid="close-sidebar-button"]',
-      '[data-testid="sidebar-button"][aria-expanded="true"]',
-      'button[aria-label*="Close sidebar"]',
-      'button[aria-label*="Hide sidebar"]',
-      'button[aria-label*="Collapse sidebar"]',
-      'button[aria-label*="关闭侧边栏"]',
-      'button[aria-label*="隐藏侧边栏"]',
-      'button[aria-label*="收起侧边栏"]',
-      'button[aria-label*="关闭导航"]',
-    ];
-
-    for (const selector of selectors) {
-      const button = document.querySelector(selector);
-      if (
-        button instanceof HTMLElement &&
-        button.getClientRects().length > 0
-      ) {
-        button.click();
-        return true;
-      }
-    }
-
-    const candidates = Array.from(
-      document.querySelectorAll('button,[role="button"]')
-    );
-
-    for (const button of candidates) {
-      const label = [
-        button.getAttribute?.('aria-label') || '',
-        button.getAttribute?.('title') || '',
-        button.textContent || '',
-      ].join(' ').replace(/\s+/g, ' ').trim();
-
-      if (
-        /(sidebar|navigation|menu|侧边栏|导航|菜单)/i.test(label) &&
-        /(close|hide|collapse|关闭|隐藏|收起)/i.test(label) &&
-        button.getClientRects().length > 0
-      ) {
-        button.click();
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  const SIDEBAR_GESTURE = {
-    openStartPx: 84,
-    closeStartPx: 420,
-    triggerPx: 24,
-    axisRatio: 1.0,
-    maxDurationMs: 1200,
-  };
-
-  function sidebarGestureStart(event) {
-    if (state.destroyed) return;
-    if (event.touches?.length !== 1) return;
-
-    const touch = event.touches[0];
-    const open = isSidebarOpen();
-    const closeStartPx = Math.min(
-      SIDEBAR_GESTURE.closeStartPx,
-      Math.max(180, window.innerWidth * 0.84)
-    );
-
-    const eligible = open
-      ? touch.clientX <= closeStartPx
-      : touch.clientX <= SIDEBAR_GESTURE.openStartPx;
-
-    if (!eligible) {
-      state.sidebarGesture = null;
-      return;
-    }
-
-    state.sidebarGesture = {
-      x: touch.clientX,
-      y: touch.clientY,
-      at: performance.now(),
-      open,
-      fired: false,
-    };
-  }
-
-  function sidebarGestureMove(event) {
-    const gesture = state.sidebarGesture;
-    if (!gesture || gesture.fired) return;
-    if (event.touches?.length !== 1) return;
-
-    const touch = event.touches[0];
-    const dx = touch.clientX - gesture.x;
-    const dy = touch.clientY - gesture.y;
-    const elapsed = performance.now() - gesture.at;
-
-    if (elapsed > SIDEBAR_GESTURE.maxDurationMs) {
-      state.sidebarGesture = null;
-      return;
-    }
-
-    const horizontal =
-      dx >= SIDEBAR_GESTURE.triggerPx &&
-      Math.abs(dx) >=
-        Math.abs(dy) * SIDEBAR_GESTURE.axisRatio;
-
-    if (!horizontal) return;
-
-    gesture.fired = true;
-
-    if (gesture.open) {
-      closeSidebar();
-    } else {
-      openSidebar();
-    }
-  }
-
-  function sidebarGestureEnd() {
-    state.sidebarGesture = null;
-  }
-
-  function isNativeIOSClient() {
-    return Boolean(
-      window.__CHATGPT_NATIVE__?.hotUpdate &&
-      window.__CHATGPT_NATIVE__?.appVersion
-    );
-  }
-
-  function setupSidebarGestures() {
-    if (!isNativeIOSClient()) return;
-
-    document.addEventListener(
-      'touchstart',
-      sidebarGestureStart,
-      { passive: true, capture: true }
-    );
-    document.addEventListener(
-      'touchmove',
-      sidebarGestureMove,
-      { passive: true, capture: true }
-    );
-    document.addEventListener(
-      'touchend',
-      sidebarGestureEnd,
-      { passive: true, capture: true }
-    );
-    document.addEventListener(
-      'touchcancel',
-      sidebarGestureEnd,
-      { passive: true, capture: true }
-    );
-  }
-
-  function teardownSidebarGestures() {
-    document.removeEventListener(
-      'touchstart',
-      sidebarGestureStart,
-      true
-    );
-    document.removeEventListener(
-      'touchmove',
-      sidebarGestureMove,
-      true
-    );
-    document.removeEventListener(
-      'touchend',
-      sidebarGestureEnd,
-      true
-    );
-    document.removeEventListener(
-      'touchcancel',
-      sidebarGestureEnd,
-      true
-    );
-    state.sidebarGesture = null;
-  }
-
   function createControl() {
     if (!state.settings.showControl || state.destroyed) return;
     if (!document.body || document.getElementById(HOST_ID)) return;
@@ -1049,12 +784,19 @@
     const appInfo = makeInfoRow('IPA 壳');
     const updateInfo = makeInfoRow('更新状态');
     const toolInfo = makeInfoRow('工具过程');
+    const gestureInfo = state.nativeStatus?.gestureVersion
+      ? makeInfoRow('iOS 手势')
+      : null;
+
     info.append(
       scriptInfo.row,
       appInfo.row,
       updateInfo.row,
       toolInfo.row
     );
+    if (gestureInfo) {
+      info.append(gestureInfo.row);
+    }
 
     const perfRow = document.createElement('label');
     perfRow.className = 'row';
@@ -1161,6 +903,7 @@
       appInfo: appInfo.value,
       updateInfo: updateInfo.value,
       toolInfo: toolInfo.value,
+      gestureInfo: gestureInfo?.value || null,
     };
     updateUI(turnCandidates().length);
   }
@@ -1251,6 +994,22 @@
             state.toolCounts.groups + ' 已折叠'
           : '无';
     }
+    if (ui.gestureInfo) {
+      const version = state.nativeStatus?.gestureVersion || '未知';
+      const status = String(
+        state.nativeStatus?.gestureUpdateStatus || ''
+      );
+      const label =
+        status === 'checking' ? '检查中' :
+        status === 'updated' ? '已热更' :
+        status === 'latest' ? '已是最新' :
+        status === 'offline' ? '离线' :
+        status === 'cached' ? '缓存版' :
+        status === 'bundled' ? '内置版' :
+        '已启用';
+      ui.gestureInfo.textContent =
+        'v' + version + ' · ' + label;
+    }
     if (ui.foot) ui.foot.textContent = versionLine();
   }
 
@@ -1338,7 +1097,6 @@
     window.removeEventListener('hashchange', onRoute);
     document.removeEventListener('visibilitychange', onVisibility);
     window.removeEventListener('storage', onStorageSync);
-    teardownSidebarGestures();
     try { state.channel?.close?.(); } catch (_) {}
 
     restoreOptimizedTurns();
@@ -1365,9 +1123,6 @@
     setEnabled,
     setNativeStatus,
     requestNativeUpdateCheck,
-    isSidebarOpen,
-    openSidebar,
-    closeSidebar,
     showControl,
     refresh: () => scheduleRefresh(0),
     destroy,
@@ -1379,7 +1134,6 @@
   installStyle();
   setupConversationStateSync();
   setupObservers();
-  setupSidebarGestures();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
