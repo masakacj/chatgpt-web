@@ -1,132 +1,145 @@
-# ChatGPT Web Unified
+# ChatGPT Web
 
-One userscript for both desktop Tampermonkey and iOS Safari userscript extensions.
+ChatGPT Web now uses a two-layer runtime architecture:
 
-There is only one maintained runtime source:
+1. **Shared core userscript**
+   - `safari/chatgpt-safari.user.js`
+   - used by desktop Tampermonkey / Violentmonkey and the iOS IPA
+   - owns performance optimization, conversation state, tool-process compaction, the floating S panel, and the narrow native hot-update bridge
 
-`safari/chatgpt-safari.user.js`
+2. **iOS-only gesture userscript**
+   - `safari/chatgpt-ios-gestures.user.js`
+   - injected only by the iOS IPA shell
+   - owns sidebar gesture recognition, sidebar DOM detection, open/close behavior, and gesture tuning
+   - never runs on desktop
 
-The path is kept for backward compatibility with existing iOS installations, but the file is now the canonical cross-platform script. Desktop and iOS use the exact same file, version, performance logic and conversation-state logic.
+This separation keeps PC behavior independent from iOS gesture experiments while preserving one shared optimization/state implementation.
 
-## Canonical install URL
+## Shared core install URL
 
 `https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-safari.user.js`
 
-Install that same URL on:
+Use this URL for desktop Tampermonkey / Violentmonkey.
 
-- Desktop: Tampermonkey / Violentmonkey / compatible userscript manager.
-- iPhone / iPad: a Safari userscript extension that supports standard userscript metadata.
+The shared script includes `@updateURL` and `@downloadURL` pointing to the same canonical file.
 
-The script includes `@updateURL` and `@downloadURL` pointing to the same canonical file, so both platforms follow the same update stream.
+Desktop users do **not** install the iOS gesture script.
+
+## iOS gesture script
+
+Canonical source:
+
+`https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-ios-gestures.user.js`
+
+The IPA shell injects this script automatically. It is gated by the native IPA environment and is not part of the desktop runtime.
+
+Gesture script versioning is independent from the shared core version. For example:
+
+- shared core: `0.3.8`
+- iOS gestures: `0.1.0`
+- IPA shell: `0.3.8 (11)`
+
+Changing only the iOS gesture script does not require bumping the shared script version and does not require rebuilding the IPA.
 
 ## Shared performance behavior
 
-The optimization layer is deliberately browser-safe and identical on desktop and iOS:
+The shared optimization layer starts from the first conversation turn:
 
-- always-on `content-visibility: auto` for eligible conversation turns;
-- the currently streaming turn is excluded;
-- focused / interactive turns are excluded;
-- no `innerHTML` replacement or DOM snapshots;
-- no fixed-height message freezing;
-- no image/video/iframe source unloading;
-- no separate native bridge.
+- always-on `content-visibility: auto` for eligible turns;
+- current streaming turn remains fully live;
+- focused / interactive content remains fully live;
+- completed MCP / DevSpace / tool-call process blocks collapse to a lightweight one-line summary;
+- running or approval-waiting tool blocks remain live;
+- final assistant answers remain intact;
+- no `innerHTML` snapshots;
+- no `replaceChildren`;
+- no media source unloading.
 
-This means performance changes are made once and roll out to both platforms.
-
-## Always-on balanced optimization
-
-Optimization starts from the first conversation turn on both desktop and iOS.
-
-- every eligible conversation turn uses `content-visibility: auto`;
-- the currently streaming turn stays fully live;
-- focused / interactive content stays fully live;
-- MCP / DevSpace / tool-call process blocks remain fully visible while running or waiting for approval;
-- once the current response finishes, completed tool-process blocks collapse to a one-line summary and their children stop participating in layout/paint;
-- disabling optimization restores the official tool-process DOM display immediately.
-
-This is intentionally a middle ground: completed tool output is not deleted from memory, so ChatGPT/React state is not damaged, but the expensive process UI no longer contributes to normal rendering work. Final assistant answers are never compacted by the tool-process rule.
+The shared script is the same on PC and iOS.
 
 ## Shared conversation-state model
 
-Both platforms use the same state machine:
+Both PC and iOS use the same state machine:
 
 `running → waiting_user → settling → completed_unread → completed_read`
 
 Rules:
 
-- completion settling window: 2.8 seconds;
-- completed-unread becomes read after 1.2 seconds of actual visible dwell;
+- settling window: 2.8 seconds;
+- visible read dwell: 1.2 seconds;
 - state persists in `localStorage`;
-- cross-tab synchronization uses `BroadcastChannel`;
-- the browser `storage` event is the fallback;
-- sidebar status dots and the floating control read from this same state store.
+- cross-tab sync uses `BroadcastChannel`;
+- browser `storage` events are the fallback;
+- sidebar status dots and the floating S control use the same state store.
 
-The custom status layer does not replace ChatGPT message DOM and is independent of the official unread indicator.
+## iOS gesture behavior
 
-## Controls
+The iOS gesture script owns all sidebar touch handling.
 
-The floating control is part of the same script on both platforms.
+Current tuning starts with:
 
-- **常驻轻量优化** — enable or disable performance hints.
-- **重新加载 ChatGPT** — reload the official page.
-- **恢复官方页面显示** — remove performance hints immediately.
-- **隐藏悬浮按钮** — hide the control.
+- opening gesture start region: left 96 px;
+- horizontal trigger distance: 20 px;
+- horizontal/vertical intent ratio: 0.95;
+- maximum gesture duration: 1.4 seconds;
+- when the sidebar is open, the close gesture can start within the left-side sidebar region.
 
-Console API:
+WebKit back/forward navigation gestures remain disabled in the native shell.
 
-```js
-ChatGPTWeb.getState()
-ChatGPTWeb.setEnabled(false)
-ChatGPTWeb.showControl()
-```
-
-For compatibility with existing iOS installs, `ChatGPTSafari` remains an alias of `ChatGPTWeb`.
+Because the thresholds live in `chatgpt-ios-gestures.user.js`, future sensitivity changes are delivered by gesture-script hot update without a new IPA.
 
 ## iOS hot update
 
-The iOS IPA is only a thin WebKit shell. It does not maintain a second copy of the optimization logic.
+The iOS shell maintains two independent cached runtimes:
 
-Startup order:
+- shared core userscript;
+- iOS gesture userscript.
 
-1. load the newest valid cached Unified userscript;
-2. fall back to the userscript bundled in the IPA;
-3. check the canonical GitHub Raw script and `package.json`;
-4. validate that metadata/runtime/package versions match;
-5. cache and inject the newer script into the current page immediately.
+Startup order for each runtime:
 
-If the network check fails, the cached/bundled script continues to work.
+1. use the newest valid cached copy;
+2. fall back to the copy bundled in the IPA;
+3. fetch the latest GitHub Raw source;
+4. validate metadata and runtime version;
+5. cache and hot-inject the newer script.
 
-The floating **S** menu shows the active script version, IPA shell version, and update state such as `检查更新中`, `已是最新`, `已热更`, or `离线 · 使用本地版`.
+The shared core additionally validates against `package.json`.
 
-Future userscript-only releases do not require rebuilding or reinstalling the IPA. A new IPA is needed only when the native WebKit shell itself changes.
+A failure to update one runtime does not block the other runtime.
 
-## Release
+Opening the floating **S** panel triggers a native update check for both scripts.
 
-Every push to `main` validates the canonical script and packages:
+The S panel displays:
+
+- shared script version;
+- IPA shell version;
+- shared update status;
+- tool-process compaction count;
+- iOS gesture version and gesture update status when running inside the IPA.
+
+## Microphone permission
+
+The IPA includes `NSMicrophoneUsageDescription` and grants WKWebView microphone capture only to `chatgpt.com` / its subdomains.
+
+Camera capture is not automatically granted.
+
+## Release assets
+
+Each shared-core release publishes:
 
 - `ChatGPT-Web-Unified.user.js`
+- `ChatGPT-Web-Unified.user.js.sha256`
 - `ChatGPT-Web-Unified.zip`
-- SHA-256 files
+- `ChatGPT-Web-Unified.zip.sha256`
+- `ChatGPT-Web-iOS-Gestures.user.js`
+- `ChatGPT-Web-iOS-Gestures.user.js.sha256`
+- `ChatGPT-Web-iOS-Gestures.zip`
+- `ChatGPT-Web-iOS-Gestures.zip.sha256`
 
-The release tag is derived from `package.json`, for example `v0.3.3`.
+Native-shell releases also attach the unsigned IPA and its SHA-256 file.
 
-The earlier WKWebView iOS client and the old standalone desktop optimizer are legacy architectures and should not be maintained separately.
+## Maintenance rule
 
-
-## S panel refresh
-
-Opening the floating **S** control forces an immediate runtime refresh. The panel shows separate rows for the active userscript version, IPA shell version, hot-update state, and completed tool-process compaction count. These values continue to refresh while the page state changes.
-
-
-## Hot-updatable sidebar gestures
-
-Starting with iOS shell 0.3.6, sidebar swipe recognition lives in the Unified userscript rather than native UIKit gesture recognizers. The native shell keeps WebKit back/forward navigation gestures disabled, while the userscript detects sidebar gestures from touch events.
-
-Current tuning:
-- sidebar-open gesture may start within the left 84 px;
-- horizontal travel threshold is 24 px;
-- horizontal/vertical intent ratio is 1.0;
-- completed gestures must finish within 1.2 seconds;
-- when the sidebar is open, the close gesture may start within the left-side sidebar region.
-
-These thresholds can be changed by userscript hot update without rebuilding the IPA.
+- Shared optimization/state changes belong only in `chatgpt-safari.user.js`.
+- iOS gesture changes belong only in `chatgpt-ios-gestures.user.js`.
+- Native Swift changes should be limited to shell capabilities such as WebKit configuration, permissions, and loading/updating the two runtime scripts.
