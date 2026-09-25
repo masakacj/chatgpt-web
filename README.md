@@ -108,6 +108,11 @@ Every push to `main` validates the canonical script and packages:
 - `ChatGPT-Web-Unified.zip`
 - SHA-256 files
 
-The release tag is derived from `package.json`, for example `v0.3.2`.
+The release tag is derived from `package.json`, for example `v0.3.3`.
 
 The earlier WKWebView iOS client and the old standalone desktop optimizer are legacy architectures and should not be maintained separately.
+
+
+## S panel refresh
+
+Opening the floating **S** control forces an immediate runtime refresh. The panel shows separate rows for the active userscript version, IPA shell version, hot-update state, and completed tool-process compaction count. These values continue to refresh while the page state changes.
