@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.1
+// @version      0.1.2
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -26,10 +26,7 @@
   }
 
   const CONFIG = Object.freeze({
-    openRegionMinPx: 72,
-    openRegionMaxRatio: 0.96,
-    closeRegionMaxPx: 520,
-    closeRegionRatio: 0.92,
+    gestureRegionMaxRatio: 0.98,
     triggerPx: 18,
     axisRatio: 0.90,
     maxDurationMs: 1500,
@@ -182,31 +179,15 @@
     if (state.destroyed || event.touches?.length !== 1) return;
 
     const touch = event.touches[0];
-    const open = isSidebarOpen();
+    const maxX = window.innerWidth * CONFIG.gestureRegionMaxRatio;
 
-    const closeStartPx = Math.min(
-      CONFIG.closeRegionMaxPx,
-      Math.max(240, window.innerWidth * CONFIG.closeRegionRatio)
-    );
-
-    const openMaxPx = Math.max(
-      CONFIG.openRegionMinPx + 120,
-      window.innerWidth * CONFIG.openRegionMaxRatio
-    );
-
-    const eligible = open
-      ? touch.clientX <= closeStartPx
-      : (
-          touch.clientX >= CONFIG.openRegionMinPx &&
-          touch.clientX <= openMaxPx
-        );
-
-    state.gesture = eligible
+    state.gesture = touch.clientX <= maxX
       ? {
           x: touch.clientX,
           y: touch.clientY,
           at: performance.now(),
-          open,
+          open: isSidebarOpen(),
+          claimed: false,
           fired: false,
         }
       : null;
@@ -214,7 +195,7 @@
 
   function move(event) {
     const gesture = state.gesture;
-    if (!gesture || gesture.fired || event.touches?.length !== 1) return;
+    if (!gesture || event.touches?.length !== 1) return;
 
     const touch = event.touches[0];
     const dx = touch.clientX - gesture.x;
@@ -229,7 +210,18 @@
       Math.abs(dx) >= CONFIG.triggerPx &&
       Math.abs(dx) >= Math.abs(dy) * CONFIG.axisRatio;
 
-    if (!horizontalIntent) return;
+    if (!gesture.claimed && !horizontalIntent) return;
+
+    if (!gesture.claimed) {
+      gesture.claimed = true;
+    }
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+    event.stopImmediatePropagation();
+
+    if (gesture.fired) return;
 
     const shouldClose =
       gesture.open && dx >= CONFIG.triggerPx;
@@ -237,13 +229,11 @@
     const shouldOpen =
       !gesture.open && dx <= -CONFIG.triggerPx;
 
-    if (!shouldClose && !shouldOpen) return;
-
     gesture.fired = true;
 
     if (shouldClose) {
       closeSidebar();
-    } else {
+    } else if (shouldOpen) {
       openSidebar();
     }
   }
@@ -258,7 +248,7 @@
       capture: true,
     });
     document.addEventListener('touchmove', move, {
-      passive: true,
+      passive: false,
       capture: true,
     });
     document.addEventListener('touchend', end, {
