@@ -10,6 +10,7 @@ final class UnifiedScriptStore {
     static let shared = UnifiedScriptStore()
 
     private let fileManager = FileManager.default
+    private let requestTimeout: TimeInterval = 8
 
     private let scriptURL = URL(
         string: "https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-safari.user.js"
@@ -47,7 +48,8 @@ final class UnifiedScriptStore {
 
     func fetchLatest() async throws -> UnifiedScriptPayload {
         var packageRequest = URLRequest(
-            url: cacheBusted(packageURL)
+            url: cacheBusted(packageURL),
+            timeoutInterval: requestTimeout
         )
         packageRequest.cachePolicy = .reloadIgnoringLocalCacheData
         packageRequest.setValue(
@@ -56,7 +58,8 @@ final class UnifiedScriptStore {
         )
 
         var scriptRequest = URLRequest(
-            url: cacheBusted(scriptURL)
+            url: cacheBusted(scriptURL),
+            timeoutInterval: requestTimeout
         )
         scriptRequest.cachePolicy = .reloadIgnoringLocalCacheData
         scriptRequest.setValue(
@@ -109,7 +112,8 @@ final class UnifiedScriptStore {
         async throws -> UnifiedScriptPayload
     {
         var request = URLRequest(
-            url: cacheBusted(gestureScriptURL)
+            url: cacheBusted(gestureScriptURL),
+            timeoutInterval: requestTimeout
         )
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue(
