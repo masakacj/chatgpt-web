@@ -137,6 +137,11 @@ requireText(
 );
 requireText(
   shared,
+  "case 'timeout': return '检查超时 · 使用当前版本';",
+  'update timeout UI state'
+);
+requireText(
+  shared,
   "makeInfoRow('脚本版本')",
   'shared script version row'
 );
