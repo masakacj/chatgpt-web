@@ -711,14 +711,17 @@ final class UnifiedScriptStore {
             return url
         }
 
-        components.queryItems = [
+        var items = components.queryItems ?? []
+        items.removeAll { $0.name == "t" }
+        items.append(
             URLQueryItem(
                 name: "t",
                 value: String(
                     Int(Date().timeIntervalSince1970)
                 )
             )
-        ]
+        )
+        components.queryItems = items
 
         return components.url ?? url
     }
