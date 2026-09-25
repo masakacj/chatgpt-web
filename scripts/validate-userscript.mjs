@@ -43,6 +43,9 @@ requireText('restoreToolGroups()', 'tool compaction restore path');
 requireText("makeInfoRow('脚本版本')", 'S panel script version row');
 requireText("makeInfoRow('更新状态')", 'S panel update status row');
 requireText("state.nativeStatus = {", 'S panel runtime status refresh');
+requireText("messageHandlers?.chatGPTNative", 'narrow native hot-update bridge');
+requireText('requestNativeUpdateCheck()', 'S-triggered native update check');
+requireText('openSidebar', 'sidebar gesture API');
 
 for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
   requireText(status, 'conversation state ' + status);
@@ -51,7 +54,6 @@ for (const status of ['running', 'waiting_user', 'settling', 'completed_unread',
 const forbidden = [
   ['minTurns', 'length-gated optimization'],
   ['keepRecent', 'legacy recent-turn threshold'],
-  ['window.webkit?.messageHandlers', 'native JS bridge'],
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
   [".removeAttribute('src')", 'media source unloading'],
