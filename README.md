@@ -1,62 +1,82 @@
-# ChatGPT Safari Lite
+# ChatGPT Web Unified
 
-A Safari-first ChatGPT client enhancement. The browser is now the client: no WKWebView shell, no native JavaScript bridge, and no custom conversation renderer.
+One userscript for both desktop Tampermonkey and iOS Safari userscript extensions.
 
-## Why this version
-
-The previous iOS wrapper could diverge from real Safari in layout, keyboard, scrolling, login, file upload and WebKit lifecycle behavior. This version keeps the official `https://chatgpt.com/` page in Safari and adds only a small userscript.
-
-The userscript deliberately avoids the risky optimizations from the old app:
-
-- no DOM snapshots or `innerHTML` replacement;
-- no hiding/fixed-height conversation turns;
-- no image/video/iframe source removal;
-- no custom tool-call collapsing;
-- no native state bridge or native loading/status model.
-
-The userscript keeps one conservative rendering hint active continuously: `content-visibility: auto`. Safari still renders visible content normally, while it may skip work for offscreen conversation turns. The currently streaming turn and any focused/interactive turn are explicitly excluded.\n\nConversation status tracking mirrors the desktop state model without replacing ChatGPT's message DOM: `running → waiting_user → settling → completed_unread → completed_read`. Completion uses a 2.8-second settling window; an unread completed chat becomes read only after it is actually visible for 1.2 seconds. State is persisted in `localStorage` and synchronized across tabs with `BroadcastChannel`, with the browser `storage` event as fallback.
-
-## iPhone / iPad installation
-
-Safari itself does not install `.user.js` files directly. Use a Safari userscript extension that supports standard userscript metadata, enable it for `chatgpt.com`, then install:
+There is only one maintained runtime source:
 
 `safari/chatgpt-safari.user.js`
 
-Raw update URL:
+The path is kept for backward compatibility with existing iOS installations, but the file is now the canonical cross-platform script. Desktop and iOS use the exact same file, version, performance logic and conversation-state logic.
+
+## Canonical install URL
 
 `https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-safari.user.js`
 
-The script includes `@updateURL` and `@downloadURL` metadata pointing to the same file.
+Install that same URL on:
+
+- Desktop: Tampermonkey / Violentmonkey / compatible userscript manager.
+- iPhone / iPad: a Safari userscript extension that supports standard userscript metadata.
+
+The script includes `@updateURL` and `@downloadURL` pointing to the same canonical file, so both platforms follow the same update stream.
+
+## Shared performance behavior
+
+The optimization layer is deliberately browser-safe and identical on desktop and iOS:
+
+- always-on `content-visibility: auto` for eligible conversation turns;
+- the currently streaming turn is excluded;
+- focused / interactive turns are excluded;
+- no `innerHTML` replacement or DOM snapshots;
+- no fixed-height message freezing;
+- no image/video/iframe source unloading;
+- no separate native bridge.
+
+This means performance changes are made once and roll out to both platforms.
+
+## Shared conversation-state model
+
+Both platforms use the same state machine:
+
+`running → waiting_user → settling → completed_unread → completed_read`
+
+Rules:
+
+- completion settling window: 2.8 seconds;
+- completed-unread becomes read after 1.2 seconds of actual visible dwell;
+- state persists in `localStorage`;
+- cross-tab synchronization uses `BroadcastChannel`;
+- the browser `storage` event is the fallback;
+- sidebar status dots and the floating control read from this same state store.
+
+The custom status layer does not replace ChatGPT message DOM and is independent of the official unread indicator.
 
 ## Controls
 
-A small floating **S** button appears at the top-right of ChatGPT. It does not resize the page.
+The floating control is part of the same script on both platforms.
 
-- **常驻轻量优化** — on/off. It is active from the beginning of a conversation; the currently streaming turn and focused/interactive turns are protected.\n- **对话状态** — running / waiting / settling / unread / read is tracked independently of the official blue-dot logic. The floating button reflects the current chat and the sidebar gets non-layout-shifting status dots.
-- **重新加载 ChatGPT** — reloads the official page.
-- **恢复官方页面显示** — disables all performance hints immediately.
-- **隐藏悬浮按钮** — hides the control. It can be restored from the console with `ChatGPTSafari.showControl()`.
+- **常驻轻量优化** — enable or disable performance hints.
+- **重新加载 ChatGPT** — reload the official page.
+- **恢复官方页面显示** — remove performance hints immediately.
+- **隐藏悬浮按钮** — hide the control.
 
-Useful console checks:
+Console API:
 
 ```js
-ChatGPTSafari.getState()
-ChatGPTSafari.setEnabled(false)
+ChatGPTWeb.getState()
+ChatGPTWeb.setEnabled(false)
+ChatGPTWeb.showControl()
 ```
 
-Settings are stored only in Safari localStorage for `chatgpt.com`.
-
-## Repository layout
-
-```text
-safari/chatgpt-safari.user.js   # the complete Safari userscript
-scripts/validate-userscript.mjs # metadata/version safety checks
-scripts/package-userscript.mjs  # release packaging
-.github/workflows/safari.yml     # syntax check + release artifact
-```
+For compatibility with existing iOS installs, `ChatGPTSafari` remains an alias of `ChatGPTWeb`.
 
 ## Release
 
-Pushes to `main` run syntax/metadata validation and upload a packaged artifact. A tag such as `v0.2.2` publishes the userscript and ZIP to GitHub Releases.
+Every push to `main` validates the canonical script and packages:
 
-The earlier native iOS client remains available in Git history; it is no longer the active architecture.
+- `ChatGPT-Web-Unified.user.js`
+- `ChatGPT-Web-Unified.zip`
+- SHA-256 files
+
+The release tag is derived from `package.json`, for example `v0.3.0`.
+
+The earlier WKWebView iOS client and the old standalone desktop optimizer are legacy architectures and should not be maintained separately.
