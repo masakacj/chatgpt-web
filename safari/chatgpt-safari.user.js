@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.5
+// @version      0.3.6
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.5';
+  const VERSION = '0.3.6';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -47,6 +47,7 @@
     observer: null,
     refreshTimer: 0,
     statusTimer: 0,
+    sidebarGesture: null,
     optimizedTurns: new Set(),
     toolGroups: new Set(),
     toolRecords: new WeakMap(),
@@ -851,6 +852,125 @@
     return false;
   }
 
+  const SIDEBAR_GESTURE = {
+    openStartPx: 84,
+    closeStartPx: 420,
+    triggerPx: 24,
+    axisRatio: 1.0,
+    maxDurationMs: 1200,
+  };
+
+  function sidebarGestureStart(event) {
+    if (state.destroyed) return;
+    if (event.touches?.length !== 1) return;
+
+    const touch = event.touches[0];
+    const open = isSidebarOpen();
+    const closeStartPx = Math.min(
+      SIDEBAR_GESTURE.closeStartPx,
+      Math.max(180, window.innerWidth * 0.84)
+    );
+
+    const eligible = open
+      ? touch.clientX <= closeStartPx
+      : touch.clientX <= SIDEBAR_GESTURE.openStartPx;
+
+    if (!eligible) {
+      state.sidebarGesture = null;
+      return;
+    }
+
+    state.sidebarGesture = {
+      x: touch.clientX,
+      y: touch.clientY,
+      at: performance.now(),
+      open,
+      fired: false,
+    };
+  }
+
+  function sidebarGestureMove(event) {
+    const gesture = state.sidebarGesture;
+    if (!gesture || gesture.fired) return;
+    if (event.touches?.length !== 1) return;
+
+    const touch = event.touches[0];
+    const dx = touch.clientX - gesture.x;
+    const dy = touch.clientY - gesture.y;
+    const elapsed = performance.now() - gesture.at;
+
+    if (elapsed > SIDEBAR_GESTURE.maxDurationMs) {
+      state.sidebarGesture = null;
+      return;
+    }
+
+    const horizontal =
+      dx >= SIDEBAR_GESTURE.triggerPx &&
+      Math.abs(dx) >=
+        Math.abs(dy) * SIDEBAR_GESTURE.axisRatio;
+
+    if (!horizontal) return;
+
+    gesture.fired = true;
+
+    if (gesture.open) {
+      closeSidebar();
+    } else {
+      openSidebar();
+    }
+  }
+
+  function sidebarGestureEnd() {
+    state.sidebarGesture = null;
+  }
+
+  function setupSidebarGestures() {
+    document.addEventListener(
+      'touchstart',
+      sidebarGestureStart,
+      { passive: true, capture: true }
+    );
+    document.addEventListener(
+      'touchmove',
+      sidebarGestureMove,
+      { passive: true, capture: true }
+    );
+    document.addEventListener(
+      'touchend',
+      sidebarGestureEnd,
+      { passive: true, capture: true }
+    );
+    document.addEventListener(
+      'touchcancel',
+      sidebarGestureEnd,
+      { passive: true, capture: true }
+    );
+  }
+
+  function teardownSidebarGestures() {
+    document.removeEventListener(
+      'touchstart',
+      sidebarGestureStart,
+      true
+    );
+    document.removeEventListener(
+      'touchmove',
+      sidebarGestureMove,
+      true
+    );
+    document.removeEventListener(
+      'touchend',
+      sidebarGestureEnd,
+      true
+    );
+    document.removeEventListener(
+      'touchcancel',
+      sidebarGestureEnd,
+      true
+    );
+    state.sidebarGesture = null;
+  }
+
   function createControl() {
     if (!state.settings.showControl || state.destroyed) return;
     if (!document.body || document.getElementById(HOST_ID)) return;
@@ -1209,6 +1329,7 @@
     window.removeEventListener('hashchange', onRoute);
     document.removeEventListener('visibilitychange', onVisibility);
     window.removeEventListener('storage', onStorageSync);
+    teardownSidebarGestures();
     try { state.channel?.close?.(); } catch (_) {}
 
     restoreOptimizedTurns();
@@ -1249,6 +1370,7 @@
   installStyle();
   setupConversationStateSync();
   setupObservers();
+  setupSidebarGestures();
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
