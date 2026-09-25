@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.2
+// @version      0.3.3
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.2';
+  const VERSION = '0.3.3';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -727,6 +727,10 @@
       '.panel.open { display: block; }',
       '.title { font-size: 13px; font-weight: 700; margin: 2px 2px 9px; }',
       '.status { font-size: 11px; opacity: .72; margin: 0 2px 10px; line-height: 1.35; }',
+      '.info { margin: 0 0 8px; padding: 8px 9px; border-radius: 10px; background: rgba(255,255,255,.07); }',
+      '.info-row { min-height: 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; }',
+      '.info-key { opacity: .58; }',
+      '.info-value { opacity: .92; text-align: right; font-variant-numeric: tabular-nums; }',
       '.row { width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid rgba(255,255,255,.11); }',
       '.row:first-of-type { border-top: 0; }',
       '.label { font-size: 13px; }',
@@ -754,11 +758,25 @@
     const status = document.createElement('div');
     status.className = 'status';
 
+    const info = document.createElement('div');
+    info.className = 'info';
+
+    const scriptInfo = makeInfoRow('脚本版本');
+    const appInfo = makeInfoRow('IPA 壳');
+    const updateInfo = makeInfoRow('更新状态');
+    const toolInfo = makeInfoRow('工具过程');
+    info.append(
+      scriptInfo.row,
+      appInfo.row,
+      updateInfo.row,
+      toolInfo.row
+    );
+
     const perfRow = document.createElement('label');
     perfRow.className = 'row';
     const perfLabel = document.createElement('span');
     perfLabel.className = 'label';
-    perfLabel.textContent = '常驻轻量优化';
+    perfLabel.textContent = '常驻平衡优化';
     const perfSwitch = document.createElement('input');
     perfSwitch.className = 'switch';
     perfSwitch.type = 'checkbox';
@@ -793,13 +811,34 @@
     foot.className = 'foot';
     foot.textContent = versionLine();
 
-    panel.append(title, status, perfRow, reloadRow, restoreRow, hideRow, foot);
+    panel.append(
+      title,
+      status,
+      info,
+      perfRow,
+      reloadRow,
+      restoreRow,
+      hideRow,
+      foot
+    );
     wrap.append(button, panel);
     shadow.append(style, wrap);
     document.body.appendChild(host);
 
     button.addEventListener('click', () => {
+      const opening = !panel.classList.contains('open');
       panel.classList.toggle('open');
+
+      if (opening) {
+        state.nativeStatus = {
+          ...state.nativeStatus,
+          ...(window.__CHATGPT_NATIVE__ || {}),
+        };
+        scheduleRefresh(0);
+        evaluateConversationState();
+        renderConversationStates();
+        updateUI(turnCandidates().length);
+      }
     });
 
     perfSwitch.addEventListener('change', () => {
@@ -826,8 +865,34 @@
       state.ui = null;
     });
 
-    state.ui = { host, button, panel, status, perfSwitch, foot };
+    state.ui = {
+      host,
+      button,
+      panel,
+      status,
+      perfSwitch,
+      foot,
+      scriptInfo: scriptInfo.value,
+      appInfo: appInfo.value,
+      updateInfo: updateInfo.value,
+      toolInfo: toolInfo.value,
+    };
     updateUI(turnCandidates().length);
+  }
+
+  function makeInfoRow(label) {
+    const row = document.createElement('div');
+    row.className = 'info-row';
+
+    const key = document.createElement('span');
+    key.className = 'info-key';
+    key.textContent = label;
+
+    const value = document.createElement('span');
+    value.className = 'info-value';
+
+    row.append(key, value);
+    return { row, value };
   }
 
   function updateStatusLabel() {
@@ -883,6 +948,24 @@
         ? ' · 工具折叠 ' + state.toolCounts.collapsed
         : '');
 
+    if (ui.scriptInfo) {
+      ui.scriptInfo.textContent = 'v' + VERSION;
+    }
+    if (ui.appInfo) {
+      ui.appInfo.textContent = state.nativeStatus?.appVersion
+        ? 'v' + state.nativeStatus.appVersion
+        : '浏览器';
+    }
+    if (ui.updateInfo) {
+      ui.updateInfo.textContent = updateStatusLabel();
+    }
+    if (ui.toolInfo) {
+      ui.toolInfo.textContent =
+        state.toolCounts.groups > 0
+          ? state.toolCounts.collapsed + ' / ' +
+            state.toolCounts.groups + ' 已折叠'
+          : '无';
+    }
     if (ui.foot) ui.foot.textContent = versionLine();
   }
 
