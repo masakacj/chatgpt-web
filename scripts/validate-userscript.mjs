@@ -21,6 +21,7 @@ if (!runtimeVersion) fail('runtime VERSION not found');
 if (metadataVersion !== pkg.version) fail('@version does not match package.json');
 if (runtimeVersion !== pkg.version) fail('runtime VERSION does not match package.json');
 
+requireText('// @name         ChatGPT Web Unified', 'unified userscript name');
 requireText('// @match        https://chatgpt.com/*', 'chatgpt.com match');
 requireText('// @run-at       document-start', 'document-start injection');
 requireText('// @grant        none', 'grant none');
@@ -32,6 +33,8 @@ requireText('const READ_DWELL_MS = 1200;', 'desktop-compatible read dwell');
 requireText('new BroadcastChannel(STATE_CHANNEL)', 'cross-tab state sync');
 requireText("window.addEventListener('storage', onStorageSync)", 'storage-event sync fallback');
 requireText("attachShadow({ mode: 'open' })", 'isolated control UI');
+requireText("const GLOBAL_KEY = 'ChatGPTWeb';", 'cross-platform global API');
+requireText("window[LEGACY_GLOBAL_KEY] = api;", 'legacy iOS API alias');
 
 for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
   requireText(status, 'conversation state ' + status);
@@ -54,6 +57,7 @@ console.log(JSON.stringify({
   ok: true,
   version: pkg.version,
   bytes: Buffer.byteLength(source),
-  architecture: 'Safari + userscript',
+  architecture: 'single userscript for desktop + iOS',
   stateModel: 'running > waiting_user > settling > completed_unread > completed_read',
+  canonicalSource: scriptPath,
 }, null, 2));
