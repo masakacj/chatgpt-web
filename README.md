@@ -116,3 +116,17 @@ The earlier WKWebView iOS client and the old standalone desktop optimizer are le
 ## S panel refresh
 
 Opening the floating **S** control forces an immediate runtime refresh. The panel shows separate rows for the active userscript version, IPA shell version, hot-update state, and completed tool-process compaction count. These values continue to refresh while the page state changes.
+
+
+## Hot-updatable sidebar gestures
+
+Starting with iOS shell 0.3.6, sidebar swipe recognition lives in the Unified userscript rather than native UIKit gesture recognizers. The native shell keeps WebKit back/forward navigation gestures disabled, while the userscript detects sidebar gestures from touch events.
+
+Current tuning:
+- sidebar-open gesture may start within the left 84 px;
+- horizontal travel threshold is 24 px;
+- horizontal/vertical intent ratio is 1.0;
+- completed gestures must finish within 1.2 seconds;
+- when the sidebar is open, the close gesture may start within the left-side sidebar region.
+
+These thresholds can be changed by userscript hot update without rebuilding the IPA.
