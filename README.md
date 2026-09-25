@@ -143,3 +143,14 @@ Native-shell releases also attach the unsigned IPA and its SHA-256 file.
 - Shared optimization/state changes belong only in `chatgpt-safari.user.js`.
 - iOS gesture changes belong only in `chatgpt-ios-gestures.user.js`.
 - Native Swift changes should be limited to shell capabilities such as WebKit configuration, permissions, and loading/updating the two runtime scripts.
+
+
+## Update check fail-safe
+
+Update checks are fail-safe starting with shared core 0.3.9 / iOS shell 0.3.9.
+
+- shared core and iOS gesture updates are checked in parallel;
+- each GitHub Raw request has an 8-second timeout;
+- the S panel has a 10-second UI watchdog;
+- timeout falls back to the current cached/bundled runtime;
+- a failed gesture update does not block the shared runtime, and vice versa.
