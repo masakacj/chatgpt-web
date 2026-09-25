@@ -46,6 +46,8 @@ requireText("state.nativeStatus = {", 'S panel runtime status refresh');
 requireText("messageHandlers?.chatGPTNative", 'narrow native hot-update bridge');
 requireText('requestNativeUpdateCheck()', 'S-triggered native update check');
 requireText('openSidebar', 'sidebar gesture API');
+requireText('closeSidebar', 'sidebar close API');
+requireText('isSidebarOpen', 'sidebar state API');
 
 for (const status of ['running', 'waiting_user', 'settling', 'completed_unread', 'completed_read']) {
   requireText(status, 'conversation state ' + status);
