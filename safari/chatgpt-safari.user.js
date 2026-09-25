@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.4
+// @version      0.3.5
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.4';
+  const VERSION = '0.3.5';
   const GLOBAL_KEY = 'ChatGPTWeb';
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -772,6 +772,85 @@
     return false;
   }
 
+  function isSidebarOpen() {
+    const openButton = document.querySelector(
+      '[data-testid="sidebar-button"][aria-expanded="true"],' +
+      '[data-testid="close-sidebar-button"],' +
+      'button[aria-label*="Close sidebar"],' +
+      'button[aria-label*="Hide sidebar"],' +
+      'button[aria-label*="Collapse sidebar"],' +
+      'button[aria-label*="关闭侧边栏"],' +
+      'button[aria-label*="隐藏侧边栏"],' +
+      'button[aria-label*="收起侧边栏"]'
+    );
+
+    if (
+      openButton instanceof HTMLElement &&
+      openButton.getClientRects().length > 0
+    ) {
+      return true;
+    }
+
+    const nav = document.querySelector(
+      'nav[aria-label*="Chat"],' +
+      'aside nav,' +
+      '[data-testid*="sidebar"] nav'
+    );
+
+    if (!(nav instanceof HTMLElement)) return false;
+
+    const rect = nav.getBoundingClientRect();
+    return rect.width > 120 && rect.right > 0;
+  }
+
+  function closeSidebar() {
+    const selectors = [
+      '[data-testid="close-sidebar-button"]',
+      '[data-testid="sidebar-button"][aria-expanded="true"]',
+      'button[aria-label*="Close sidebar"]',
+      'button[aria-label*="Hide sidebar"]',
+      'button[aria-label*="Collapse sidebar"]',
+      'button[aria-label*="关闭侧边栏"]',
+      'button[aria-label*="隐藏侧边栏"]',
+      'button[aria-label*="收起侧边栏"]',
+      'button[aria-label*="关闭导航"]',
+    ];
+
+    for (const selector of selectors) {
+      const button = document.querySelector(selector);
+      if (
+        button instanceof HTMLElement &&
+        button.getClientRects().length > 0
+      ) {
+        button.click();
+        return true;
+      }
+    }
+
+    const candidates = Array.from(
+      document.querySelectorAll('button,[role="button"]')
+    );
+
+    for (const button of candidates) {
+      const label = [
+        button.getAttribute?.('aria-label') || '',
+        button.getAttribute?.('title') || '',
+        button.textContent || '',
+      ].join(' ').replace(/\s+/g, ' ').trim();
+
+      if (
+        /(sidebar|navigation|menu|侧边栏|导航|菜单)/i.test(label) &&
+        /(close|hide|collapse|关闭|隐藏|收起)/i.test(label) &&
+        button.getClientRects().length > 0
+      ) {
+        button.click();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function createControl() {
     if (!state.settings.showControl || state.destroyed) return;
     if (!document.body || document.getElementById(HOST_ID)) return;
@@ -1156,7 +1235,9 @@
     setEnabled,
     setNativeStatus,
     requestNativeUpdateCheck,
+    isSidebarOpen,
     openSidebar,
+    closeSidebar,
     showControl,
     refresh: () => scheduleRefresh(0),
     destroy,
