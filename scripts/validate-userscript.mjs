@@ -233,6 +233,21 @@ requireText(
 );
 requireText(
   gesture,
+  'edgeStartPx: 96',
+  'edge-based swipe start zone'
+);
+requireText(
+  gesture,
+  "gesture.edge === 'left'",
+  'left-edge swipe semantics'
+);
+requireText(
+  gesture,
+  "gesture.edge === 'right'",
+  'right-edge swipe semantics'
+);
+requireText(
+  gesture,
   "window.addEventListener('touchstart'",
   'window-capture touchstart listener'
 );
