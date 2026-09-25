@@ -142,6 +142,11 @@ requireText(
 );
 requireText(
   shared,
+  "failed ? '重试更新'",
+  'manual update retry button state'
+);
+requireText(
+  shared,
   "makeInfoRow('脚本版本')",
   'shared script version row'
 );
