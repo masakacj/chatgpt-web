@@ -485,7 +485,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         private func topViewController() -> UIViewController? {
             guard
                 let scene = UIApplication.shared.connectedScenes
-                    .compactMap { $0 as? UIWindowScene }
+                    .compactMap({ $0 as? UIWindowScene })
                     .first(where: {
                         $0.activationState == .foregroundActive
                     }),
