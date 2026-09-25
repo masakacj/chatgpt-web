@@ -238,6 +238,26 @@ requireText(
 );
 requireText(
   gesture,
+  'twoFingerTriggerPx: 6',
+  'two-finger sidebar scroll threshold'
+);
+requireText(
+  gesture,
+  'function findSidebarScrollContainer',
+  'sidebar scroll-container discovery'
+);
+requireText(
+  gesture,
+  'function beginTwoFingerScroll',
+  'two-finger scroll start'
+);
+requireText(
+  gesture,
+  'function moveTwoFingerScroll',
+  'two-finger scroll movement'
+);
+requireText(
+  gesture,
   "gesture.edge === 'left'",
   'left-edge swipe semantics'
 );
