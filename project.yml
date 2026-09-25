@@ -22,8 +22,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb
         PRODUCT_NAME: ChatGPTWeb
-        MARKETING_VERSION: 0.3.3
-        CURRENT_PROJECT_VERSION: 5
+        MARKETING_VERSION: 0.3.4
+        CURRENT_PROJECT_VERSION: 6
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: ChatGPT Web
