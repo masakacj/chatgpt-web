@@ -17,8 +17,6 @@ targets:
     platform: iOS
     sources:
       - path: App
-    resources:
-      - path: safari/chatgpt-safari.user.js
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb
@@ -31,5 +29,17 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         CODE_SIGN_STYLE: Automatic
         SWIFT_EMIT_LOC_STRINGS: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    postBuildScripts:
+      - name: Embed Unified Userscript
+        script: |
+          set -euo pipefail
+          SOURCE="$SRCROOT/safari/chatgpt-safari.user.js"
+          DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/chatgpt-safari.user.js"
+          test -f "$SOURCE"
+          mkdir -p "$(dirname "$DEST")"
+          cp "$SOURCE" "$DEST"
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/chatgpt-safari.user.js
     scheme:
       testTargets: []
