@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ChatGPT Safari Lite
+// @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.2.2
-// @description  Safari-first ChatGPT helper: keep the official page intact and apply conservative rendering hints continuously.
+// @version      0.3.0
+// @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
 // @run-at       document-start
@@ -14,8 +14,9 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.2';
-  const GLOBAL_KEY = 'ChatGPTSafari';
+  const VERSION = '0.3.0';
+  const GLOBAL_KEY = 'ChatGPTWeb';
+  const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
   const HOST_ID = 'cgpt-safari-lite-host';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
@@ -27,6 +28,7 @@
 
   try {
     window[GLOBAL_KEY]?.destroy?.();
+    window[LEGACY_GLOBAL_KEY]?.destroy?.();
   } catch (_) {}
 
   const defaults = {
@@ -513,7 +515,7 @@
 
     const title = document.createElement('div');
     title.className = 'title';
-    title.textContent = 'ChatGPT Safari Lite';
+    title.textContent = 'ChatGPT Web Unified';
 
     const status = document.createElement('div');
     status.className = 'status';
@@ -555,7 +557,7 @@
 
     const foot = document.createElement('div');
     foot.className = 'foot';
-    foot.textContent = 'v' + VERSION + ' · Safari 原生页面，无 WKWebView';
+    foot.textContent = 'v' + VERSION + ' · PC / iOS 同一脚本';
 
     panel.append(title, status, perfRow, reloadRow, restoreRow, hideRow, foot);
     wrap.append(button, panel);
@@ -709,12 +711,14 @@
 
     try {
       delete window[GLOBAL_KEY];
+      delete window[LEGACY_GLOBAL_KEY];
     } catch (_) {
       window[GLOBAL_KEY] = undefined;
+      window[LEGACY_GLOBAL_KEY] = undefined;
     }
   }
 
-  window[GLOBAL_KEY] = {
+  const api = {
     version: VERSION,
     getState,
     setEnabled,
@@ -722,6 +726,9 @@
     refresh: () => scheduleRefresh(0),
     destroy,
   };
+
+  window[GLOBAL_KEY] = api;
+  window[LEGACY_GLOBAL_KEY] = api;
 
   installStyle();
   setupConversationStateSync();
