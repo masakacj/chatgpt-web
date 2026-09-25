@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.5
+// @version      0.1.6
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.5';
+  const VERSION = '0.1.6';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -30,10 +30,14 @@
     triggerPx: 18,
     axisRatio: 0.90,
     maxDurationMs: 1500,
+    twoFingerTriggerPx: 6,
+    twoFingerAxisRatio: 0.75,
+    twoFingerScrollMultiplier: 1.0,
   });
 
   const state = {
     gesture: null,
+    twoFingerScroll: null,
     destroyed: false,
   };
 
@@ -130,6 +134,185 @@
     }
 
     return null;
+  }
+
+  function isScrollable(node) {
+    if (!(node instanceof HTMLElement) || !visible(node)) return false;
+
+    const range = node.scrollHeight - node.clientHeight;
+    if (range < 24 || node.clientHeight < 72) return false;
+
+    const style = getComputedStyle(node);
+    const overflowY = String(style.overflowY || '');
+
+    return (
+      /(auto|scroll|overlay)/i.test(overflowY) ||
+      node.matches?.(
+        '[data-radix-scroll-area-viewport],' +
+        '[class*="overflow-y-auto"],' +
+        '[class*="overflow-auto"]'
+      ) ||
+      range >= 120
+    );
+  }
+
+  function findSidebarScrollContainer(target = null) {
+    const drawer = findSidebarDrawer();
+    if (!(drawer instanceof HTMLElement)) return null;
+
+    let node = target instanceof HTMLElement
+      ? target
+      : target?.parentElement;
+
+    while (
+      node instanceof HTMLElement &&
+      drawer.contains(node)
+    ) {
+      if (isScrollable(node)) {
+        return node;
+      }
+      if (node === drawer) break;
+      node = node.parentElement;
+    }
+
+    const candidates = [
+      drawer,
+      ...drawer.querySelectorAll([
+        '[data-radix-scroll-area-viewport]',
+        '[class*="overflow-y-auto"]',
+        '[class*="overflow-auto"]',
+        '[style*="overflow-y"]',
+        'nav',
+        'section',
+        'main',
+        'div',
+      ].join(',')),
+    ];
+
+    let best = null;
+    let bestScore = -1;
+
+    for (const candidate of candidates) {
+      if (!(candidate instanceof HTMLElement) || !isScrollable(candidate)) {
+        continue;
+      }
+
+      const range = candidate.scrollHeight - candidate.clientHeight;
+      const style = getComputedStyle(candidate);
+      const explicitScrollable =
+        /(auto|scroll|overlay)/i.test(String(style.overflowY || '')) ||
+        candidate.matches?.(
+          '[data-radix-scroll-area-viewport],' +
+          '[class*="overflow-y-auto"],' +
+          '[class*="overflow-auto"]'
+        );
+
+      const score =
+        (explicitScrollable ? 100000 : 0) +
+        range +
+        Math.min(candidate.clientHeight, 1200);
+
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+
+    return best;
+  }
+
+  function touchCenter(touches) {
+    if (!touches || touches.length < 2) return null;
+
+    const a = touches[0];
+    const b = touches[1];
+
+    return {
+      x: (a.clientX + b.clientX) / 2,
+      y: (a.clientY + b.clientY) / 2,
+    };
+  }
+
+  function beginTwoFingerScroll(event) {
+    if (event.touches?.length !== 2 || !isSidebarOpen()) {
+      return false;
+    }
+
+    const point = touchCenter(event.touches);
+    const target =
+      event.touches[0]?.target instanceof HTMLElement
+        ? event.touches[0].target
+        : event.target;
+
+    const scroller = findSidebarScrollContainer(target);
+
+    if (!point || !(scroller instanceof HTMLElement)) {
+      return false;
+    }
+
+    state.gesture = null;
+    state.twoFingerScroll = {
+      scroller,
+      startX: point.x,
+      startY: point.y,
+      lastX: point.x,
+      lastY: point.y,
+      claimed: false,
+    };
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+    event.stopImmediatePropagation();
+
+    return true;
+  }
+
+  function moveTwoFingerScroll(event) {
+    const scroll = state.twoFingerScroll;
+
+    if (!scroll || event.touches?.length < 2) {
+      return false;
+    }
+
+    const point = touchCenter(event.touches);
+    if (!point) return false;
+
+    const totalDx = point.x - scroll.startX;
+    const totalDy = point.y - scroll.startY;
+
+    const verticalIntent =
+      Math.abs(totalDy) >= CONFIG.twoFingerTriggerPx &&
+      Math.abs(totalDy) >=
+        Math.abs(totalDx) * CONFIG.twoFingerAxisRatio;
+
+    if (!scroll.claimed && !verticalIntent) {
+      scroll.lastX = point.x;
+      scroll.lastY = point.y;
+      return true;
+    }
+
+    scroll.claimed = true;
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+    event.stopImmediatePropagation();
+
+    const deltaY = point.y - scroll.lastY;
+
+    scroll.scroller.scrollTop -=
+      deltaY * CONFIG.twoFingerScrollMultiplier;
+
+    scroll.lastX = point.x;
+    scroll.lastY = point.y;
+
+    return true;
+  }
+
+  function endTwoFingerScroll() {
+    state.twoFingerScroll = null;
+    state.gesture = null;
   }
 
   function isSidebarOpen() {
@@ -248,7 +431,17 @@
   }
 
   function start(event) {
-    if (state.destroyed || event.touches?.length !== 1) return;
+    if (state.destroyed) return;
+
+    if (event.touches?.length === 2) {
+      beginTwoFingerScroll(event);
+      return;
+    }
+
+    if (event.touches?.length !== 1) {
+      state.gesture = null;
+      return;
+    }
 
     const touch = event.touches[0];
     const width = window.innerWidth;
@@ -274,6 +467,17 @@
   }
 
   function move(event) {
+    if (event.touches?.length >= 2 || state.twoFingerScroll) {
+      if (!state.twoFingerScroll && event.touches?.length === 2) {
+        beginTwoFingerScroll(event);
+      }
+
+      if (state.twoFingerScroll) {
+        moveTwoFingerScroll(event);
+      }
+      return;
+    }
+
     const gesture = state.gesture;
     if (!gesture || event.touches?.length !== 1) return;
 
@@ -326,13 +530,20 @@
     }
   }
 
-  function end() {
+  function end(event) {
+    if (state.twoFingerScroll) {
+      if (!event?.touches || event.touches.length < 2) {
+        endTwoFingerScroll();
+      }
+      return;
+    }
+
     state.gesture = null;
   }
 
   function install() {
     window.addEventListener('touchstart', start, {
-      passive: true,
+      passive: false,
       capture: true,
     });
     window.addEventListener('touchmove', move, {
@@ -359,6 +570,7 @@
     window.removeEventListener('touchcancel', end, true);
 
     state.gesture = null;
+    state.twoFingerScroll = null;
 
     try {
       delete window[GLOBAL_KEY];
