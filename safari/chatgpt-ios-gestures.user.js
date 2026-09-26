@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.7
+// @version      0.1.8
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.7';
+  const VERSION = '0.1.8';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   try {
@@ -33,6 +33,8 @@
     twoFingerTriggerPx: 6,
     twoFingerAxisRatio: 0.75,
     twoFingerScrollMultiplier: 1.0,
+    twoFingerNavTriggerPx: 42,
+    twoFingerNavAxisRatio: 1.20,
   });
 
   const state = {
@@ -301,6 +303,8 @@
       lastX: point.x,
       lastY: point.y,
       scroller: null,
+      mode: null,
+      fired: false,
       claimed: false,
     };
 
@@ -325,7 +329,41 @@
       Math.abs(totalDy) >=
         Math.abs(totalDx) * CONFIG.twoFingerAxisRatio;
 
-    if (!scroll.claimed && !verticalIntent) {
+    const horizontalIntent =
+      Math.abs(totalDx) >= CONFIG.twoFingerNavTriggerPx &&
+      Math.abs(totalDx) >=
+        Math.abs(totalDy) * CONFIG.twoFingerNavAxisRatio;
+
+    if (!scroll.mode) {
+      if (horizontalIntent) {
+        scroll.mode = 'navigation';
+        scroll.claimed = true;
+      } else if (verticalIntent) {
+        scroll.mode = 'scroll';
+        scroll.claimed = true;
+      } else {
+        scroll.lastX = point.x;
+        scroll.lastY = point.y;
+        return true;
+      }
+    }
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+    event.stopImmediatePropagation();
+
+    if (scroll.mode === 'navigation') {
+      if (!scroll.fired) {
+        scroll.fired = true;
+
+        if (totalDx <= -CONFIG.twoFingerNavTriggerPx) {
+          window.history.back();
+        } else if (totalDx >= CONFIG.twoFingerNavTriggerPx) {
+          window.history.forward();
+        }
+      }
+
       scroll.lastX = point.x;
       scroll.lastY = point.y;
       return true;
@@ -334,15 +372,6 @@
     const deltaY = point.y - scroll.lastY;
     const scrollDelta =
       -deltaY * CONFIG.twoFingerScrollMultiplier;
-
-    if (!scroll.claimed) {
-      scroll.claimed = true;
-    }
-
-    if (event.cancelable) {
-      event.preventDefault();
-    }
-    event.stopImmediatePropagation();
 
     if (
       !(scroll.scroller instanceof HTMLElement) ||
