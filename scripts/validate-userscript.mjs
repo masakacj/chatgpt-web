@@ -77,6 +77,11 @@ requireText(
 );
 requireText(
   shared,
+  "HOST.endsWith('.chatgpt.com')",
+  'shared ChatGPT host gate'
+);
+requireText(
+  shared,
   'content-visibility: auto',
   'conservative rendering hint'
 );
@@ -220,6 +225,11 @@ requireText(
   gesture,
   '// @grant        none',
   'gesture grant none'
+);
+requireText(
+  gesture,
+  "HOST.endsWith('.chatgpt.com')",
+  'gesture ChatGPT host gate'
 );
 requireText(
   gesture,
