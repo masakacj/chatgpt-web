@@ -182,11 +182,9 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var gestureUpdateStatus = "bundled"
         private var checkingUpdate = false
 
-        private var lastChatGPTURL =
-            URL(string: "https://chatgpt.com/")!
-
         private var browserControlsExpanded = false
 
+        private weak var externalWebView: WKWebView?
         private weak var browserControlButton: UIButton?
         private weak var browserMenuView: UIVisualEffectView?
         private weak var browserBackButton: UIButton?
@@ -219,15 +217,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                 initialGestureScript?.origin == "cached"
                 ? "cached"
                 : "bundled"
-
-            installExternalBrowserControls(
-                on: webView
-            )
-
-            updateExternalBrowserControls(
-                for: webView,
-                url: webView.url
-            )
         }
 
         func startHotUpdate() {
@@ -397,21 +386,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             startHotUpdate()
-        }
-
-        private func isChatGPTURL(
-            _ url: URL?
-        ) -> Bool {
-            guard
-                let host =
-                    url?.host?.lowercased()
-            else {
-                return false
-            }
-
-            return
-                host == "chatgpt.com" ||
-                host.hasSuffix(".chatgpt.com")
         }
 
         private func makeBrowserActionButton(
@@ -596,7 +570,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             browserBackButton = back
             browserForwardButton = forward
 
-            control.isHidden = true
+            control.isHidden = false
         }
 
         private func collapseExternalBrowserMenu() {
@@ -604,53 +578,34 @@ struct ChatGPTWebView: UIViewRepresentable {
             browserMenuView?.isHidden = true
         }
 
-        private func updateExternalBrowserControls(
-            for webView: WKWebView,
-            url: URL?
-        ) {
-            let currentURL = url ?? webView.url
-
-            if isChatGPTURL(currentURL) {
-                if let currentURL {
-                    lastChatGPTURL = currentURL
-                }
-
-                browserControlButton?.isHidden = true
-                collapseExternalBrowserMenu()
-                return
-            }
-
+        private func updateExternalBrowserControls() {
             guard
-                let scheme =
-                    currentURL?.scheme?.lowercased(),
-                scheme == "http" ||
-                    scheme == "https"
+                let externalWebView,
+                externalWebView.superview != nil
             else {
-                browserControlButton?.isHidden = true
-                collapseExternalBrowserMenu()
                 return
             }
 
             browserControlButton?.isHidden = false
 
             browserBackButton?.isEnabled =
-                webView.canGoBack
+                externalWebView.canGoBack
 
             browserBackButton?.alpha =
-                webView.canGoBack ? 1.0 : 0.35
+                externalWebView.canGoBack ? 1.0 : 0.35
 
             browserForwardButton?.isEnabled =
-                webView.canGoForward
+                externalWebView.canGoForward
 
             browserForwardButton?.alpha =
-                webView.canGoForward ? 1.0 : 0.35
+                externalWebView.canGoForward ? 1.0 : 0.35
 
             if let menu = browserMenuView {
-                webView.bringSubviewToFront(menu)
+                externalWebView.bringSubviewToFront(menu)
             }
 
             if let button = browserControlButton {
-                webView.bringSubviewToFront(button)
+                externalWebView.bringSubviewToFront(button)
             }
         }
 
@@ -659,67 +614,103 @@ struct ChatGPTWebView: UIViewRepresentable {
             browserMenuView?.isHidden =
                 !browserControlsExpanded
 
-            if let webView {
-                updateExternalBrowserControls(
-                    for: webView,
-                    url: webView.url
-                )
-            }
+            updateExternalBrowserControls()
         }
 
         @objc private func browserBack() {
             guard
-                let webView,
-                webView.canGoBack
+                let externalWebView,
+                externalWebView.canGoBack
             else {
                 return
             }
 
             collapseExternalBrowserMenu()
-            webView.goBack()
+            externalWebView.goBack()
         }
 
         @objc private func browserForward() {
             guard
-                let webView,
-                webView.canGoForward
+                let externalWebView,
+                externalWebView.canGoForward
             else {
                 return
             }
 
             collapseExternalBrowserMenu()
-            webView.goForward()
+            externalWebView.goForward()
         }
 
         @objc private func browserReload() {
             collapseExternalBrowserMenu()
-            webView?.reload()
+            externalWebView?.reload()
         }
 
         @objc private func browserClose() {
-            guard let webView else {
+            guard let externalWebView else {
                 return
             }
 
-            collapseExternalBrowserMenu()
+            browserControlsExpanded = false
+            externalWebView.stopLoading()
+            externalWebView.navigationDelegate = nil
+            externalWebView.uiDelegate = nil
+            externalWebView.removeFromSuperview()
 
-            if let chatItem =
-                webView.backForwardList.backList
-                    .reversed()
-                    .first(where: {
-                        self.isChatGPTURL($0.url)
-                    }) {
-                webView.go(to: chatItem)
-                return
+            self.externalWebView = nil
+            browserControlButton = nil
+            browserMenuView = nil
+            browserBackButton = nil
+            browserForwardButton = nil
+        }
+
+        private func presentExternalWebView(
+            configuration: WKWebViewConfiguration
+        ) -> WKWebView? {
+            guard
+                externalWebView == nil,
+                let webView
+            else {
+                return nil
             }
 
-            var request = URLRequest(
-                url: lastChatGPTURL
+            let external = WKWebView(
+                frame: .zero,
+                configuration: configuration
             )
-            request.cachePolicy =
-                .useProtocolCachePolicy
 
-            webView.load(request)
+            external.translatesAutoresizingMaskIntoConstraints = false
+            external.navigationDelegate = self
+            external.uiDelegate = self
+            external.allowsBackForwardNavigationGestures = false
+            external.allowsLinkPreview = true
+            external.scrollView.keyboardDismissMode = .interactive
+            external.scrollView.contentInsetAdjustmentBehavior = .automatic
+            external.backgroundColor = .systemBackground
+            external.isOpaque = true
+
+            webView.addSubview(external)
+
+            NSLayoutConstraint.activate([
+                external.leadingAnchor.constraint(
+                    equalTo: webView.leadingAnchor
+                ),
+                external.trailingAnchor.constraint(
+                    equalTo: webView.trailingAnchor
+                ),
+                external.topAnchor.constraint(
+                    equalTo: webView.topAnchor
+                ),
+                external.bottomAnchor.constraint(
+                    equalTo: webView.bottomAnchor
+                )
+            ])
+
+            self.externalWebView = external
+            installExternalBrowserControls(on: external)
+            updateExternalBrowserControls()
+
+            return external
         }
 
         func webView(
@@ -939,27 +930,28 @@ struct ChatGPTWebView: UIViewRepresentable {
             didStartProvisionalNavigation
                 navigation: WKNavigation!
         ) {
-            collapseExternalBrowserMenu()
+            if webView === externalWebView {
+                collapseExternalBrowserMenu()
+            }
         }
 
         func webView(
             _ webView: WKWebView,
             didCommit navigation: WKNavigation!
         ) {
-            updateExternalBrowserControls(
-                for: webView,
-                url: webView.url
-            )
+            if webView === externalWebView {
+                updateExternalBrowserControls()
+            }
         }
 
         func webView(
             _ webView: WKWebView,
             didFinish navigation: WKNavigation!
         ) {
-            updateExternalBrowserControls(
-                for: webView,
-                url: webView.url
-            )
+            if webView === externalWebView {
+                updateExternalBrowserControls()
+                return
+            }
 
             ensureScriptsAreRunning()
         }
@@ -972,19 +964,30 @@ struct ChatGPTWebView: UIViewRepresentable {
                 WKNavigationAction,
             windowFeatures: WKWindowFeatures
         ) -> WKWebView? {
-            if navigationAction.targetFrame == nil {
-                webView.load(
-                    navigationAction.request
-                )
+            guard navigationAction.targetFrame == nil else {
+                return nil
             }
 
-            return nil
+            if let externalWebView {
+                externalWebView.load(
+                    navigationAction.request
+                )
+                return nil
+            }
+
+            return presentExternalWebView(
+                configuration: configuration
+            )
         }
 
         func webViewWebContentProcessDidTerminate(
             _ webView: WKWebView
         ) {
             webView.reload()
+
+            if webView === externalWebView {
+                updateExternalBrowserControls()
+            }
         }
 
         func webView(
