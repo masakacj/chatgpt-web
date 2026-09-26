@@ -253,13 +253,13 @@ requireText(
 );
 requireText(
   gesture,
-  'window.history.back();',
-  'two-finger left swipe back'
+  "if (totalDx <= -CONFIG.twoFingerNavTriggerPx) {\n          window.history.forward();",
+  'two-finger left swipe forward'
 );
 requireText(
   gesture,
-  'window.history.forward();',
-  'two-finger right swipe forward'
+  "} else if (totalDx >= CONFIG.twoFingerNavTriggerPx) {\n          window.history.back();",
+  'two-finger right swipe back'
 );
 requireText(
   gesture,
