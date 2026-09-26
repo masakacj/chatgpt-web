@@ -182,6 +182,16 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var gestureUpdateStatus = "bundled"
         private var checkingUpdate = false
 
+        private var lastChatGPTURL =
+            URL(string: "https://chatgpt.com/")!
+
+        private var browserControlsExpanded = false
+
+        private weak var browserControlButton: UIButton?
+        private weak var browserMenuView: UIVisualEffectView?
+        private weak var browserBackButton: UIButton?
+        private weak var browserForwardButton: UIButton?
+
         weak var webView: WKWebView?
 
         init(scriptStore: UnifiedScriptStore) {
@@ -209,6 +219,15 @@ struct ChatGPTWebView: UIViewRepresentable {
                 initialGestureScript?.origin == "cached"
                 ? "cached"
                 : "bundled"
+
+            installExternalBrowserControls(
+                on: webView
+            )
+
+            updateExternalBrowserControls(
+                for: webView,
+                url: webView.url
+            )
         }
 
         func startHotUpdate() {
@@ -378,6 +397,329 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             startHotUpdate()
+        }
+
+        private func isChatGPTURL(
+            _ url: URL?
+        ) -> Bool {
+            guard
+                let host =
+                    url?.host?.lowercased()
+            else {
+                return false
+            }
+
+            return
+                host == "chatgpt.com" ||
+                host.hasSuffix(".chatgpt.com")
+        }
+
+        private func makeBrowserActionButton(
+            systemName: String,
+            accessibilityLabel: String,
+            action: Selector
+        ) -> UIButton {
+            let button = UIButton(type: .system)
+            button.translatesAutoresizingMaskIntoConstraints = false
+
+            button.setImage(
+                UIImage(systemName: systemName),
+                for: .normal
+            )
+
+            button.tintColor = .label
+            button.accessibilityLabel =
+                accessibilityLabel
+
+            button.addTarget(
+                self,
+                action: action,
+                for: .touchUpInside
+            )
+
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(
+                    equalToConstant: 40
+                ),
+                button.heightAnchor.constraint(
+                    equalToConstant: 40
+                )
+            ])
+
+            return button
+        }
+
+        private func installExternalBrowserControls(
+            on webView: WKWebView
+        ) {
+            guard browserControlButton == nil else {
+                return
+            }
+
+            let control = UIButton(type: .system)
+            control.translatesAutoresizingMaskIntoConstraints = false
+            control.setImage(
+                UIImage(systemName: "safari"),
+                for: .normal
+            )
+            control.tintColor = .label
+            control.backgroundColor =
+                UIColor.secondarySystemBackground
+                    .withAlphaComponent(0.94)
+
+            control.layer.cornerRadius = 22
+            control.layer.shadowColor =
+                UIColor.black.cgColor
+            control.layer.shadowOpacity = 0.18
+            control.layer.shadowRadius = 8
+            control.layer.shadowOffset =
+                CGSize(width: 0, height: 3)
+
+            control.accessibilityLabel =
+                "网页控制"
+
+            control.addTarget(
+                self,
+                action:
+                    #selector(toggleExternalBrowserMenu),
+                for: .touchUpInside
+            )
+
+            let back = makeBrowserActionButton(
+                systemName: "chevron.backward",
+                accessibilityLabel: "后退",
+                action: #selector(browserBack)
+            )
+
+            let forward = makeBrowserActionButton(
+                systemName: "chevron.forward",
+                accessibilityLabel: "前进",
+                action: #selector(browserForward)
+            )
+
+            let reload = makeBrowserActionButton(
+                systemName: "arrow.clockwise",
+                accessibilityLabel: "刷新",
+                action: #selector(browserReload)
+            )
+
+            let close = makeBrowserActionButton(
+                systemName: "xmark",
+                accessibilityLabel: "关闭并返回 ChatGPT",
+                action: #selector(browserClose)
+            )
+
+            let stack = UIStackView(
+                arrangedSubviews: [
+                    back,
+                    forward,
+                    reload,
+                    close
+                ]
+            )
+
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            stack.axis = .horizontal
+            stack.alignment = .center
+            stack.distribution = .fillEqually
+            stack.spacing = 2
+
+            let blur = UIVisualEffectView(
+                effect: UIBlurEffect(
+                    style: .systemMaterial
+                )
+            )
+
+            blur.translatesAutoresizingMaskIntoConstraints = false
+            blur.layer.cornerRadius = 22
+            blur.clipsToBounds = true
+            blur.isHidden = true
+
+            blur.contentView.addSubview(stack)
+            webView.addSubview(blur)
+            webView.addSubview(control)
+
+            NSLayoutConstraint.activate([
+                control.widthAnchor.constraint(
+                    equalToConstant: 44
+                ),
+                control.heightAnchor.constraint(
+                    equalToConstant: 44
+                ),
+                control.trailingAnchor.constraint(
+                    equalTo:
+                        webView.safeAreaLayoutGuide
+                            .trailingAnchor,
+                    constant: -10
+                ),
+                control.topAnchor.constraint(
+                    equalTo:
+                        webView.safeAreaLayoutGuide
+                            .topAnchor,
+                    constant: 10
+                ),
+
+                blur.trailingAnchor.constraint(
+                    equalTo: control.leadingAnchor,
+                    constant: -8
+                ),
+                blur.centerYAnchor.constraint(
+                    equalTo: control.centerYAnchor
+                ),
+                blur.widthAnchor.constraint(
+                    equalToConstant: 176
+                ),
+                blur.heightAnchor.constraint(
+                    equalToConstant: 44
+                ),
+
+                stack.leadingAnchor.constraint(
+                    equalTo: blur.contentView.leadingAnchor,
+                    constant: 4
+                ),
+                stack.trailingAnchor.constraint(
+                    equalTo: blur.contentView.trailingAnchor,
+                    constant: -4
+                ),
+                stack.topAnchor.constraint(
+                    equalTo: blur.contentView.topAnchor,
+                    constant: 2
+                ),
+                stack.bottomAnchor.constraint(
+                    equalTo: blur.contentView.bottomAnchor,
+                    constant: -2
+                )
+            ])
+
+            browserControlButton = control
+            browserMenuView = blur
+            browserBackButton = back
+            browserForwardButton = forward
+
+            control.isHidden = true
+        }
+
+        private func collapseExternalBrowserMenu() {
+            browserControlsExpanded = false
+            browserMenuView?.isHidden = true
+        }
+
+        private func updateExternalBrowserControls(
+            for webView: WKWebView,
+            url: URL?
+        ) {
+            let currentURL = url ?? webView.url
+
+            if isChatGPTURL(currentURL) {
+                if let currentURL {
+                    lastChatGPTURL = currentURL
+                }
+
+                browserControlButton?.isHidden = true
+                collapseExternalBrowserMenu()
+                return
+            }
+
+            guard
+                let scheme =
+                    currentURL?.scheme?.lowercased(),
+                scheme == "http" ||
+                    scheme == "https"
+            else {
+                browserControlButton?.isHidden = true
+                collapseExternalBrowserMenu()
+                return
+            }
+
+            browserControlButton?.isHidden = false
+
+            browserBackButton?.isEnabled =
+                webView.canGoBack
+
+            browserBackButton?.alpha =
+                webView.canGoBack ? 1.0 : 0.35
+
+            browserForwardButton?.isEnabled =
+                webView.canGoForward
+
+            browserForwardButton?.alpha =
+                webView.canGoForward ? 1.0 : 0.35
+
+            if let menu = browserMenuView {
+                webView.bringSubviewToFront(menu)
+            }
+
+            if let button = browserControlButton {
+                webView.bringSubviewToFront(button)
+            }
+        }
+
+        @objc private func toggleExternalBrowserMenu() {
+            browserControlsExpanded.toggle()
+            browserMenuView?.isHidden =
+                !browserControlsExpanded
+
+            if let webView {
+                updateExternalBrowserControls(
+                    for: webView,
+                    url: webView.url
+                )
+            }
+        }
+
+        @objc private func browserBack() {
+            guard
+                let webView,
+                webView.canGoBack
+            else {
+                return
+            }
+
+            collapseExternalBrowserMenu()
+            webView.goBack()
+        }
+
+        @objc private func browserForward() {
+            guard
+                let webView,
+                webView.canGoForward
+            else {
+                return
+            }
+
+            collapseExternalBrowserMenu()
+            webView.goForward()
+        }
+
+        @objc private func browserReload() {
+            collapseExternalBrowserMenu()
+            webView?.reload()
+        }
+
+        @objc private func browserClose() {
+            guard let webView else {
+                return
+            }
+
+            collapseExternalBrowserMenu()
+
+            if let chatItem =
+                webView.backForwardList.backList
+                    .reversed()
+                    .first(where: {
+                        self.isChatGPTURL($0.url)
+                    }) {
+                webView.go(to: chatItem)
+                return
+            }
+
+            var request = URLRequest(
+                url: lastChatGPTURL
+            )
+            request.cachePolicy =
+                .useProtocolCachePolicy
+
+            webView.load(request)
         }
 
         func webView(
@@ -594,8 +936,31 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         func webView(
             _ webView: WKWebView,
+            didStartProvisionalNavigation
+                navigation: WKNavigation!
+        ) {
+            collapseExternalBrowserMenu()
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didCommit navigation: WKNavigation!
+        ) {
+            updateExternalBrowserControls(
+                for: webView,
+                url: webView.url
+            )
+        }
+
+        func webView(
+            _ webView: WKWebView,
             didFinish navigation: WKNavigation!
         ) {
+            updateExternalBrowserControls(
+                for: webView,
+                url: webView.url
+            )
+
             ensureScriptsAreRunning()
         }
 
