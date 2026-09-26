@@ -243,6 +243,26 @@ requireText(
 );
 requireText(
   gesture,
+  'twoFingerNavTriggerPx: 42',
+  'two-finger navigation threshold'
+);
+requireText(
+  gesture,
+  "scroll.mode = 'navigation'",
+  'two-finger horizontal mode lock'
+);
+requireText(
+  gesture,
+  'window.history.back();',
+  'two-finger left swipe back'
+);
+requireText(
+  gesture,
+  'window.history.forward();',
+  'two-finger right swipe forward'
+);
+requireText(
+  gesture,
   'function globalScrollCandidates',
   'global scroll candidate discovery'
 );
