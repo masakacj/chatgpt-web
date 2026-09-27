@@ -85,11 +85,15 @@ jobs:
           plutil -p "$APP/Info.plist" | grep -q "CFBundleIcons"
           plutil -p "$APP/Info.plist" | grep -q "AppIcon"
 
-      - name: Verify microphone permission
+      - name: Verify media permissions
         run: |
           set -euo pipefail
           APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
-          plutil -p "$APP/Info.plist" | grep -q "NSMicrophoneUsageDescription"
+          PLIST="$APP/Info.plist"
+          plutil -p "$PLIST" | grep -q "NSMicrophoneUsageDescription"
+          plutil -p "$PLIST" | grep -q "NSCameraUsageDescription"
+          plutil -p "$PLIST" | grep -q "NSPhotoLibraryUsageDescription"
+          plutil -p "$PLIST" | grep -q "NSPhotoLibraryAddUsageDescription"
 
       - name: Package unsigned IPA
         run: |

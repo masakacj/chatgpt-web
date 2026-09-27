@@ -734,11 +734,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             switch type {
-            case .microphone:
+            case .microphone, .camera, .cameraAndMicrophone:
                 decisionHandler(.grant)
-
-            case .camera, .cameraAndMicrophone:
-                decisionHandler(.deny)
 
             @unknown default:
                 decisionHandler(.deny)
