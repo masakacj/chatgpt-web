@@ -191,6 +191,13 @@ struct ChatGPTWebView: UIViewRepresentable {
         private weak var browserMenuView: UIVisualEffectView?
         private weak var browserBackButton: UIButton?
         private weak var browserForwardButton: UIButton?
+        private var browserControlDragStartTransform =
+            CGAffineTransform.identity
+
+        private static let browserControlPositionXKey =
+            "ChatGPTWeb.browserControlPositionX"
+        private static let browserControlPositionYKey =
+            "ChatGPTWeb.browserControlPositionY"
 
         weak var webView: WKWebView?
 
@@ -452,67 +459,20 @@ struct ChatGPTWebView: UIViewRepresentable {
                 CGSize(width: 0, height: 3)
 
             control.accessibilityLabel =
-                "网页控制"
+                "网页控制，可拖动"
 
-            control.addTarget(
-                self,
+            control.showsMenuAsPrimaryAction = true
+
+            let pan = UIPanGestureRecognizer(
+                target: self,
                 action:
-                    #selector(toggleExternalBrowserMenu),
-                for: .touchUpInside
+                    #selector(
+                        handleBrowserControlPan(_:)
+                    )
             )
+            pan.cancelsTouchesInView = true
+            control.addGestureRecognizer(pan)
 
-            let back = makeBrowserActionButton(
-                systemName: "chevron.backward",
-                accessibilityLabel: "后退",
-                action: #selector(browserBack)
-            )
-
-            let forward = makeBrowserActionButton(
-                systemName: "chevron.forward",
-                accessibilityLabel: "前进",
-                action: #selector(browserForward)
-            )
-
-            let reload = makeBrowserActionButton(
-                systemName: "arrow.clockwise",
-                accessibilityLabel: "刷新",
-                action: #selector(browserReload)
-            )
-
-            let close = makeBrowserActionButton(
-                systemName: "xmark",
-                accessibilityLabel: "关闭并返回 ChatGPT",
-                action: #selector(browserClose)
-            )
-
-            let stack = UIStackView(
-                arrangedSubviews: [
-                    back,
-                    forward,
-                    reload,
-                    close
-                ]
-            )
-
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            stack.axis = .horizontal
-            stack.alignment = .center
-            stack.distribution = .fillEqually
-            stack.spacing = 2
-
-            let blur = UIVisualEffectView(
-                effect: UIBlurEffect(
-                    style: .systemMaterial
-                )
-            )
-
-            blur.translatesAutoresizingMaskIntoConstraints = false
-            blur.layer.cornerRadius = 22
-            blur.clipsToBounds = true
-            blur.isHidden = true
-
-            blur.contentView.addSubview(stack)
-            webView.addSubview(blur)
             webView.addSubview(control)
 
             NSLayoutConstraint.activate([
@@ -533,46 +493,317 @@ struct ChatGPTWebView: UIViewRepresentable {
                         webView.safeAreaLayoutGuide
                             .topAnchor,
                     constant: 10
-                ),
-
-                blur.trailingAnchor.constraint(
-                    equalTo: control.leadingAnchor,
-                    constant: -8
-                ),
-                blur.centerYAnchor.constraint(
-                    equalTo: control.centerYAnchor
-                ),
-                blur.widthAnchor.constraint(
-                    equalToConstant: 176
-                ),
-                blur.heightAnchor.constraint(
-                    equalToConstant: 44
-                ),
-
-                stack.leadingAnchor.constraint(
-                    equalTo: blur.contentView.leadingAnchor,
-                    constant: 4
-                ),
-                stack.trailingAnchor.constraint(
-                    equalTo: blur.contentView.trailingAnchor,
-                    constant: -4
-                ),
-                stack.topAnchor.constraint(
-                    equalTo: blur.contentView.topAnchor,
-                    constant: 2
-                ),
-                stack.bottomAnchor.constraint(
-                    equalTo: blur.contentView.bottomAnchor,
-                    constant: -2
                 )
             ])
 
             browserControlButton = control
-            browserMenuView = blur
-            browserBackButton = back
-            browserForwardButton = forward
-
+            control.menu = makeBrowserControlMenu()
             control.isHidden = false
+
+            DispatchQueue.main.async {
+                [weak self, weak webView] in
+                guard
+                    let self,
+                    let webView
+                else {
+                    return
+                }
+
+                webView.layoutIfNeeded()
+                self.restoreBrowserControlPosition(
+                    in: webView
+                )
+            }
+        }
+
+        private func makeBrowserControlMenu()
+            -> UIMenu
+        {
+            let canGoBack =
+                externalWebView?.canGoBack == true
+            let canGoForward =
+                externalWebView?.canGoForward == true
+
+            let back = UIAction(
+                title: "后退",
+                image: UIImage(
+                    systemName: "chevron.backward"
+                ),
+                attributes:
+                    canGoBack ? [] : [.disabled]
+            ) { [weak self] _ in
+                self?.browserBack()
+            }
+
+            let forward = UIAction(
+                title: "前进",
+                image: UIImage(
+                    systemName: "chevron.forward"
+                ),
+                attributes:
+                    canGoForward ? [] : [.disabled]
+            ) { [weak self] _ in
+                self?.browserForward()
+            }
+
+            let reload = UIAction(
+                title: "刷新",
+                image: UIImage(
+                    systemName: "arrow.clockwise"
+                )
+            ) { [weak self] _ in
+                self?.browserReload()
+            }
+
+            let close = UIAction(
+                title: "关闭并返回 ChatGPT",
+                image: UIImage(
+                    systemName: "xmark"
+                )
+            ) { [weak self] _ in
+                self?.browserClose()
+            }
+
+            return UIMenu(
+                title: "",
+                children: [
+                    back,
+                    forward,
+                    reload,
+                    close
+                ]
+            )
+        }
+
+        private func browserControlSafeFrame(
+            in webView: WKWebView
+        ) -> CGRect {
+            var frame =
+                webView.safeAreaLayoutGuide
+                    .layoutFrame
+
+            if frame.width <= 0 ||
+               frame.height <= 0 {
+                frame = webView.bounds
+            }
+
+            return frame.insetBy(
+                dx: 6,
+                dy: 6
+            )
+        }
+
+        private func clampBrowserControl(
+            _ control: UIButton,
+            in webView: WKWebView
+        ) {
+            webView.layoutIfNeeded()
+
+            let safeFrame =
+                browserControlSafeFrame(
+                    in: webView
+                )
+
+            var dx: CGFloat = 0
+            var dy: CGFloat = 0
+            let frame = control.frame
+
+            if frame.minX < safeFrame.minX {
+                dx = safeFrame.minX - frame.minX
+            } else if frame.maxX > safeFrame.maxX {
+                dx = safeFrame.maxX - frame.maxX
+            }
+
+            if frame.minY < safeFrame.minY {
+                dy = safeFrame.minY - frame.minY
+            } else if frame.maxY > safeFrame.maxY {
+                dy = safeFrame.maxY - frame.maxY
+            }
+
+            if dx != 0 || dy != 0 {
+                control.transform =
+                    control.transform.translatedBy(
+                        x: dx,
+                        y: dy
+                    )
+            }
+        }
+
+        private func saveBrowserControlPosition(
+            _ control: UIButton,
+            in webView: WKWebView
+        ) {
+            let safeFrame =
+                browserControlSafeFrame(
+                    in: webView
+                )
+
+            guard
+                safeFrame.width > 0,
+                safeFrame.height > 0
+            else {
+                return
+            }
+
+            let x = min(
+                1,
+                max(
+                    0,
+                    (control.center.x -
+                        safeFrame.minX) /
+                        safeFrame.width
+                )
+            )
+
+            let y = min(
+                1,
+                max(
+                    0,
+                    (control.center.y -
+                        safeFrame.minY) /
+                        safeFrame.height
+                )
+            )
+
+            UserDefaults.standard.set(
+                Double(x),
+                forKey:
+                    Self.browserControlPositionXKey
+            )
+
+            UserDefaults.standard.set(
+                Double(y),
+                forKey:
+                    Self.browserControlPositionYKey
+            )
+        }
+
+        private func restoreBrowserControlPosition(
+            in webView: WKWebView
+        ) {
+            guard
+                let control = browserControlButton
+            else {
+                return
+            }
+
+            let defaults = UserDefaults.standard
+
+            guard
+                defaults.object(
+                    forKey:
+                        Self.browserControlPositionXKey
+                ) != nil,
+                defaults.object(
+                    forKey:
+                        Self.browserControlPositionYKey
+                ) != nil
+            else {
+                clampBrowserControl(
+                    control,
+                    in: webView
+                )
+                return
+            }
+
+            let safeFrame =
+                browserControlSafeFrame(
+                    in: webView
+                )
+
+            let x = CGFloat(
+                defaults.double(
+                    forKey:
+                        Self.browserControlPositionXKey
+                )
+            )
+
+            let y = CGFloat(
+                defaults.double(
+                    forKey:
+                        Self.browserControlPositionYKey
+                )
+            )
+
+            webView.layoutIfNeeded()
+            control.transform = .identity
+            webView.layoutIfNeeded()
+
+            let baseCenter = control.center
+            let targetCenter = CGPoint(
+                x:
+                    safeFrame.minX +
+                    safeFrame.width *
+                    min(1, max(0, x)),
+                y:
+                    safeFrame.minY +
+                    safeFrame.height *
+                    min(1, max(0, y))
+            )
+
+            control.transform =
+                CGAffineTransform(
+                    translationX:
+                        targetCenter.x -
+                        baseCenter.x,
+                    y:
+                        targetCenter.y -
+                        baseCenter.y
+                )
+
+            clampBrowserControl(
+                control,
+                in: webView
+            )
+        }
+
+        @objc private func handleBrowserControlPan(
+            _ gesture: UIPanGestureRecognizer
+        ) {
+            guard
+                let control = browserControlButton,
+                let externalWebView
+            else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                browserControlDragStartTransform =
+                    control.transform
+
+            case .changed:
+                let translation =
+                    gesture.translation(
+                        in: externalWebView
+                    )
+
+                var transform =
+                    browserControlDragStartTransform
+
+                transform.tx += translation.x
+                transform.ty += translation.y
+                control.transform = transform
+
+                clampBrowserControl(
+                    control,
+                    in: externalWebView
+                )
+
+            case .ended, .cancelled, .failed:
+                clampBrowserControl(
+                    control,
+                    in: externalWebView
+                )
+
+                saveBrowserControlPosition(
+                    control,
+                    in: externalWebView
+                )
+
+            default:
+                break
+            }
         }
 
         private func collapseExternalBrowserMenu() {
@@ -602,12 +833,13 @@ struct ChatGPTWebView: UIViewRepresentable {
             browserForwardButton?.alpha =
                 externalWebView.canGoForward ? 1.0 : 0.35
 
-            if let menu = browserMenuView {
-                externalWebView.bringSubviewToFront(menu)
-            }
-
             if let button = browserControlButton {
+                button.menu = makeBrowserControlMenu()
                 externalWebView.bringSubviewToFront(button)
+                clampBrowserControl(
+                    button,
+                    in: externalWebView
+                )
             }
         }
 
