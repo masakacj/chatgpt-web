@@ -39,7 +39,16 @@ final class ChatGPTWebUITests: XCTestCase {
                     )
             )
 
-        button.press(
+        let start =
+            button.coordinate(
+                withNormalizedOffset:
+                    CGVector(
+                        dx: 0.5,
+                        dy: 0.5
+                    )
+            )
+
+        start.press(
             forDuration: 0.15,
             thenDragTo: destination
         )
