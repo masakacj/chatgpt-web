@@ -2,12 +2,47 @@ import SwiftUI
 import UIKit
 import WebKit
 
+final class ChatGPTWebContainerView: UIView {
+    let webView: WKWebView
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(frame: .zero)
+
+        backgroundColor = .systemBackground
+
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(webView)
+
+        NSLayoutConstraint.activate([
+            webView.leadingAnchor.constraint(
+                equalTo: leadingAnchor
+            ),
+            webView.trailingAnchor.constraint(
+                equalTo: trailingAnchor
+            ),
+            webView.topAnchor.constraint(
+                equalTo: topAnchor
+            ),
+            webView.bottomAnchor.constraint(
+                equalTo: bottomAnchor
+            )
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 struct ChatGPTWebView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(scriptStore: .shared)
     }
 
-    func makeUIView(context: Context) -> WKWebView {
+    func makeUIView(
+        context: Context
+    ) -> ChatGPTWebContainerView {
         let scriptStore = UnifiedScriptStore.shared
         let controller = WKUserContentController()
 
@@ -62,7 +97,13 @@ struct ChatGPTWebView: UIViewRepresentable {
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
 
+        let container =
+            ChatGPTWebContainerView(
+                webView: webView
+            )
+
         context.coordinator.attach(
+            rootView: container,
             webView: webView,
             contentController: controller,
             initialScript: initialScript,
@@ -70,7 +111,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         )
 
         context.coordinator.installMainBrowserControls(
-            on: webView
+            in: container
         )
 
         var request = URLRequest(
@@ -81,21 +122,21 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         context.coordinator.startHotUpdate()
 
-        return webView
+        return container
     }
 
     func updateUIView(
-        _ uiView: WKWebView,
+        _ uiView: ChatGPTWebContainerView,
         context: Context
     ) {
         context.coordinator.refreshMainBrowserControls()
     }
 
     static func dismantleUIView(
-        _ uiView: WKWebView,
+        _ uiView: ChatGPTWebContainerView,
         coordinator: Coordinator
     ) {
-        uiView.configuration.userContentController
+        uiView.webView.configuration.userContentController
             .removeScriptMessageHandler(
                 forName: Coordinator.nativeMessageHandler
             )
@@ -214,6 +255,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         private static let browserControlPositionYKey =
             "ChatGPTWeb.browserControlPositionY"
 
+        weak var rootView:
+            ChatGPTWebContainerView?
         weak var webView: WKWebView?
 
         init(scriptStore: UnifiedScriptStore) {
@@ -221,11 +264,13 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         func attach(
+            rootView: ChatGPTWebContainerView,
             webView: WKWebView,
             contentController: WKUserContentController,
             initialScript: UnifiedScriptPayload?,
             initialGestureScript: UnifiedScriptPayload?
         ) {
+            self.rootView = rootView
             self.webView = webView
             self.contentController = contentController
             self.activeScript = initialScript
@@ -413,7 +458,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         func installMainBrowserControls(
-            on webView: WKWebView
+            in rootView: ChatGPTWebContainerView
         ) {
             guard mainControlButton == nil else {
                 return
@@ -431,18 +476,20 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.tintColor = .label
             control.backgroundColor =
                 UIColor.secondarySystemBackground
-                    .withAlphaComponent(0.92)
+                    .withAlphaComponent(0.96)
 
             control.layer.cornerRadius = 22
             control.layer.shadowColor =
                 UIColor.black.cgColor
-            control.layer.shadowOpacity = 0.18
+            control.layer.shadowOpacity = 0.22
             control.layer.shadowRadius = 8
             control.layer.shadowOffset =
                 CGSize(width: 0, height: 3)
 
             control.accessibilityLabel =
                 "ChatGPT Web 控制，可拖动"
+            control.accessibilityIdentifier =
+                "chatgpt.web.floatingControl"
 
             control.showsMenuAsPrimaryAction = true
 
@@ -456,7 +503,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             pan.cancelsTouchesInView = true
             control.addGestureRecognizer(pan)
 
-            webView.addSubview(control)
+            rootView.addSubview(control)
 
             NSLayoutConstraint.activate([
                 control.widthAnchor.constraint(
@@ -467,13 +514,13 @@ struct ChatGPTWebView: UIViewRepresentable {
                 ),
                 control.trailingAnchor.constraint(
                     equalTo:
-                        webView.safeAreaLayoutGuide
+                        rootView.safeAreaLayoutGuide
                             .trailingAnchor,
                     constant: -10
                 ),
                 control.topAnchor.constraint(
                     equalTo:
-                        webView.safeAreaLayoutGuide
+                        rootView.safeAreaLayoutGuide
                             .topAnchor,
                     constant: 10
                 )
@@ -484,31 +531,38 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.isHidden = false
 
             DispatchQueue.main.async {
-                [weak self, weak webView] in
+                [weak self, weak rootView] in
                 guard
                     let self,
-                    let webView
+                    let rootView
                 else {
                     return
                 }
 
-                webView.layoutIfNeeded()
+                rootView.layoutIfNeeded()
                 self.restoreMainControlPosition(
-                    in: webView
+                    in: rootView
                 )
-                webView.bringSubviewToFront(
+                rootView.bringSubviewToFront(
                     control
                 )
             }
         }
 
+        private func activeBrowserWebView()
+            -> WKWebView?
+        {
+            externalWebView ?? webView
+        }
+
         private func makeMainControlMenu()
             -> UIMenu
         {
+            let active = activeBrowserWebView()
             let canGoBack =
-                webView?.canGoBack == true
+                active?.canGoBack == true
             let canGoForward =
-                webView?.canGoForward == true
+                active?.canGoForward == true
 
             let back = UIAction(
                 title: "后退",
@@ -518,7 +572,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                 attributes:
                     canGoBack ? [] : [.disabled]
             ) { [weak self] _ in
-                self?.webView?.goBack()
+                self?.activeBrowserWebView()?
+                    .goBack()
             }
 
             let forward = UIAction(
@@ -529,7 +584,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                 attributes:
                     canGoForward ? [] : [.disabled]
             ) { [weak self] _ in
-                self?.webView?.goForward()
+                self?.activeBrowserWebView()?
+                    .goForward()
             }
 
             let reload = UIAction(
@@ -538,7 +594,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                     systemName: "arrow.clockwise"
                 )
             ) { [weak self] _ in
-                self?.webView?.reload()
+                self?.activeBrowserWebView()?
+                    .reload()
             }
 
             let update = UIAction(
@@ -560,28 +617,42 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self?.clearWebCacheKeepingLogin()
             }
 
+            var children: [UIMenuElement] = [
+                back,
+                forward,
+                reload,
+                update,
+                clearCache
+            ]
+
+            if externalWebView != nil {
+                let close = UIAction(
+                    title: "关闭网页并返回 ChatGPT",
+                    image: UIImage(
+                        systemName: "xmark"
+                    )
+                ) { [weak self] _ in
+                    self?.browserClose()
+                }
+                children.append(close)
+            }
+
             return UIMenu(
                 title: "",
-                children: [
-                    back,
-                    forward,
-                    reload,
-                    update,
-                    clearCache
-                ]
+                children: children
             )
         }
 
         private func mainControlSafeFrame(
-            in webView: WKWebView
+            in rootView: UIView
         ) -> CGRect {
             var frame =
-                webView.safeAreaLayoutGuide
+                rootView.safeAreaLayoutGuide
                     .layoutFrame
 
             if frame.width <= 0 ||
                frame.height <= 0 {
-                frame = webView.bounds
+                frame = rootView.bounds
             }
 
             return frame.insetBy(
@@ -592,13 +663,13 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private func clampMainControl(
             _ control: UIButton,
-            in webView: WKWebView
+            in rootView: UIView
         ) {
-            webView.layoutIfNeeded()
+            rootView.layoutIfNeeded()
 
             let safeFrame =
                 mainControlSafeFrame(
-                    in: webView
+                    in: rootView
                 )
 
             var dx: CGFloat = 0
@@ -639,11 +710,11 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private func saveMainControlPosition(
             _ control: UIButton,
-            in webView: WKWebView
+            in rootView: UIView
         ) {
             let safeFrame =
                 mainControlSafeFrame(
-                    in: webView
+                    in: rootView
                 )
 
             guard
@@ -687,7 +758,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         private func restoreMainControlPosition(
-            in webView: WKWebView
+            in rootView: UIView
         ) {
             guard
                 let control =
@@ -711,14 +782,14 @@ struct ChatGPTWebView: UIViewRepresentable {
             else {
                 clampMainControl(
                     control,
-                    in: webView
+                    in: rootView
                 )
                 return
             }
 
             let safeFrame =
                 mainControlSafeFrame(
-                    in: webView
+                    in: rootView
                 )
 
             let x = CGFloat(
@@ -735,9 +806,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                 )
             )
 
-            webView.layoutIfNeeded()
+            rootView.layoutIfNeeded()
             control.transform = .identity
-            webView.layoutIfNeeded()
+            rootView.layoutIfNeeded()
 
             let baseCenter = control.center
 
@@ -764,7 +835,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             clampMainControl(
                 control,
-                in: webView
+                in: rootView
             )
         }
 
@@ -774,7 +845,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             guard
                 let control =
                     mainControlButton,
-                let webView
+                let rootView
             else {
                 return
             }
@@ -787,7 +858,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             case .changed:
                 let translation =
                     gesture.translation(
-                        in: webView
+                        in: rootView
                     )
 
                 var transform =
@@ -799,18 +870,18 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                 clampMainControl(
                     control,
-                    in: webView
+                    in: rootView
                 )
 
             case .ended, .cancelled, .failed:
                 clampMainControl(
                     control,
-                    in: webView
+                    in: rootView
                 )
 
                 saveMainControlPosition(
                     control,
-                    in: webView
+                    in: rootView
                 )
 
             default:
@@ -820,7 +891,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         func refreshMainBrowserControls() {
             guard
-                let webView,
+                let rootView,
                 let control = mainControlButton
             else {
                 return
@@ -832,10 +903,10 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             clampMainControl(
                 control,
-                in: webView
+                in: rootView
             )
 
-            webView.bringSubviewToFront(
+            rootView.bringSubviewToFront(
                 control
             )
         }
@@ -1380,6 +1451,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             browserMenuView = nil
             browserBackButton = nil
             browserForwardButton = nil
+            refreshMainBrowserControls()
         }
 
         private func presentExternalWebView(
@@ -1425,8 +1497,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             ])
 
             self.externalWebView = external
-            installExternalBrowserControls(on: external)
-            updateExternalBrowserControls()
+            refreshMainBrowserControls()
 
             return external
         }
@@ -1655,7 +1726,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             didCommit navigation: WKNavigation!
         ) {
             if webView === externalWebView {
-                updateExternalBrowserControls()
+                refreshMainBrowserControls()
                 return
             }
 
@@ -1667,7 +1738,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             didFinish navigation: WKNavigation!
         ) {
             if webView === externalWebView {
-                updateExternalBrowserControls()
+                refreshMainBrowserControls()
                 return
             }
 

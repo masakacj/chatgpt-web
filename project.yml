@@ -56,4 +56,18 @@ targets:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/chatgpt-safari.user.js
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/chatgpt-ios-gestures.user.js
     scheme:
-      testTargets: []
+      testTargets:
+        - ChatGPTWebUITests
+
+  ChatGPTWebUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: ChatGPTWeb
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: ChatGPTWeb
