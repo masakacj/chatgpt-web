@@ -4,6 +4,7 @@ import WebKit
 
 final class ChatGPTWebContainerView: UIView {
     let webView: WKWebView
+    weak var floatingControl: UIView?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -28,6 +29,48 @@ final class ChatGPTWebContainerView: UIView {
                 equalTo: bottomAnchor
             )
         ])
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+
+        if let floatingControl,
+           floatingControl.superview === self {
+            bringSubviewToFront(
+                floatingControl
+            )
+        }
+    }
+
+    override func hitTest(
+        _ point: CGPoint,
+        with event: UIEvent?
+    ) -> UIView? {
+        if let floatingControl,
+           !floatingControl.isHidden,
+           floatingControl.alpha > 0.01,
+           floatingControl.isUserInteractionEnabled {
+            let localPoint =
+                floatingControl.convert(
+                    point,
+                    from: self
+                )
+
+            if floatingControl.point(
+                inside: localPoint,
+                with: event
+            ) {
+                return floatingControl.hitTest(
+                    localPoint,
+                    with: event
+                )
+            }
+        }
+
+        return super.hitTest(
+            point,
+            with: event
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -234,8 +277,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var recoveryAlertPresented = false
 
         private weak var mainControlButton: UIButton?
-        private var mainControlDragStartTransform =
-            CGAffineTransform.identity
+        private var mainControlDragStartCenter =
+            CGPoint.zero
 
         private static let mainControlPositionXKey =
             "ChatGPTWeb.mainControlPositionX"
@@ -465,7 +508,14 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             let control = UIButton(type: .system)
-            control.translatesAutoresizingMaskIntoConstraints = false
+            control.translatesAutoresizingMaskIntoConstraints = true
+            control.frame = CGRect(
+                x: 0,
+                y: 0,
+                width: 44,
+                height: 44
+            )
+
             control.setImage(
                 UIImage(
                     systemName:
@@ -476,12 +526,12 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.tintColor = .label
             control.backgroundColor =
                 UIColor.secondarySystemBackground
-                    .withAlphaComponent(0.96)
+                    .withAlphaComponent(0.98)
 
             control.layer.cornerRadius = 22
             control.layer.shadowColor =
                 UIColor.black.cgColor
-            control.layer.shadowOpacity = 0.22
+            control.layer.shadowOpacity = 0.24
             control.layer.shadowRadius = 8
             control.layer.shadowOffset =
                 CGSize(width: 0, height: 3)
@@ -491,6 +541,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.accessibilityIdentifier =
                 "chatgpt.web.floatingControl"
 
+            control.isAccessibilityElement = true
+            control.isUserInteractionEnabled = true
             control.showsMenuAsPrimaryAction = true
 
             let pan = UIPanGestureRecognizer(
@@ -504,27 +556,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.addGestureRecognizer(pan)
 
             rootView.addSubview(control)
-
-            NSLayoutConstraint.activate([
-                control.widthAnchor.constraint(
-                    equalToConstant: 44
-                ),
-                control.heightAnchor.constraint(
-                    equalToConstant: 44
-                ),
-                control.trailingAnchor.constraint(
-                    equalTo:
-                        rootView.safeAreaLayoutGuide
-                            .trailingAnchor,
-                    constant: -10
-                ),
-                control.topAnchor.constraint(
-                    equalTo:
-                        rootView.safeAreaLayoutGuide
-                            .topAnchor,
-                    constant: 10
-                )
-            ])
+            rootView.floatingControl = control
 
             mainControlButton = control
             control.menu = makeMainControlMenu()
@@ -543,9 +575,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self.restoreMainControlPosition(
                     in: rootView
                 )
-                rootView.bringSubviewToFront(
-                    control
-                )
+
+                rootView.setNeedsLayout()
+                rootView.layoutIfNeeded()
             }
         }
 
@@ -643,21 +675,48 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        private func mainControlSafeFrame(
+        private func mainControlCenterBounds(
             in rootView: UIView
-        ) -> CGRect {
-            var frame =
+        ) -> (
+            minX: CGFloat,
+            maxX: CGFloat,
+            minY: CGFloat,
+            maxY: CGFloat
+        ) {
+            rootView.layoutIfNeeded()
+
+            var safe =
                 rootView.safeAreaLayoutGuide
                     .layoutFrame
 
-            if frame.width <= 0 ||
-               frame.height <= 0 {
-                frame = rootView.bounds
+            if safe.width <= 0 ||
+               safe.height <= 0 {
+                safe = rootView.bounds
             }
 
-            return frame.insetBy(
-                dx: 6,
-                dy: 6
+            let half: CGFloat = 22
+            let padding: CGFloat = 6
+
+            let minX =
+                safe.minX + half + padding
+            let maxX =
+                max(
+                    minX,
+                    safe.maxX - half - padding
+                )
+            let minY =
+                safe.minY + half + padding
+            let maxY =
+                max(
+                    minY,
+                    safe.maxY - half - padding
+                )
+
+            return (
+                minX,
+                maxX,
+                minY,
+                maxY
             )
         }
 
@@ -665,72 +724,58 @@ struct ChatGPTWebView: UIViewRepresentable {
             _ control: UIButton,
             in rootView: UIView
         ) {
-            rootView.layoutIfNeeded()
-
-            let safeFrame =
-                mainControlSafeFrame(
+            let bounds =
+                mainControlCenterBounds(
                     in: rootView
                 )
 
-            var dx: CGFloat = 0
-            var dy: CGFloat = 0
-            let frame = control.frame
-
-            if frame.minX < safeFrame.minX {
-                dx =
-                    safeFrame.minX -
-                    frame.minX
-            } else if frame.maxX >
-                        safeFrame.maxX {
-                dx =
-                    safeFrame.maxX -
-                    frame.maxX
-            }
-
-            if frame.minY < safeFrame.minY {
-                dy =
-                    safeFrame.minY -
-                    frame.minY
-            } else if frame.maxY >
-                        safeFrame.maxY {
-                dy =
-                    safeFrame.maxY -
-                    frame.maxY
-            }
-
-            if dx != 0 || dy != 0 {
-                control.transform =
-                    control.transform
-                        .translatedBy(
-                            x: dx,
-                            y: dy
-                        )
-            }
+            control.center = CGPoint(
+                x: min(
+                    bounds.maxX,
+                    max(
+                        bounds.minX,
+                        control.center.x
+                    )
+                ),
+                y: min(
+                    bounds.maxY,
+                    max(
+                        bounds.minY,
+                        control.center.y
+                    )
+                )
+            )
         }
 
         private func saveMainControlPosition(
             _ control: UIButton,
             in rootView: UIView
         ) {
-            let safeFrame =
-                mainControlSafeFrame(
+            let bounds =
+                mainControlCenterBounds(
                     in: rootView
                 )
 
-            guard
-                safeFrame.width > 0,
-                safeFrame.height > 0
-            else {
-                return
-            }
+            let width =
+                max(
+                    1,
+                    bounds.maxX -
+                    bounds.minX
+                )
+            let height =
+                max(
+                    1,
+                    bounds.maxY -
+                    bounds.minY
+                )
 
             let x = min(
                 1,
                 max(
                     0,
                     (control.center.x -
-                        safeFrame.minX) /
-                        safeFrame.width
+                        bounds.minX) /
+                        width
                 )
             )
 
@@ -739,8 +784,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                 max(
                     0,
                     (control.center.y -
-                        safeFrame.minY) /
-                        safeFrame.height
+                        bounds.minY) /
+                        height
                 )
             )
 
@@ -767,10 +812,14 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return
             }
 
+            let bounds =
+                mainControlCenterBounds(
+                    in: rootView
+                )
             let defaults =
                 UserDefaults.standard
 
-            guard
+            if
                 defaults.object(
                     forKey:
                         Self.mainControlPositionXKey
@@ -779,59 +828,53 @@ struct ChatGPTWebView: UIViewRepresentable {
                     forKey:
                         Self.mainControlPositionYKey
                 ) != nil
-            else {
-                clampMainControl(
-                    control,
-                    in: rootView
+            {
+                let x = min(
+                    1,
+                    max(
+                        0,
+                        CGFloat(
+                            defaults.double(
+                                forKey:
+                                    Self.mainControlPositionXKey
+                            )
+                        )
+                    )
                 )
-                return
-            }
 
-            let safeFrame =
-                mainControlSafeFrame(
-                    in: rootView
+                let y = min(
+                    1,
+                    max(
+                        0,
+                        CGFloat(
+                            defaults.double(
+                                forKey:
+                                    Self.mainControlPositionYKey
+                            )
+                        )
+                    )
                 )
 
-            let x = CGFloat(
-                defaults.double(
-                    forKey:
-                        Self.mainControlPositionXKey
-                )
-            )
-
-            let y = CGFloat(
-                defaults.double(
-                    forKey:
-                        Self.mainControlPositionYKey
-                )
-            )
-
-            rootView.layoutIfNeeded()
-            control.transform = .identity
-            rootView.layoutIfNeeded()
-
-            let baseCenter = control.center
-
-            let targetCenter = CGPoint(
-                x:
-                    safeFrame.minX +
-                    safeFrame.width *
-                    min(1, max(0, x)),
-                y:
-                    safeFrame.minY +
-                    safeFrame.height *
-                    min(1, max(0, y))
-            )
-
-            control.transform =
-                CGAffineTransform(
-                    translationX:
-                        targetCenter.x -
-                        baseCenter.x,
+                control.center = CGPoint(
+                    x:
+                        bounds.minX +
+                        (
+                            bounds.maxX -
+                            bounds.minX
+                        ) * x,
                     y:
-                        targetCenter.y -
-                        baseCenter.y
+                        bounds.minY +
+                        (
+                            bounds.maxY -
+                            bounds.minY
+                        ) * y
                 )
+            } else {
+                control.center = CGPoint(
+                    x: bounds.maxX,
+                    y: bounds.minY
+                )
+            }
 
             clampMainControl(
                 control,
@@ -852,8 +895,8 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
-                mainControlDragStartTransform =
-                    control.transform
+                mainControlDragStartCenter =
+                    control.center
 
             case .changed:
                 let translation =
@@ -861,12 +904,14 @@ struct ChatGPTWebView: UIViewRepresentable {
                         in: rootView
                     )
 
-                var transform =
-                    mainControlDragStartTransform
-
-                transform.tx += translation.x
-                transform.ty += translation.y
-                control.transform = transform
+                control.center = CGPoint(
+                    x:
+                        mainControlDragStartCenter.x +
+                        translation.x,
+                    y:
+                        mainControlDragStartCenter.y +
+                        translation.y
+                )
 
                 clampMainControl(
                     control,
@@ -898,6 +943,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             control.isHidden = false
+            control.alpha = 1
+            control.isUserInteractionEnabled = true
             control.menu =
                 makeMainControlMenu()
 
@@ -906,9 +953,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                 in: rootView
             )
 
-            rootView.bringSubviewToFront(
-                control
-            )
+            rootView.setNeedsLayout()
+            rootView.layoutIfNeeded()
         }
 
         private func clearWebCacheKeepingLogin() {
