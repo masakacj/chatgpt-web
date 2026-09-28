@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.12
+// @version      0.3.13
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.12';
+  const VERSION = '0.3.13';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -25,6 +25,17 @@
   if (!IS_CHATGPT) {
     return;
   }
+
+  const IS_NATIVE_IOS = Boolean(
+    window.__CHATGPT_NATIVE__?.hotUpdate
+  );
+  const PERF_REFRESH_DELAY_MS =
+    IS_NATIVE_IOS ? 420 : 120;
+  const STATUS_INTERVAL_MS =
+    IS_NATIVE_IOS ? 1500 : 600;
+  const IOS_KEEP_RECENT_TURNS = 10;
+  const IOS_TOOL_SWEEP_MS = 2200;
+
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
   const HOST_ID = 'cgpt-safari-lite-host';
@@ -61,6 +72,7 @@
     toolGroups: new Set(),
     toolRecords: new WeakMap(),
     toolCounts: { groups: 0, collapsed: 0 },
+    lastToolSweepAt: 0,
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
     activeRouteSince: Date.now(),
@@ -655,12 +667,32 @@
     const streaming = isStreaming();
     const liveTurn = streaming ? turns[turns.length - 1] : null;
     const nextOptimized = new Set();
+    const viewport = Math.max(window.innerHeight || 0, 1);
+    const protectedStart = Math.max(
+      0,
+      turns.length - IOS_KEEP_RECENT_TURNS
+    );
 
-    for (const turn of turns) {
-      if (!(turn instanceof HTMLElement)) continue;
+    turns.forEach((turn, index) => {
+      if (!(turn instanceof HTMLElement)) return;
 
       const interactive = turn.matches(':focus-within');
-      const shouldOptimize = !interactive && turn !== liveTurn;
+      const rect = turn.getBoundingClientRect();
+      const farFromViewport =
+        rect.bottom < -viewport * 1.5 ||
+        rect.top > viewport * 2.5;
+
+      const mobileEligible =
+        !IS_NATIVE_IOS ||
+        (
+          index < protectedStart &&
+          farFromViewport
+        );
+
+      const shouldOptimize =
+        !interactive &&
+        turn !== liveTurn &&
+        mobileEligible;
 
       if (shouldOptimize) {
         turn.setAttribute('data-cgpt-safari-opt', '1');
@@ -668,7 +700,7 @@
       } else {
         turn.removeAttribute('data-cgpt-safari-opt');
       }
-    }
+    });
 
     for (const oldTurn of Array.from(state.optimizedTurns)) {
       if (!nextOptimized.has(oldTurn) && oldTurn instanceof HTMLElement) {
@@ -677,7 +709,17 @@
     }
 
     state.optimizedTurns = nextOptimized;
-    optimizeToolGroups(turns, liveTurn);
+
+    const now = performance.now();
+    if (
+      !IS_NATIVE_IOS ||
+      now - state.lastToolSweepAt >=
+        IOS_TOOL_SWEEP_MS
+    ) {
+      optimizeToolGroups(turns, liveTurn);
+      state.lastToolSweepAt = now;
+    }
+
     updateUI(turns.length);
   }
 
@@ -692,7 +734,9 @@
     ].join(',')));
   }
 
-  function scheduleRefresh(delay = 120) {
+  function scheduleRefresh(
+    delay = PERF_REFRESH_DELAY_MS
+  ) {
     if (state.destroyed) return;
     clearTimeout(state.refreshTimer);
     state.refreshTimer = window.setTimeout(() => {
@@ -1082,11 +1126,58 @@
   }
 
   function setupObservers() {
-    state.observer = new MutationObserver(() => {
-      scheduleRefresh(180);
-      evaluateConversationState();
-      renderConversationStates();
-    });
+    state.observer = new MutationObserver(
+      (mutations) => {
+        let relevant = !IS_NATIVE_IOS;
+
+        if (IS_NATIVE_IOS) {
+          const selector = [
+            'main',
+            'aside',
+            'nav',
+            '[data-message-author-role]',
+            '[data-testid^="conversation-turn-"]',
+          ].join(',');
+
+          for (const mutation of mutations) {
+            const target =
+              mutation.target instanceof Element
+                ? mutation.target
+                : mutation.target?.parentElement;
+
+            if (target?.closest?.(selector)) {
+              relevant = true;
+              break;
+            }
+
+            for (const node of mutation.addedNodes) {
+              if (!(node instanceof Element)) continue;
+              if (
+                node.matches?.(selector) ||
+                node.querySelector?.(selector)
+              ) {
+                relevant = true;
+                break;
+              }
+            }
+
+            if (relevant) break;
+          }
+        }
+
+        if (!relevant) return;
+
+        scheduleRefresh(
+          IS_NATIVE_IOS ? 420 : 180
+        );
+
+        if (!IS_NATIVE_IOS) {
+          evaluateConversationState();
+          renderConversationStates();
+        }
+      }
+    );
+
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
@@ -1101,7 +1192,7 @@
         evaluateConversationState();
         renderConversationStates();
       }
-    }, 600);
+    }, STATUS_INTERVAL_MS);
   }
 
   function onRoute() {

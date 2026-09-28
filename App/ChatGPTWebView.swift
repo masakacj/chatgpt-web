@@ -183,6 +183,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var checkingUpdate = false
 
         private var browserControlsExpanded = false
+        private var contentTerminationTimes: [Date] = []
+        private var recoveryAlertPresented = false
 
         private weak var externalWebView: WKWebView?
         private weak var browserControlButton: UIButton?
@@ -977,14 +979,83 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
+        private func recoverFromContentProcessTermination(
+            _ webView: WKWebView
+        ) {
+            if webView === externalWebView {
+                browserClose()
+                return
+            }
+
+            let now = Date()
+
+            contentTerminationTimes =
+                contentTerminationTimes.filter {
+                    now.timeIntervalSince($0) < 20
+                }
+
+            contentTerminationTimes.append(now)
+
+            if contentTerminationTimes.count == 1 {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + 0.7
+                ) { [weak webView] in
+                    webView?.reload()
+                }
+                return
+            }
+
+            guard !recoveryAlertPresented else {
+                return
+            }
+
+            recoveryAlertPresented = true
+
+            presentAlert(
+                title: "长对话占用过高",
+                message:
+                    "这个对话在短时间内连续触发了网页进程内存回收。已停止自动刷新，避免进入刷新死循环。",
+                actions: [
+                    UIAlertAction(
+                        title: "返回 ChatGPT 首页",
+                        style: .default
+                    ) { [weak self, weak webView] _ in
+                        self?.recoveryAlertPresented = false
+                        self?.contentTerminationTimes.removeAll()
+
+                        guard
+                            let url = URL(
+                                string:
+                                    "https://chatgpt.com/"
+                            )
+                        else {
+                            return
+                        }
+
+                        webView?.load(
+                            URLRequest(url: url)
+                        )
+                    },
+                    UIAlertAction(
+                        title: "重新加载一次",
+                        style: .default
+                    ) { [weak self, weak webView] _ in
+                        self?.recoveryAlertPresented = false
+                        self?.contentTerminationTimes = [
+                            Date()
+                        ]
+                        webView?.reload()
+                    }
+                ]
+            )
+        }
+
         func webViewWebContentProcessDidTerminate(
             _ webView: WKWebView
         ) {
-            webView.reload()
-
-            if webView === externalWebView {
-                updateExternalBrowserControls()
-            }
+            recoverFromContentProcessTermination(
+                webView
+            )
         }
 
         func webView(
