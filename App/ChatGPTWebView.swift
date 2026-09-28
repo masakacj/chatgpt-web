@@ -69,6 +69,10 @@ struct ChatGPTWebView: UIViewRepresentable {
             initialGestureScript: initialGestureScript
         )
 
+        context.coordinator.installMainBrowserControls(
+            on: webView
+        )
+
         var request = URLRequest(
             url: URL(string: "https://chatgpt.com/")!
         )
@@ -83,7 +87,9 @@ struct ChatGPTWebView: UIViewRepresentable {
     func updateUIView(
         _ uiView: WKWebView,
         context: Context
-    ) {}
+    ) {
+        context.coordinator.refreshMainBrowserControls()
+    }
 
     static func dismantleUIView(
         _ uiView: WKWebView,
@@ -185,6 +191,15 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var browserControlsExpanded = false
         private var contentTerminationTimes: [Date] = []
         private var recoveryAlertPresented = false
+
+        private weak var mainControlButton: UIButton?
+        private var mainControlDragStartTransform =
+            CGAffineTransform.identity
+
+        private static let mainControlPositionXKey =
+            "ChatGPTWeb.mainControlPositionX"
+        private static let mainControlPositionYKey =
+            "ChatGPTWeb.mainControlPositionY"
 
         private weak var externalWebView: WKWebView?
         private weak var browserControlButton: UIButton?
@@ -395,6 +410,475 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             startHotUpdate()
+        }
+
+        func installMainBrowserControls(
+            on webView: WKWebView
+        ) {
+            guard mainControlButton == nil else {
+                return
+            }
+
+            let control = UIButton(type: .system)
+            control.translatesAutoresizingMaskIntoConstraints = false
+            control.setImage(
+                UIImage(
+                    systemName:
+                        "ellipsis.circle.fill"
+                ),
+                for: .normal
+            )
+            control.tintColor = .label
+            control.backgroundColor =
+                UIColor.secondarySystemBackground
+                    .withAlphaComponent(0.92)
+
+            control.layer.cornerRadius = 22
+            control.layer.shadowColor =
+                UIColor.black.cgColor
+            control.layer.shadowOpacity = 0.18
+            control.layer.shadowRadius = 8
+            control.layer.shadowOffset =
+                CGSize(width: 0, height: 3)
+
+            control.accessibilityLabel =
+                "ChatGPT Web 控制，可拖动"
+
+            control.showsMenuAsPrimaryAction = true
+
+            let pan = UIPanGestureRecognizer(
+                target: self,
+                action:
+                    #selector(
+                        handleMainControlPan(_:)
+                    )
+            )
+            pan.cancelsTouchesInView = true
+            control.addGestureRecognizer(pan)
+
+            webView.addSubview(control)
+
+            NSLayoutConstraint.activate([
+                control.widthAnchor.constraint(
+                    equalToConstant: 44
+                ),
+                control.heightAnchor.constraint(
+                    equalToConstant: 44
+                ),
+                control.trailingAnchor.constraint(
+                    equalTo:
+                        webView.safeAreaLayoutGuide
+                            .trailingAnchor,
+                    constant: -10
+                ),
+                control.topAnchor.constraint(
+                    equalTo:
+                        webView.safeAreaLayoutGuide
+                            .topAnchor,
+                    constant: 10
+                )
+            ])
+
+            mainControlButton = control
+            control.menu = makeMainControlMenu()
+            control.isHidden = false
+
+            DispatchQueue.main.async {
+                [weak self, weak webView] in
+                guard
+                    let self,
+                    let webView
+                else {
+                    return
+                }
+
+                webView.layoutIfNeeded()
+                self.restoreMainControlPosition(
+                    in: webView
+                )
+                webView.bringSubviewToFront(
+                    control
+                )
+            }
+        }
+
+        private func makeMainControlMenu()
+            -> UIMenu
+        {
+            let canGoBack =
+                webView?.canGoBack == true
+            let canGoForward =
+                webView?.canGoForward == true
+
+            let back = UIAction(
+                title: "后退",
+                image: UIImage(
+                    systemName: "chevron.backward"
+                ),
+                attributes:
+                    canGoBack ? [] : [.disabled]
+            ) { [weak self] _ in
+                self?.webView?.goBack()
+            }
+
+            let forward = UIAction(
+                title: "前进",
+                image: UIImage(
+                    systemName: "chevron.forward"
+                ),
+                attributes:
+                    canGoForward ? [] : [.disabled]
+            ) { [weak self] _ in
+                self?.webView?.goForward()
+            }
+
+            let reload = UIAction(
+                title: "刷新",
+                image: UIImage(
+                    systemName: "arrow.clockwise"
+                )
+            ) { [weak self] _ in
+                self?.webView?.reload()
+            }
+
+            let update = UIAction(
+                title: "检查脚本更新",
+                image: UIImage(
+                    systemName:
+                        "arrow.triangle.2.circlepath"
+                )
+            ) { [weak self] _ in
+                self?.startHotUpdate()
+            }
+
+            let clearCache = UIAction(
+                title: "清除网页缓存（保留登录）",
+                image: UIImage(
+                    systemName: "trash"
+                )
+            ) { [weak self] _ in
+                self?.clearWebCacheKeepingLogin()
+            }
+
+            return UIMenu(
+                title: "",
+                children: [
+                    back,
+                    forward,
+                    reload,
+                    update,
+                    clearCache
+                ]
+            )
+        }
+
+        private func mainControlSafeFrame(
+            in webView: WKWebView
+        ) -> CGRect {
+            var frame =
+                webView.safeAreaLayoutGuide
+                    .layoutFrame
+
+            if frame.width <= 0 ||
+               frame.height <= 0 {
+                frame = webView.bounds
+            }
+
+            return frame.insetBy(
+                dx: 6,
+                dy: 6
+            )
+        }
+
+        private func clampMainControl(
+            _ control: UIButton,
+            in webView: WKWebView
+        ) {
+            webView.layoutIfNeeded()
+
+            let safeFrame =
+                mainControlSafeFrame(
+                    in: webView
+                )
+
+            var dx: CGFloat = 0
+            var dy: CGFloat = 0
+            let frame = control.frame
+
+            if frame.minX < safeFrame.minX {
+                dx =
+                    safeFrame.minX -
+                    frame.minX
+            } else if frame.maxX >
+                        safeFrame.maxX {
+                dx =
+                    safeFrame.maxX -
+                    frame.maxX
+            }
+
+            if frame.minY < safeFrame.minY {
+                dy =
+                    safeFrame.minY -
+                    frame.minY
+            } else if frame.maxY >
+                        safeFrame.maxY {
+                dy =
+                    safeFrame.maxY -
+                    frame.maxY
+            }
+
+            if dx != 0 || dy != 0 {
+                control.transform =
+                    control.transform
+                        .translatedBy(
+                            x: dx,
+                            y: dy
+                        )
+            }
+        }
+
+        private func saveMainControlPosition(
+            _ control: UIButton,
+            in webView: WKWebView
+        ) {
+            let safeFrame =
+                mainControlSafeFrame(
+                    in: webView
+                )
+
+            guard
+                safeFrame.width > 0,
+                safeFrame.height > 0
+            else {
+                return
+            }
+
+            let x = min(
+                1,
+                max(
+                    0,
+                    (control.center.x -
+                        safeFrame.minX) /
+                        safeFrame.width
+                )
+            )
+
+            let y = min(
+                1,
+                max(
+                    0,
+                    (control.center.y -
+                        safeFrame.minY) /
+                        safeFrame.height
+                )
+            )
+
+            UserDefaults.standard.set(
+                Double(x),
+                forKey:
+                    Self.mainControlPositionXKey
+            )
+
+            UserDefaults.standard.set(
+                Double(y),
+                forKey:
+                    Self.mainControlPositionYKey
+            )
+        }
+
+        private func restoreMainControlPosition(
+            in webView: WKWebView
+        ) {
+            guard
+                let control =
+                    mainControlButton
+            else {
+                return
+            }
+
+            let defaults =
+                UserDefaults.standard
+
+            guard
+                defaults.object(
+                    forKey:
+                        Self.mainControlPositionXKey
+                ) != nil,
+                defaults.object(
+                    forKey:
+                        Self.mainControlPositionYKey
+                ) != nil
+            else {
+                clampMainControl(
+                    control,
+                    in: webView
+                )
+                return
+            }
+
+            let safeFrame =
+                mainControlSafeFrame(
+                    in: webView
+                )
+
+            let x = CGFloat(
+                defaults.double(
+                    forKey:
+                        Self.mainControlPositionXKey
+                )
+            )
+
+            let y = CGFloat(
+                defaults.double(
+                    forKey:
+                        Self.mainControlPositionYKey
+                )
+            )
+
+            webView.layoutIfNeeded()
+            control.transform = .identity
+            webView.layoutIfNeeded()
+
+            let baseCenter = control.center
+
+            let targetCenter = CGPoint(
+                x:
+                    safeFrame.minX +
+                    safeFrame.width *
+                    min(1, max(0, x)),
+                y:
+                    safeFrame.minY +
+                    safeFrame.height *
+                    min(1, max(0, y))
+            )
+
+            control.transform =
+                CGAffineTransform(
+                    translationX:
+                        targetCenter.x -
+                        baseCenter.x,
+                    y:
+                        targetCenter.y -
+                        baseCenter.y
+                )
+
+            clampMainControl(
+                control,
+                in: webView
+            )
+        }
+
+        @objc private func handleMainControlPan(
+            _ gesture: UIPanGestureRecognizer
+        ) {
+            guard
+                let control =
+                    mainControlButton,
+                let webView
+            else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                mainControlDragStartTransform =
+                    control.transform
+
+            case .changed:
+                let translation =
+                    gesture.translation(
+                        in: webView
+                    )
+
+                var transform =
+                    mainControlDragStartTransform
+
+                transform.tx += translation.x
+                transform.ty += translation.y
+                control.transform = transform
+
+                clampMainControl(
+                    control,
+                    in: webView
+                )
+
+            case .ended, .cancelled, .failed:
+                clampMainControl(
+                    control,
+                    in: webView
+                )
+
+                saveMainControlPosition(
+                    control,
+                    in: webView
+                )
+
+            default:
+                break
+            }
+        }
+
+        func refreshMainBrowserControls() {
+            guard
+                let webView,
+                let control = mainControlButton
+            else {
+                return
+            }
+
+            control.isHidden = false
+            control.menu =
+                makeMainControlMenu()
+
+            clampMainControl(
+                control,
+                in: webView
+            )
+
+            webView.bringSubviewToFront(
+                control
+            )
+        }
+
+        private func clearWebCacheKeepingLogin() {
+            let dataTypes: Set<String> = [
+                WKWebsiteDataTypeDiskCache,
+                WKWebsiteDataTypeMemoryCache,
+            ]
+
+            URLCache.shared
+                .removeAllCachedResponses()
+
+            WKWebsiteDataStore.default()
+                .removeData(
+                    ofTypes: dataTypes,
+                    modifiedSince: .distantPast
+                ) { [weak self] in
+                    DispatchQueue.main.async {
+                        guard
+                            let self
+                        else {
+                            return
+                        }
+
+                        self.presentAlert(
+                            title: "缓存已清除",
+                            message:
+                                "已清除 ChatGPT 网页磁盘和内存缓存，登录状态已保留。",
+                            actions: [
+                                UIAlertAction(
+                                    title:
+                                        "重新加载",
+                                    style: .default
+                                ) {
+                                    [weak self] _ in
+                                    self?.webView?
+                                        .reloadFromOrigin()
+                                }
+                            ]
+                        )
+                    }
+                }
         }
 
         private func makeBrowserActionButton(
@@ -1172,7 +1656,10 @@ struct ChatGPTWebView: UIViewRepresentable {
         ) {
             if webView === externalWebView {
                 updateExternalBrowserControls()
+                return
             }
+
+            refreshMainBrowserControls()
         }
 
         func webView(
@@ -1185,6 +1672,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             ensureScriptsAreRunning()
+            refreshMainBrowserControls()
         }
 
         func webView(
