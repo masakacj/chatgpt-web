@@ -898,6 +898,10 @@ struct ChatGPTWebView: UIViewRepresentable {
                 mainControlDragStartCenter =
                     control.center
 
+                control.menu = nil
+                control.showsMenuAsPrimaryAction =
+                    false
+
             case .changed:
                 let translation =
                     gesture.translation(
@@ -928,6 +932,22 @@ struct ChatGPTWebView: UIViewRepresentable {
                     control,
                     in: rootView
                 )
+
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + 0.15
+                ) { [weak self, weak control] in
+                    guard
+                        let self,
+                        let control
+                    else {
+                        return
+                    }
+
+                    control.menu =
+                        self.makeMainControlMenu()
+                    control.showsMenuAsPrimaryAction =
+                        true
+                }
 
             default:
                 break
