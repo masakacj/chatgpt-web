@@ -4,8 +4,6 @@ import WebKit
 
 final class ChatGPTWebContainerView: UIView {
     let webView: WKWebView
-    weak var floatingControl: UIView?
-    weak var floatingMenu: UIView?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -30,77 +28,6 @@ final class ChatGPTWebContainerView: UIView {
                 equalTo: bottomAnchor
             )
         ])
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-
-        if let floatingMenu,
-           floatingMenu.superview === self,
-           !floatingMenu.isHidden {
-            bringSubviewToFront(
-                floatingMenu
-            )
-        }
-
-        if let floatingControl,
-           floatingControl.superview === self {
-            bringSubviewToFront(
-                floatingControl
-            )
-        }
-    }
-
-    override func hitTest(
-        _ point: CGPoint,
-        with event: UIEvent?
-    ) -> UIView? {
-        if let floatingMenu,
-           !floatingMenu.isHidden,
-           floatingMenu.alpha > 0.01,
-           floatingMenu.isUserInteractionEnabled {
-            let localPoint =
-                floatingMenu.convert(
-                    point,
-                    from: self
-                )
-
-            if floatingMenu.point(
-                inside: localPoint,
-                with: event
-            ) {
-                return floatingMenu.hitTest(
-                    localPoint,
-                    with: event
-                )
-            }
-        }
-
-        if let floatingControl,
-           !floatingControl.isHidden,
-           floatingControl.alpha > 0.01,
-           floatingControl.isUserInteractionEnabled {
-            let localPoint =
-                floatingControl.convert(
-                    point,
-                    from: self
-                )
-
-            if floatingControl.point(
-                inside: localPoint,
-                with: event
-            ) {
-                return floatingControl.hitTest(
-                    localPoint,
-                    with: event
-                )
-            }
-        }
-
-        return super.hitTest(
-            point,
-            with: event
-        )
     }
 
     required init?(coder: NSCoder) {
@@ -183,10 +110,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             initialGestureScript: initialGestureScript
         )
 
-        context.coordinator.installMainBrowserControls(
-            in: container
-        )
-
         let isUITesting =
             ProcessInfo.processInfo.arguments
                 .contains("--ui-testing")
@@ -226,9 +149,7 @@ struct ChatGPTWebView: UIViewRepresentable {
     func updateUIView(
         _ uiView: ChatGPTWebContainerView,
         context: Context
-    ) {
-        context.coordinator.refreshMainBrowserControls()
-    }
+    ) {}
 
     static func dismantleUIView(
         _ uiView: ChatGPTWebContainerView,
@@ -313,9 +234,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         NSObject,
         WKNavigationDelegate,
         WKUIDelegate,
-        WKScriptMessageHandler,
-        UIGestureRecognizerDelegate,
-        UIContextMenuInteractionDelegate
+        WKScriptMessageHandler
     {
         static let nativeMessageHandler = "chatGPTNative"
 
@@ -333,22 +252,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var contentTerminationTimes: [Date] = []
         private var recoveryAlertPresented = false
 
-        private weak var mainControlButton: UIButton?
-        private weak var mainMenuView: UIVisualEffectView?
-        private weak var mainBackButton: UIButton?
-        private weak var mainForwardButton: UIButton?
-        private weak var mainCurrentVersionLabel: UILabel?
-        private weak var mainLatestVersionLabel: UILabel?
         private var latestKnownVersion: String?
-        private var mainControlsExpanded = false
-        private var mainControlDragStartCenter =
-            CGPoint.zero
-        private var mainControlDidDrag = false
-
-        private static let mainControlPositionXKey =
-            "ChatGPTWeb.mainControlPositionX"
-        private static let mainControlPositionYKey =
-            "ChatGPTWeb.mainControlPositionY"
 
         private weak var externalWebView: WKWebView?
         private weak var browserControlButton: UIButton?
@@ -398,54 +302,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                 : "bundled"
         }
 
-        private func uiTestingLatestScriptVersion()
-            -> String?
-        {
-            let prefix =
-                "--ui-testing-latest-script="
-
-            guard
-                let argument =
-                    ProcessInfo.processInfo
-                        .arguments
-                        .first(where: {
-                            $0.hasPrefix(prefix)
-                        })
-            else {
-                return nil
-            }
-
-            return String(
-                argument.dropFirst(
-                    prefix.count
-                )
-            )
-        }
-
-        private func applyUITestingScriptUpdate(
-            version: String
-        ) {
-            guard
-                let activeScript
-            else {
-                return
-            }
-
-            latestKnownVersion = version
-
-            self.activeScript =
-                UnifiedScriptPayload(
-                    source:
-                        activeScript.source,
-                    version: version,
-                    origin: "ui-test"
-                )
-
-            updateStatus = "updated"
-            checkingUpdate = false
-            updateMainVersionLabels()
-            updateRuntimeStatus()
-        }
 
         func startHotUpdate() {
             guard !checkingUpdate else {
@@ -456,20 +312,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             checkingUpdate = true
             updateStatus = "checking"
             gestureUpdateStatus = "checking"
-            updateMainVersionLabels()
             updateRuntimeStatus()
-
-            if let testVersion =
-                uiTestingLatestScriptVersion()
-            {
-                DispatchQueue.main.async {
-                    [weak self] in
-                    self?.applyUITestingScriptUpdate(
-                        version: testVersion
-                    )
-                }
-                return
-            }
 
             Task { [weak self] in
                 guard let self else {
@@ -505,7 +348,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                         )
 
                     self.installForFutureNavigations()
-                    self.updateMainVersionLabels()
                     self.updateRuntimeStatus()
 
                     if scriptChanged,
@@ -578,7 +420,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                 activeScript = latest
                 updateStatus =
                     changed ? "updated" : "latest"
-                updateMainVersionLabels()
 
                 return changed
 
@@ -624,958 +465,24 @@ struct ChatGPTWebView: UIViewRepresentable {
                     Self.nativeMessageHandler,
                 let body =
                     message.body as? [String: Any],
-                body["type"] as? String ==
-                    "check-update"
+                let type =
+                    body["type"] as? String
             else {
                 return
             }
 
-            startHotUpdate()
-        }
-
-        func installMainBrowserControls(
-            in rootView: ChatGPTWebContainerView
-        ) {
-            guard mainControlButton == nil else {
-                return
-            }
-
-            let control = UIButton(type: .system)
-            control.translatesAutoresizingMaskIntoConstraints = true
-            control.frame = CGRect(
-                x: 0,
-                y: 0,
-                width: 44,
-                height: 44
-            )
-
-            control.setImage(
-                UIImage(
-                    systemName:
-                        "ellipsis.circle.fill"
-                ),
-                for: .normal
-            )
-            control.tintColor = .label
-            control.backgroundColor =
-                UIColor.secondarySystemBackground
-                    .withAlphaComponent(0.98)
-
-            control.layer.cornerRadius = 22
-            control.layer.shadowColor =
-                UIColor.black.cgColor
-            control.layer.shadowOpacity = 0.24
-            control.layer.shadowRadius = 8
-            control.layer.shadowOffset =
-                CGSize(width: 0, height: 3)
-
-            control.accessibilityLabel =
-                "ChatGPT Web 控制，可拖动"
-            control.accessibilityIdentifier =
-                "chatgpt.web.floatingControl"
-
-            control.isAccessibilityElement = true
-            control.isUserInteractionEnabled = true
-            control.showsMenuAsPrimaryAction = false
-            control.addTarget(
-                self,
-                action:
-                    #selector(
-                        handleMainControlTouchDown(_:)
-                    ),
-                for: .touchDown
-            )
-            control.addTarget(
-                self,
-                action:
-                    #selector(
-                        handleMainControlTap(_:)
-                    ),
-                for: .touchUpInside
-            )
-
-            let pan = UIPanGestureRecognizer(
-                target: self,
-                action:
-                    #selector(
-                        handleMainControlPan(_:)
-                    )
-            )
-            pan.minimumNumberOfTouches = 1
-            pan.maximumNumberOfTouches = 1
-            pan.cancelsTouchesInView = false
-            pan.delegate = self
-            control.addGestureRecognizer(pan)
-
-            let menu =
-                makeMainInlineMenu()
-            rootView.addSubview(menu)
-            rootView.floatingMenu = menu
-
-            rootView.addSubview(control)
-            rootView.floatingControl = control
-
-            mainMenuView = menu
-            mainControlButton = control
-            control.isHidden = false
-            menu.isHidden = true
-
-            DispatchQueue.main.async {
-                [weak self, weak rootView] in
-                guard
-                    let self,
-                    let rootView
-                else {
-                    return
-                }
-
-                rootView.layoutIfNeeded()
-                self.restoreMainControlPosition(
-                    in: rootView
-                )
-
-                rootView.setNeedsLayout()
-                rootView.layoutIfNeeded()
-            }
-        }
-
-        private func activeBrowserWebView()
-            -> WKWebView?
-        {
-            externalWebView ?? webView
-        }
-
-        private func makeMainInlineMenuButton(
-            title: String,
-            systemName: String,
-            action: Selector,
-            destructive: Bool = false
-        ) -> UIButton {
-            let button = UIButton(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            var config =
-                UIButton.Configuration.plain()
-            var attributedTitle =
-                AttributedString(title)
-            attributedTitle.font =
-                UIFont.systemFont(
-                    ofSize: 12.5,
-                    weight: .regular
-                )
-            config.attributedTitle =
-                attributedTitle
-            config.image =
-                UIImage(systemName: systemName)
-            config.imagePadding = 10
-            config.baseForegroundColor =
-                destructive ? .systemRed : .label
-            config.contentInsets =
-                NSDirectionalEdgeInsets(
-                    top: 5,
-                    leading: 11,
-                    bottom: 5,
-                    trailing: 11
-                )
-            button.configuration = config
-            button.contentHorizontalAlignment = .leading
-            button.accessibilityLabel = title
-            button.addTarget(
-                self,
-                action: action,
-                for: .touchUpInside
-            )
-            button.heightAnchor.constraint(
-                equalToConstant: 34
-            ).isActive = true
-            return button
-        }
-
-        private func makeMainInlineMenu()
-            -> UIVisualEffectView
-        {
-            let blur = UIVisualEffectView(
-                effect: UIBlurEffect(
-                    style: .systemMaterial
-                )
-            )
-            blur.translatesAutoresizingMaskIntoConstraints = true
-            blur.frame = CGRect(
-                x: 0,
-                y: 0,
-                width: 232,
-                height: 222
-            )
-            blur.layer.cornerRadius = 16
-            blur.clipsToBounds = true
-            blur.layer.shadowColor =
-                UIColor.black.cgColor
-            blur.layer.shadowOpacity = 0.18
-            blur.layer.shadowRadius = 12
-            blur.layer.shadowOffset =
-                CGSize(width: 0, height: 4)
-            blur.accessibilityIdentifier =
-                "chatgpt.web.floatingMenu"
-            blur.isAccessibilityElement = false
-            blur.isUserInteractionEnabled = true
-
-            let currentVersion =
-                UILabel()
-            currentVersion.translatesAutoresizingMaskIntoConstraints = false
-            currentVersion.font =
-                UIFont.monospacedDigitSystemFont(
-                    ofSize: 10.5,
-                    weight: .medium
-                )
-            currentVersion.textColor =
-                .secondaryLabel
-            currentVersion.accessibilityIdentifier =
-                "chatgpt.web.currentVersion"
-
-            let latestVersion =
-                UILabel()
-            latestVersion.translatesAutoresizingMaskIntoConstraints = false
-            latestVersion.font =
-                UIFont.monospacedDigitSystemFont(
-                    ofSize: 10.5,
-                    weight: .medium
-                )
-            latestVersion.textColor =
-                .secondaryLabel
-            latestVersion.textAlignment =
-                .right
-            latestVersion.accessibilityIdentifier =
-                "chatgpt.web.latestVersion"
-
-            let versionRow =
-                UIStackView(
-                    arrangedSubviews: [
-                        currentVersion,
-                        latestVersion
-                    ]
-                )
-            versionRow.axis = .horizontal
-            versionRow.alignment = .center
-            versionRow.distribution = .fillEqually
-            versionRow.translatesAutoresizingMaskIntoConstraints = false
-            versionRow.heightAnchor.constraint(
-                equalToConstant: 28
-            ).isActive = true
-
-            let separator = UIView()
-            separator.translatesAutoresizingMaskIntoConstraints = false
-            separator.backgroundColor =
-                UIColor.separator
-                    .withAlphaComponent(0.45)
-            separator.heightAnchor.constraint(
-                equalToConstant: 0.5
-            ).isActive = true
-
-            let back =
-                makeMainInlineMenuButton(
-                    title: "后退",
-                    systemName:
-                        "chevron.backward",
-                    action:
-                        #selector(
-                            mainMenuBack
-                        )
-                )
-            let forward =
-                makeMainInlineMenuButton(
-                    title: "前进",
-                    systemName:
-                        "chevron.forward",
-                    action:
-                        #selector(
-                            mainMenuForward
-                        )
-                )
-            let reload =
-                makeMainInlineMenuButton(
-                    title: "刷新",
-                    systemName:
-                        "arrow.clockwise",
-                    action:
-                        #selector(
-                            mainMenuReload
-                        )
-                )
-            let update =
-                makeMainInlineMenuButton(
-                    title: "检查脚本更新",
-                    systemName:
-                        "arrow.triangle.2.circlepath",
-                    action:
-                        #selector(
-                            mainMenuUpdate
-                        )
-                )
-            let clear =
-                makeMainInlineMenuButton(
-                    title:
-                        "清除网页缓存（保留登录）",
-                    systemName: "trash",
-                    action:
-                        #selector(
-                            mainMenuClearCache
-                        ),
-                    destructive: true
-                )
-
-            let stack = UIStackView(
-                arrangedSubviews: [
-                    versionRow,
-                    separator,
-                    back,
-                    forward,
-                    reload,
-                    update,
-                    clear
-                ]
-            )
-            stack.axis = .vertical
-            stack.spacing = 0
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            blur.contentView.addSubview(stack)
-
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(
-                    equalTo:
-                        blur.contentView.leadingAnchor,
-                    constant: 6
-                ),
-                stack.trailingAnchor.constraint(
-                    equalTo:
-                        blur.contentView.trailingAnchor,
-                    constant: -6
-                ),
-                stack.topAnchor.constraint(
-                    equalTo:
-                        blur.contentView.topAnchor,
-                    constant: 6
-                ),
-                stack.bottomAnchor.constraint(
-                    equalTo:
-                        blur.contentView.bottomAnchor,
-                    constant: -6
-                )
-            ])
-
-            mainBackButton = back
-            mainForwardButton = forward
-            mainCurrentVersionLabel =
-                currentVersion
-            mainLatestVersionLabel =
-                latestVersion
-            updateMainVersionLabels()
-
-            return blur
-        }
-
-        private func updateMainVersionLabels() {
-            let current =
-                activeScript?.version ??
-                "—"
-
-            mainCurrentVersionLabel?.text =
-                "当前脚本 " + current
-
-            if checkingUpdate {
-                mainLatestVersionLabel?.text =
-                    "最新 …"
-                return
-            }
-
-            let latest =
-                latestKnownVersion ??
-                activeScript?.version ??
-                "—"
-
-            mainLatestVersionLabel?.text =
-                "最新 " + latest
-        }
-
-        private func collapseMainInlineMenu() {
-            mainControlsExpanded = false
-            mainMenuView?.isHidden = true
-        }
-
-        private func layoutMainInlineMenu(
-            in rootView: UIView
-        ) {
-            guard
-                let menu = mainMenuView,
-                let control = mainControlButton
-            else {
-                return
-            }
-
-            rootView.layoutIfNeeded()
-
-            let safe =
-                rootView.safeAreaLayoutGuide
-                    .layoutFrame
-            let padding: CGFloat = 8
-            let gap: CGFloat = 8
-            let size = menu.bounds.size
-
-            let preferLeft =
-                control.center.x >
-                rootView.bounds.midX
-
-            var x =
-                preferLeft
-                ? control.frame.minX -
-                    gap - size.width
-                : control.frame.maxX +
-                    gap
-
-            x = min(
-                max(
-                    safe.minX + padding,
-                    x
-                ),
-                max(
-                    safe.minX + padding,
-                    safe.maxX -
-                        padding -
-                        size.width
-                )
-            )
-
-            var y =
-                control.frame.minY
-
-            if y + size.height >
-                safe.maxY - padding {
-                y =
-                    control.frame.maxY -
-                    size.height
-            }
-
-            y = min(
-                max(
-                    safe.minY + padding,
-                    y
-                ),
-                max(
-                    safe.minY + padding,
-                    safe.maxY -
-                        padding -
-                        size.height
-                )
-            )
-
-            menu.frame.origin =
-                CGPoint(x: x, y: y)
-        }
-
-        private func updateMainInlineMenu() {
-            guard
-                let rootView
-            else {
-                return
-            }
-
-            let active =
-                activeBrowserWebView()
-
-            updateMainVersionLabels()
-
-            mainBackButton?.isEnabled =
-                active?.canGoBack == true
-            mainBackButton?.alpha =
-                active?.canGoBack == true
-                ? 1.0
-                : 0.35
-
-            mainForwardButton?.isEnabled =
-                active?.canGoForward == true
-            mainForwardButton?.alpha =
-                active?.canGoForward == true
-                ? 1.0
-                : 0.35
-
-            layoutMainInlineMenu(
-                in: rootView
-            )
-
-            if let menu = mainMenuView,
-               !menu.isHidden {
-                rootView.bringSubviewToFront(menu)
-            }
-            if let control = mainControlButton {
-                rootView.bringSubviewToFront(control)
-            }
-        }
-
-        @objc private func mainMenuBack() {
-            collapseMainInlineMenu()
-            activeBrowserWebView()?.goBack()
-        }
-
-        @objc private func mainMenuForward() {
-            collapseMainInlineMenu()
-            activeBrowserWebView()?.goForward()
-        }
-
-        @objc private func mainMenuReload() {
-            collapseMainInlineMenu()
-            activeBrowserWebView()?.reload()
-        }
-
-        @objc private func mainMenuUpdate() {
-            collapseMainInlineMenu()
-            startHotUpdate()
-        }
-
-        @objc private func mainMenuClearCache() {
-            collapseMainInlineMenu()
-            clearWebCacheKeepingLogin()
-        }
-
-        private func makeMainControlMenu()
-            -> UIMenu
-        {
-            let active = activeBrowserWebView()
-            let canGoBack =
-                active?.canGoBack == true
-            let canGoForward =
-                active?.canGoForward == true
-
-            let back = UIAction(
-                title: "后退",
-                image: UIImage(
-                    systemName: "chevron.backward"
-                ),
-                attributes:
-                    canGoBack ? [] : [.disabled]
-            ) { [weak self] _ in
-                self?.activeBrowserWebView()?
-                    .goBack()
-            }
-
-            let forward = UIAction(
-                title: "前进",
-                image: UIImage(
-                    systemName: "chevron.forward"
-                ),
-                attributes:
-                    canGoForward ? [] : [.disabled]
-            ) { [weak self] _ in
-                self?.activeBrowserWebView()?
-                    .goForward()
-            }
-
-            let reload = UIAction(
-                title: "刷新",
-                image: UIImage(
-                    systemName: "arrow.clockwise"
-                )
-            ) { [weak self] _ in
-                self?.activeBrowserWebView()?
-                    .reload()
-            }
-
-            let update = UIAction(
-                title: "检查脚本更新",
-                image: UIImage(
-                    systemName:
-                        "arrow.triangle.2.circlepath"
-                )
-            ) { [weak self] _ in
-                self?.startHotUpdate()
-            }
-
-            let clearCache = UIAction(
-                title: "清除网页缓存（保留登录）",
-                image: UIImage(
-                    systemName: "trash"
-                )
-            ) { [weak self] _ in
-                self?.clearWebCacheKeepingLogin()
-            }
-
-            var children: [UIMenuElement] = [
-                back,
-                forward,
-                reload,
-                update,
-                clearCache
-            ]
-
-            if externalWebView != nil {
-                let close = UIAction(
-                    title: "关闭网页并返回 ChatGPT",
-                    image: UIImage(
-                        systemName: "xmark"
-                    )
-                ) { [weak self] _ in
-                    self?.browserClose()
-                }
-                children.append(close)
-            }
-
-            return UIMenu(
-                title: "",
-                children: children
-            )
-        }
-
-        private func mainControlCenterBounds(
-            in rootView: UIView
-        ) -> (
-            minX: CGFloat,
-            maxX: CGFloat,
-            minY: CGFloat,
-            maxY: CGFloat
-        ) {
-            rootView.layoutIfNeeded()
-
-            var safe =
-                rootView.safeAreaLayoutGuide
-                    .layoutFrame
-
-            if safe.width <= 0 ||
-               safe.height <= 0 {
-                safe = rootView.bounds
-            }
-
-            let half: CGFloat = 22
-            let padding: CGFloat = 6
-
-            let minX =
-                safe.minX + half + padding
-            let maxX =
-                max(
-                    minX,
-                    safe.maxX - half - padding
-                )
-            let minY =
-                safe.minY + half + padding
-            let maxY =
-                max(
-                    minY,
-                    safe.maxY - half - padding
-                )
-
-            return (
-                minX,
-                maxX,
-                minY,
-                maxY
-            )
-        }
-
-        private func clampMainControl(
-            _ control: UIButton,
-            in rootView: UIView
-        ) {
-            let bounds =
-                mainControlCenterBounds(
-                    in: rootView
-                )
-
-            control.center = CGPoint(
-                x: min(
-                    bounds.maxX,
-                    max(
-                        bounds.minX,
-                        control.center.x
-                    )
-                ),
-                y: min(
-                    bounds.maxY,
-                    max(
-                        bounds.minY,
-                        control.center.y
-                    )
-                )
-            )
-        }
-
-        private func saveMainControlPosition(
-            _ control: UIButton,
-            in rootView: UIView
-        ) {
-            let bounds =
-                mainControlCenterBounds(
-                    in: rootView
-                )
-
-            let width =
-                max(
-                    1,
-                    bounds.maxX -
-                    bounds.minX
-                )
-            let height =
-                max(
-                    1,
-                    bounds.maxY -
-                    bounds.minY
-                )
-
-            let x = min(
-                1,
-                max(
-                    0,
-                    (control.center.x -
-                        bounds.minX) /
-                        width
-                )
-            )
-
-            let y = min(
-                1,
-                max(
-                    0,
-                    (control.center.y -
-                        bounds.minY) /
-                        height
-                )
-            )
-
-            UserDefaults.standard.set(
-                Double(x),
-                forKey:
-                    Self.mainControlPositionXKey
-            )
-
-            UserDefaults.standard.set(
-                Double(y),
-                forKey:
-                    Self.mainControlPositionYKey
-            )
-        }
-
-        private func restoreMainControlPosition(
-            in rootView: UIView
-        ) {
-            guard
-                let control =
-                    mainControlButton
-            else {
-                return
-            }
-
-            let bounds =
-                mainControlCenterBounds(
-                    in: rootView
-                )
-            let defaults =
-                UserDefaults.standard
-
-            if
-                defaults.object(
-                    forKey:
-                        Self.mainControlPositionXKey
-                ) != nil,
-                defaults.object(
-                    forKey:
-                        Self.mainControlPositionYKey
-                ) != nil
-            {
-                let x = min(
-                    1,
-                    max(
-                        0,
-                        CGFloat(
-                            defaults.double(
-                                forKey:
-                                    Self.mainControlPositionXKey
-                            )
-                        )
-                    )
-                )
-
-                let y = min(
-                    1,
-                    max(
-                        0,
-                        CGFloat(
-                            defaults.double(
-                                forKey:
-                                    Self.mainControlPositionYKey
-                            )
-                        )
-                    )
-                )
-
-                control.center = CGPoint(
-                    x:
-                        bounds.minX +
-                        (
-                            bounds.maxX -
-                            bounds.minX
-                        ) * x,
-                    y:
-                        bounds.minY +
-                        (
-                            bounds.maxY -
-                            bounds.minY
-                        ) * y
-                )
-            } else {
-                control.center = CGPoint(
-                    x: bounds.maxX,
-                    y: bounds.minY
-                )
-            }
-
-            clampMainControl(
-                control,
-                in: rootView
-            )
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith
-                otherGestureRecognizer:
-                    UIGestureRecognizer
-        ) -> Bool {
-            false
-        }
-
-        func gestureRecognizerShouldBegin(
-            _ gestureRecognizer:
-                UIGestureRecognizer
-        ) -> Bool {
-            guard
-                gestureRecognizer.view ===
-                    mainControlButton,
-                let pan =
-                    gestureRecognizer as?
-                        UIPanGestureRecognizer
-            else {
-                return true
-            }
-
-            // UIPanGestureRecognizer already has its own movement
-            // threshold. Keep it available, but do not cancel button
-            // tracking; a true tap therefore still reaches
-            // touchUpInside.
-            _ = pan
-            return true
-        }
-
-        func contextMenuInteraction(
-            _ interaction:
-                UIContextMenuInteraction,
-            configurationForMenuAtLocation
-                location: CGPoint
-        ) -> UIContextMenuConfiguration? {
-            UIContextMenuConfiguration(
-                identifier: nil,
-                previewProvider: nil
-            ) { [weak self] _ in
-                self?.makeMainControlMenu()
-            }
-        }
-
-        @objc private func handleMainControlTouchDown(
-            _ sender: UIButton
-        ) {
-            mainControlDidDrag = false
-        }
-
-        @objc private func handleMainControlTap(
-            _ sender: UIButton
-        ) {
-            guard !mainControlDidDrag else {
-                return
-            }
-
-            mainControlsExpanded.toggle()
-            mainMenuView?.isHidden =
-                !mainControlsExpanded
-            updateMainInlineMenu()
-
-            if mainControlsExpanded {
+            switch type {
+            case "check-update":
                 startHotUpdate()
-                updateMainVersionLabels()
-            }
-        }
 
-        @objc private func handleMainControlPan(
-            _ gesture: UIPanGestureRecognizer
-        ) {
-            guard
-                let control =
-                    mainControlButton,
-                let rootView
-            else {
-                return
-            }
-
-            switch gesture.state {
-            case .began:
-                mainControlDidDrag = true
-                collapseMainInlineMenu()
-                mainControlDragStartCenter =
-                    control.center
-
-            case .changed:
-                let translation =
-                    gesture.translation(
-                        in: rootView
-                    )
-
-                control.center = CGPoint(
-                    x:
-                        mainControlDragStartCenter.x +
-                        translation.x,
-                    y:
-                        mainControlDragStartCenter.y +
-                        translation.y
-                )
-
-                clampMainControl(
-                    control,
-                    in: rootView
-                )
-                layoutMainInlineMenu(
-                    in: rootView
-                )
-
-            case .ended, .cancelled, .failed:
-                clampMainControl(
-                    control,
-                    in: rootView
-                )
-
-                saveMainControlPosition(
-                    control,
-                    in: rootView
-                )
+            case "clear-cache":
+                clearWebCacheKeepingLogin()
 
             default:
                 break
             }
         }
 
-        func refreshMainBrowserControls() {
-            guard
-                let rootView,
-                let control = mainControlButton
-            else {
-                return
-            }
-
-            control.isHidden = false
-            control.alpha = 1
-            control.isUserInteractionEnabled = true
-            updateMainInlineMenu()
-
-            clampMainControl(
-                control,
-                in: rootView
-            )
-
-            rootView.setNeedsLayout()
-            rootView.layoutIfNeeded()
-        }
 
         private func clearWebCacheKeepingLogin() {
             let dataTypes: Set<String> = [
@@ -1592,30 +499,42 @@ struct ChatGPTWebView: UIViewRepresentable {
                     modifiedSince: .distantPast
                 ) { [weak self] in
                     DispatchQueue.main.async {
-                        guard
-                            let self
-                        else {
-                            return
-                        }
-
-                        self.presentAlert(
-                            title: "缓存已清除",
-                            message:
-                                "已清除 ChatGPT 网页磁盘和内存缓存，登录状态已保留。",
-                            actions: [
-                                UIAlertAction(
-                                    title:
-                                        "重新加载",
-                                    style: .default
-                                ) {
-                                    [weak self] _ in
-                                    self?.webView?
-                                        .reloadFromOrigin()
-                                }
-                            ]
+                        self?.sendNativeActionResult(
+                            type: "clear-cache",
+                            ok: true
                         )
                     }
                 }
+        }
+
+        private func sendNativeActionResult(
+            type: String,
+            ok: Bool
+        ) {
+            guard
+                let webView,
+                let data =
+                    try? JSONSerialization.data(
+                        withJSONObject: [
+                            "type": type,
+                            "ok": ok
+                        ]
+                    ),
+                let json =
+                    String(
+                        data: data,
+                        encoding: .utf8
+                    )
+            else {
+                return
+            }
+
+            webView.evaluateJavaScript(
+                """
+                window.ChatGPTWeb?.nativeActionResult?.(\(json));
+                window.ChatGPTSafari?.nativeActionResult?.(\(json));
+                """
+            )
         }
 
         private func makeBrowserActionButton(
@@ -2117,7 +1036,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             browserMenuView = nil
             browserBackButton = nil
             browserForwardButton = nil
-            refreshMainBrowserControls()
         }
 
         private func presentExternalWebView(
@@ -2163,7 +1081,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             ])
 
             self.externalWebView = external
-            refreshMainBrowserControls()
 
             return external
         }
@@ -2324,6 +1241,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                         activeScript?.origin ??
                             "none",
                     updateStatus: updateStatus,
+                    latestScriptVersion:
+                        latestKnownVersion,
                     gestureVersion:
                         activeGestureScript?.version,
                     gestureOrigin:
@@ -2392,11 +1311,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             didCommit navigation: WKNavigation!
         ) {
             if webView === externalWebView {
-                refreshMainBrowserControls()
-                return
+                    return
             }
 
-            refreshMainBrowserControls()
         }
 
         func webView(
@@ -2404,12 +1321,10 @@ struct ChatGPTWebView: UIViewRepresentable {
             didFinish navigation: WKNavigation!
         ) {
             if webView === externalWebView {
-                refreshMainBrowserControls()
-                return
+                    return
             }
 
             ensureScriptsAreRunning()
-            refreshMainBrowserControls()
         }
 
         func webView(

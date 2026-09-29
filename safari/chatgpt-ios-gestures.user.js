@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.10
+// @version      0.1.11
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.10';
+  const VERSION = '0.1.11';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   const HOST = location.hostname.toLowerCase();
@@ -543,8 +543,37 @@
     return true;
   }
 
+  function eventTargetsScriptControl(event) {
+    try {
+      const path =
+        event.composedPath?.() || [];
+
+      return path.some(
+        (node) =>
+          node instanceof HTMLElement &&
+          (
+            node.id ===
+              'cgpt-safari-lite-host' ||
+            node.closest?.(
+              '#cgpt-safari-lite-host'
+            )
+          )
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   function start(event) {
     if (state.destroyed) return;
+
+    if (
+      eventTargetsScriptControl(event)
+    ) {
+      state.gesture = null;
+      state.twoFingerScroll = null;
+      return;
+    }
 
     if (event.touches?.length === 2) {
       state.gesture = null;

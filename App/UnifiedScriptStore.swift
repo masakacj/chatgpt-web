@@ -149,6 +149,7 @@ final class UnifiedScriptStore {
         scriptVersion: String,
         scriptOrigin: String,
         updateStatus: String,
+        latestScriptVersion: String? = nil,
         gestureVersion: String? = nil,
         gestureOrigin: String? = nil,
         gestureUpdateStatus: String? = nil
@@ -160,6 +161,11 @@ final class UnifiedScriptStore {
             "updateStatus": updateStatus,
             "hotUpdate": true
         ]
+
+        if let latestScriptVersion {
+            payload["latestScriptVersion"] =
+                latestScriptVersion
+        }
 
         if let gestureVersion {
             payload["gestureVersion"] = gestureVersion
@@ -194,6 +200,7 @@ final class UnifiedScriptStore {
         scriptVersion: String,
         scriptOrigin: String,
         updateStatus: String,
+        latestScriptVersion: String? = nil,
         gestureVersion: String? = nil,
         gestureOrigin: String? = nil,
         gestureUpdateStatus: String? = nil
@@ -202,6 +209,8 @@ final class UnifiedScriptStore {
             scriptVersion: scriptVersion,
             scriptOrigin: scriptOrigin,
             updateStatus: updateStatus,
+            latestScriptVersion:
+                latestScriptVersion,
             gestureVersion: gestureVersion,
             gestureOrigin: gestureOrigin,
             gestureUpdateStatus: gestureUpdateStatus

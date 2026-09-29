@@ -172,6 +172,26 @@ requireText(
 );
 requireText(
   shared,
+  'function nativeScriptControlSupported()',
+  'native script-owned floating control gate'
+);
+requireText(
+  shared,
+  "'ChatGPT Web 控制'",
+  'script-owned native control accessibility'
+);
+requireText(
+  shared,
+  "'clear-cache'",
+  'script-owned cache action bridge'
+);
+requireText(
+  shared,
+  "'pointermove'",
+  'script-owned draggable control'
+);
+requireText(
+  shared,
   "const GLOBAL_KEY = 'ChatGPTWeb';",
   'shared global API'
 );
@@ -246,6 +266,7 @@ const sharedForbidden = [
   ['minTurns', 'length-gated optimization'],
   ['keepRecent', 'legacy recent-turn threshold'],
   ['nodes.some((other, otherIndex)', 'quadratic turn containment scan'],
+  ['if (IS_NATIVE_IOS) return;', 'native control disabled in shared script'],
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
   [".removeAttribute('src')", 'media source unloading'],
@@ -411,6 +432,11 @@ requireText(
   gesture,
   'window.__CHATGPT_NATIVE__?.hotUpdate',
   'native-only execution gate'
+);
+requireText(
+  gesture,
+  'function eventTargetsScriptControl(event)',
+  'gesture exclusion for script-owned control'
 );
 
 const gestureForbidden = [

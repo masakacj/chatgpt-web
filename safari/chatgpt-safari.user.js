@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.28
+// @version      0.3.29
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.28';
+  const VERSION = '0.3.29';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -56,6 +56,10 @@
   const HOST_ID = 'cgpt-safari-lite-host';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
   const CONTROL_MIGRATION_KEY = 'cgpt-unified-control-visible-v031';
+  const CONTROL_POSITION_KEY =
+    'cgpt-unified-control-position-v1';
+  const NATIVE_SCRIPT_CONTROL_MIN_VERSION =
+    '0.3.29';
   const CONVERSATION_STATE_KEY = 'cgpt-safari-conversation-state-v1';
   const STATE_CHANNEL = 'cgpt-safari-conversation-state';
   const SETTLE_MS = 2800;
@@ -103,6 +107,7 @@
     nativeStatus: { ...(window.__CHATGPT_NATIVE__ || {}) },
     channel: null,
     ui: null,
+    controlResizeHandler: null,
   };
 
   function clamp(value, min, max) {
@@ -1160,9 +1165,184 @@
     }
   }
 
+  function versionParts(value) {
+    return String(value || '')
+      .split('.')
+      .map((part) =>
+        Number.parseInt(part, 10) || 0
+      );
+  }
+
+  function versionAtLeast(value, minimum) {
+    const left = versionParts(value);
+    const right = versionParts(minimum);
+    const length =
+      Math.max(left.length, right.length);
+
+    for (
+      let index = 0;
+      index < length;
+      index += 1
+    ) {
+      const a = left[index] || 0;
+      const b = right[index] || 0;
+      if (a > b) return true;
+      if (a < b) return false;
+    }
+
+    return true;
+  }
+
+  function nativeScriptControlSupported() {
+    if (!IS_NATIVE_IOS) return true;
+
+    return versionAtLeast(
+      state.nativeStatus?.appVersion,
+      NATIVE_SCRIPT_CONTROL_MIN_VERSION
+    );
+  }
+
+  function loadControlPosition() {
+    try {
+      const raw = JSON.parse(
+        localStorage.getItem(
+          CONTROL_POSITION_KEY
+        ) || 'null'
+      );
+
+      if (
+        raw &&
+        Number.isFinite(Number(raw.x)) &&
+        Number.isFinite(Number(raw.y))
+      ) {
+        return {
+          x: clamp(Number(raw.x), 0, 1),
+          y: clamp(Number(raw.y), 0, 1),
+        };
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  function saveControlPosition(host) {
+    if (!(host instanceof HTMLElement)) return;
+
+    const rect = host.getBoundingClientRect();
+    const width =
+      Math.max(
+        1,
+        window.innerWidth - rect.width
+      );
+    const height =
+      Math.max(
+        1,
+        window.innerHeight - rect.height
+      );
+
+    try {
+      localStorage.setItem(
+        CONTROL_POSITION_KEY,
+        JSON.stringify({
+          x: clamp(rect.left / width, 0, 1),
+          y: clamp(rect.top / height, 0, 1),
+        })
+      );
+    } catch (_) {}
+  }
+
+  function positionControlHost(host, left, top) {
+    if (!(host instanceof HTMLElement)) return;
+
+    const rect = host.getBoundingClientRect();
+    const width = rect.width || 36;
+    const height = rect.height || 36;
+    const padding = 8;
+
+    const x = clamp(
+      Number(left),
+      padding,
+      Math.max(
+        padding,
+        window.innerWidth -
+          width -
+          padding
+      )
+    );
+    const y = clamp(
+      Number(top),
+      padding,
+      Math.max(
+        padding,
+        window.innerHeight -
+          height -
+          padding
+      )
+    );
+
+    host.style.left = x + 'px';
+    host.style.top = y + 'px';
+    host.style.right = 'auto';
+
+    host.dataset.panelSide =
+      x + width / 2 < window.innerWidth / 2
+        ? 'left'
+        : 'right';
+    host.dataset.panelVertical =
+      y + height / 2 > window.innerHeight / 2
+        ? 'up'
+        : 'down';
+  }
+
+  function restoreControlPosition(host) {
+    const stored = loadControlPosition();
+    if (!stored) return;
+
+    const rect = host.getBoundingClientRect();
+    const width =
+      Math.max(
+        1,
+        window.innerWidth -
+          (rect.width || 36)
+      );
+    const height =
+      Math.max(
+        1,
+        window.innerHeight -
+          (rect.height || 36)
+      );
+
+    positionControlHost(
+      host,
+      stored.x * width,
+      stored.y * height
+    );
+  }
+
+  function requestNativeAction(type, payload = {}) {
+    try {
+      const handler =
+        window.webkit?.messageHandlers?.chatGPTNative;
+
+      if (!handler?.postMessage) return false;
+
+      handler.postMessage({
+        type,
+        ...payload,
+      });
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function createControl() {
-    if (IS_NATIVE_IOS) return;
-    if (!state.settings.showControl || state.destroyed) return;
+    if (!nativeScriptControlSupported()) return;
+    if (
+      (!state.settings.showControl && !IS_NATIVE_IOS) ||
+      state.destroyed
+    ) return;
     if (!document.body || document.getElementById(HOST_ID)) return;
 
     const host = document.createElement('div');
@@ -1181,25 +1361,29 @@
       ':host { all: initial; }',
       '* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }',
       '.wrap { position: relative; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }',
-      '.fab { width: 36px; height: 36px; border: 0; border-radius: 18px; background: rgba(32,32,32,.78); color: white; box-shadow: 0 3px 14px rgba(0,0,0,.22); display: grid; place-items: center; font-size: 15px; font-weight: 700; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }',
+      '.fab { width: 36px; height: 36px; border: 0; border-radius: 18px; background: rgba(32,32,32,.78); color: white; box-shadow: 0 3px 14px rgba(0,0,0,.22); display: grid; place-items: center; font-size: 14px; font-weight: 700; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); touch-action: none; user-select: none; -webkit-user-select: none; }',
       '.fab[data-chat-state]::after { content: ""; width: 7px; height: 7px; border-radius: 50%; position: absolute; right: 1px; top: 1px; box-shadow: 0 0 0 2px rgba(255,255,255,.82); }',
       '.fab[data-chat-state="running"]::after { background: #34c759; animation: pulse 1.15s ease-in-out infinite; }',
       '.fab[data-chat-state="waiting_user"]::after { background: #ff9f0a; }',
       '.fab[data-chat-state="settling"]::after { background: #8e8e93; animation: pulse .9s ease-in-out infinite; }',
       '.fab[data-chat-state="completed_unread"]::after { background: #0a84ff; }',
       '@keyframes pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
-      '.panel { position: absolute; top: 43px; right: 0; width: 238px; padding: 10px; border-radius: 14px; background: rgba(28,28,30,.94); color: white; box-shadow: 0 12px 34px rgba(0,0,0,.28); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: none; }',
+      '.panel { position: absolute; top: 42px; right: 0; width: 226px; padding: 8px; border-radius: 13px; background: rgba(28,28,30,.94); color: white; box-shadow: 0 12px 34px rgba(0,0,0,.28); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: none; }',
+      ':host([data-panel-side="left"]) .panel { left: 0; right: auto; }',
+      ':host([data-panel-side="right"]) .panel { left: auto; right: 0; }',
+      ':host([data-panel-vertical="up"]) .panel { top: auto; bottom: 42px; }',
+      ':host([data-panel-vertical="down"]) .panel { top: 42px; bottom: auto; }',
       '.panel.open { display: block; }',
-      '.title { font-size: 13px; font-weight: 700; margin: 2px 2px 9px; }',
-      '.status { font-size: 11px; opacity: .72; margin: 0 2px 10px; line-height: 1.35; }',
-      '.info { margin: 0 0 8px; padding: 8px 9px; border-radius: 10px; background: rgba(255,255,255,.07); }',
-      '.info-row { min-height: 22px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; }',
+      '.title { font-size: 12px; font-weight: 700; margin: 1px 2px 6px; }',
+      '.status { font-size: 10px; opacity: .70; margin: 0 2px 7px; line-height: 1.3; }',
+      '.info { margin: 0 0 6px; padding: 6px 8px; border-radius: 9px; background: rgba(255,255,255,.07); }',
+      '.info-row { min-height: 19px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 10.5px; }',
       '.info-key { opacity: .58; }',
       '.info-value { opacity: .92; text-align: right; font-variant-numeric: tabular-nums; }',
-      '.row { width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid rgba(255,255,255,.11); }',
+      '.row { width: 100%; min-height: 33px; display: flex; align-items: center; justify-content: space-between; gap: 9px; border-top: 1px solid rgba(255,255,255,.11); }',
       '.row:first-of-type { border-top: 0; }',
-      '.label { font-size: 13px; }',
-      'button.action { width: 100%; border: 0; background: transparent; color: white; text-align: left; padding: 10px 2px; font-size: 13px; }',
+      '.label { font-size: 12px; }',
+      'button.action { width: 100%; border: 0; background: transparent; color: white; text-align: left; padding: 7px 2px; font-size: 12px; }',
       '.switch { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.20); position: relative; transition: .15s ease; margin: 0; }',
       '.switch::after { content: ""; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: white; top: 2px; left: 2px; transition: .15s ease; }',
       '.switch:checked { background: #34c759; }',
@@ -1211,7 +1395,10 @@
     button.className = 'fab';
     button.type = 'button';
     button.textContent = 'S';
-    button.setAttribute('aria-label', 'ChatGPT Safari 控制');
+    button.setAttribute(
+      'aria-label',
+      'ChatGPT Web 控制'
+    );
 
     const panel = document.createElement('div');
     panel.className = 'panel';
@@ -1226,9 +1413,14 @@
     const info = document.createElement('div');
     info.className = 'info';
 
-    const scriptInfo = makeInfoRow('脚本版本');
-    const appInfo = makeInfoRow('IPA 壳');
-    const updateInfo = makeInfoRow('更新状态');
+    const scriptInfo =
+      makeInfoRow('当前脚本');
+    const latestInfo =
+      makeInfoRow('最新脚本');
+    const appInfo =
+      makeInfoRow('容器');
+    const updateInfo =
+      makeInfoRow('更新状态');
     const toolInfo = makeInfoRow('工具过程');
     const gestureInfo = state.nativeStatus?.gestureVersion
       ? makeInfoRow('iOS 手势')
@@ -1236,6 +1428,7 @@
 
     info.append(
       scriptInfo.row,
+      latestInfo.row,
       appInfo.row,
       updateInfo.row,
       toolInfo.row
@@ -1279,9 +1472,22 @@
     restore.textContent = '恢复官方页面显示';
     restoreRow.appendChild(restore);
 
-    const hideRow = document.createElement('div');
+    const cacheRow =
+      document.createElement('div');
+    cacheRow.className = 'row';
+    const clearCache =
+      document.createElement('button');
+    clearCache.type = 'button';
+    clearCache.className = 'action';
+    clearCache.textContent =
+      '清除网页缓存（保留登录）';
+    cacheRow.appendChild(clearCache);
+
+    const hideRow =
+      document.createElement('div');
     hideRow.className = 'row';
-    const hide = document.createElement('button');
+    const hide =
+      document.createElement('button');
     hide.type = 'button';
     hide.className = 'action';
     hide.textContent = '隐藏悬浮按钮';
@@ -1298,15 +1504,181 @@
       perfRow,
       updateRow,
       reloadRow,
-      restoreRow,
-      hideRow,
-      foot
+      restoreRow
     );
+
+    if (IS_NATIVE_IOS) {
+      panel.append(cacheRow);
+    } else {
+      panel.append(hideRow);
+    }
+
+    panel.append(foot);
     wrap.append(button, panel);
     shadow.append(style, wrap);
     document.body.appendChild(host);
 
+    window.requestAnimationFrame(() => {
+      restoreControlPosition(host);
+
+      const rect =
+        host.getBoundingClientRect();
+
+      host.dataset.panelSide =
+        rect.left + rect.width / 2 <
+        window.innerWidth / 2
+          ? 'left'
+          : 'right';
+
+      host.dataset.panelVertical =
+        rect.top + rect.height / 2 >
+        window.innerHeight / 2
+          ? 'up'
+          : 'down';
+    });
+
+    const onControlResize = () => {
+      const rect =
+        host.getBoundingClientRect();
+
+      positionControlHost(
+        host,
+        rect.left,
+        rect.top
+      );
+    };
+
+    state.controlResizeHandler =
+      onControlResize;
+
+    window.addEventListener(
+      'resize',
+      onControlResize,
+      { passive: true }
+    );
+
+    const drag = {
+      active: false,
+      moved: false,
+      pointerId: null,
+      startX: 0,
+      startY: 0,
+      startLeft: 0,
+      startTop: 0,
+      suppressClickUntil: 0,
+    };
+
+    button.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (
+          event.button !== undefined &&
+          event.button !== 0
+        ) {
+          return;
+        }
+
+        const rect =
+          host.getBoundingClientRect();
+
+        drag.active = true;
+        drag.moved = false;
+        drag.pointerId = event.pointerId;
+        drag.startX = event.clientX;
+        drag.startY = event.clientY;
+        drag.startLeft = rect.left;
+        drag.startTop = rect.top;
+
+        try {
+          button.setPointerCapture?.(
+            event.pointerId
+          );
+        } catch (_) {}
+      }
+    );
+
+    button.addEventListener(
+      'pointermove',
+      (event) => {
+        if (
+          !drag.active ||
+          event.pointerId !==
+            drag.pointerId
+        ) {
+          return;
+        }
+
+        const dx =
+          event.clientX - drag.startX;
+        const dy =
+          event.clientY - drag.startY;
+
+        if (
+          !drag.moved &&
+          Math.hypot(dx, dy) < 6
+        ) {
+          return;
+        }
+
+        drag.moved = true;
+        panel.classList.remove('open');
+
+        positionControlHost(
+          host,
+          drag.startLeft + dx,
+          drag.startTop + dy
+        );
+
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    );
+
+    function finishControlDrag(event) {
+      if (
+        !drag.active ||
+        (
+          event?.pointerId !== undefined &&
+          event.pointerId !==
+            drag.pointerId
+        )
+      ) {
+        return;
+      }
+
+      if (drag.moved) {
+        saveControlPosition(host);
+        drag.suppressClickUntil =
+          performance.now() + 350;
+      }
+
+      try {
+        button.releasePointerCapture?.(
+          drag.pointerId
+        );
+      } catch (_) {}
+
+      drag.active = false;
+      drag.pointerId = null;
+    }
+
+    button.addEventListener(
+      'pointerup',
+      finishControlDrag
+    );
+    button.addEventListener(
+      'pointercancel',
+      finishControlDrag
+    );
+
     button.addEventListener('click', () => {
+      if (
+        performance.now() <
+        drag.suppressClickUntil
+      ) {
+        return;
+      }
+
       const opening = !panel.classList.contains('open');
       panel.classList.toggle('open');
 
@@ -1334,7 +1706,31 @@
       updateUI(currentTurnCount());
     });
 
-    reload.addEventListener('click', () => location.reload());
+    reload.addEventListener(
+      'click',
+      () => location.reload()
+    );
+
+    clearCache.addEventListener(
+      'click',
+      () => {
+        clearCache.disabled = true;
+        clearCache.style.opacity = '.55';
+        clearCache.textContent =
+          '清理中…';
+
+        if (
+          !requestNativeAction(
+            'clear-cache'
+          )
+        ) {
+          clearCache.disabled = false;
+          clearCache.style.opacity = '1';
+          clearCache.textContent =
+            '清除失败 · 重试';
+        }
+      }
+    );
 
     restore.addEventListener('click', () => {
       state.settings.enabled = false;
@@ -1346,8 +1742,19 @@
     });
 
     hide.addEventListener('click', () => {
+      if (IS_NATIVE_IOS) return;
+
       state.settings.showControl = false;
       saveSettings();
+
+      if (state.controlResizeHandler) {
+        window.removeEventListener(
+          'resize',
+          state.controlResizeHandler
+        );
+        state.controlResizeHandler = null;
+      }
+
       host.remove();
       state.ui = null;
     });
@@ -1359,8 +1766,10 @@
       status,
       perfSwitch,
       update,
+      clearCache,
       foot,
       scriptInfo: scriptInfo.value,
+      latestInfo: latestInfo.value,
       appInfo: appInfo.value,
       updateInfo: updateInfo.value,
       toolInfo: toolInfo.value,
@@ -1407,6 +1816,40 @@
     return '脚本 v' + VERSION + ' · PC / iOS 同一脚本';
   }
 
+  function nativeActionResult(result) {
+    if (
+      !result ||
+      typeof result !== 'object'
+    ) {
+      return;
+    }
+
+    if (
+      result.type === 'clear-cache' &&
+      state.ui?.clearCache
+    ) {
+      const button =
+        state.ui.clearCache;
+
+      button.disabled = false;
+      button.style.opacity = '1';
+      button.textContent =
+        result.ok
+          ? '缓存已清除'
+          : '清除失败 · 重试';
+
+      window.setTimeout(() => {
+        if (
+          !state.destroyed &&
+          button.isConnected
+        ) {
+          button.textContent =
+            '清除网页缓存（保留登录）';
+        }
+      }, 1800);
+    }
+  }
+
   function setNativeStatus(next) {
     if (!next || typeof next !== 'object') return;
     state.nativeStatus = { ...state.nativeStatus, ...next };
@@ -1439,8 +1882,30 @@
         : '');
 
     if (ui.scriptInfo) {
-      ui.scriptInfo.textContent = 'v' + VERSION;
+      ui.scriptInfo.textContent =
+        'v' + VERSION;
     }
+
+    if (ui.latestInfo) {
+      const checking =
+        String(
+          state.nativeStatus?.updateStatus ||
+          ''
+        ) === 'checking';
+
+      const latest =
+        state.nativeStatus
+          ?.latestScriptVersion ||
+        state.nativeStatus
+          ?.scriptVersion ||
+        VERSION;
+
+      ui.latestInfo.textContent =
+        checking
+          ? '检查中…'
+          : 'v' + latest;
+    }
+
     if (ui.appInfo) {
       ui.appInfo.textContent = state.nativeStatus?.appVersion
         ? 'v' + state.nativeStatus.appVersion
@@ -1654,6 +2119,14 @@
     state.windowObserver?.disconnect();
     state.windowObserver = null;
 
+    if (state.controlResizeHandler) {
+      window.removeEventListener(
+        'resize',
+        state.controlResizeHandler
+      );
+      state.controlResizeHandler = null;
+    }
+
     window.removeEventListener('popstate', onRoute);
     window.removeEventListener('hashchange', onRoute);
     document.removeEventListener('visibilitychange', onVisibility);
@@ -1686,6 +2159,7 @@
     getState,
     setEnabled,
     setNativeStatus,
+    nativeActionResult,
     requestNativeUpdateCheck,
     showControl,
     refresh: () => scheduleRefresh(0),

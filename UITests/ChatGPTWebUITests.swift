@@ -12,82 +12,48 @@ final class ChatGPTWebUITests: XCTestCase {
         app.launchArguments.append(
             "--ui-testing"
         )
-        app.launchArguments.append(
-            "--ui-testing-latest-script=9.9.9"
-        )
         app.launch()
 
         let button =
             app.buttons[
-                "chatgpt.web.floatingControl"
+                "ChatGPT Web 控制"
             ]
 
         XCTAssertTrue(
             button.waitForExistence(
                 timeout: 10
             ),
-            "Native floating control did not appear"
+            "Script floating control did not appear"
         )
 
         XCTAssertTrue(
             button.isHittable,
-            "Native floating control is not hittable"
+            "Script floating control is not hittable"
         )
 
         button.tap()
 
-        let currentVersion =
+        let currentScript =
             app.staticTexts[
-                "chatgpt.web.currentVersion"
+                "当前脚本"
             ]
-        let latestVersion =
+        let latestScript =
             app.staticTexts[
-                "chatgpt.web.latestVersion"
+                "最新脚本"
             ]
 
         XCTAssertTrue(
-            currentVersion.waitForExistence(
+            currentScript.waitForExistence(
                 timeout: 3
             ),
-            "Compact current-version label is missing"
+            "Script-owned current version row is missing"
         )
+
         XCTAssertTrue(
-            latestVersion.waitForExistence(
+            latestScript.waitForExistence(
                 timeout: 3
             ),
-            "Compact latest-version label is missing"
-        )
-
-        let currentVersionUpdated =
-            expectation(
-                for:
-                    NSPredicate(
-                        format:
-                            "label == %@",
-                        "当前脚本 9.9.9"
-                    ),
-                evaluatedWith:
-                    currentVersion
-            )
-
-        let latestVersionUpdated =
-            expectation(
-                for:
-                    NSPredicate(
-                        format:
-                            "label == %@",
-                        "最新 9.9.9"
-                    ),
-                evaluatedWith:
-                    latestVersion
-            )
-
-        wait(
-            for: [
-                currentVersionUpdated,
-                latestVersionUpdated
-            ],
-            timeout: 3
+            "Script-owned latest version row is missing"
         )
 
         let initialCacheAction =
@@ -101,19 +67,19 @@ final class ChatGPTWebUITests: XCTestCase {
             initialCacheAction.waitForExistence(
                 timeout: 3
             ),
-            "Initial single tap did not open the inline menu"
+            "Initial single tap did not open the script panel"
         )
 
         button.tap()
 
         XCTAssertFalse(
             initialCacheAction.exists,
-            "Second tap did not collapse the inline menu"
+            "Second tap did not collapse the script panel"
         )
 
         XCTAssertTrue(
             button.isHittable,
-            "Floating control stopped being hittable after collapsing the inline menu"
+            "Floating control stopped being hittable after collapsing the script panel"
         )
 
         let initialFrame = button.frame
@@ -182,7 +148,7 @@ final class ChatGPTWebUITests: XCTestCase {
             cacheAction.waitForExistence(
                 timeout: 3
             ),
-            "Post-drag inline menu is missing the cache action"
+            "Post-drag script panel is missing the cache action"
         )
     }
 }
