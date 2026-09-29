@@ -66,7 +66,7 @@ final class ChatGPTWebUITests: XCTestCase {
             scriptPanel.waitForExistence(
                 timeout: 3
             ),
-            "Native anchor did not open the script dialog"
+            "Native anchor opened JS state but the script dialog was not exposed"
         )
 
         let currentScript =

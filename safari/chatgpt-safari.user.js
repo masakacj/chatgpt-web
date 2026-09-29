@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.34
+// @version      0.3.35
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.34';
+  const VERSION = '0.3.35';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1619,48 +1619,54 @@
     }
 
     panel.append(foot);
-    wrap.append(button, panel);
-    shadow.append(style, wrap);
-    document.body.appendChild(host);
 
-    window.requestAnimationFrame(() => {
-      restoreControlPosition(host);
+    if (usingNativeAnchor) {
+      shadow.append(style, panel);
+    } else {
+      wrap.append(button, panel);
+      shadow.append(style, wrap);
 
-      const rect =
-        host.getBoundingClientRect();
+      window.requestAnimationFrame(() => {
+        restoreControlPosition(host);
 
-      host.dataset.panelSide =
-        rect.left + rect.width / 2 <
-        window.innerWidth / 2
-          ? 'left'
-          : 'right';
+        const rect =
+          host.getBoundingClientRect();
 
-      host.dataset.panelVertical =
-        rect.top + rect.height / 2 >
-        window.innerHeight / 2
-          ? 'up'
-          : 'down';
-    });
+        host.dataset.panelSide =
+          rect.left + rect.width / 2 <
+          window.innerWidth / 2
+            ? 'left'
+            : 'right';
 
-    const onControlResize = () => {
-      const rect =
-        host.getBoundingClientRect();
+        host.dataset.panelVertical =
+          rect.top + rect.height / 2 >
+          window.innerHeight / 2
+            ? 'up'
+            : 'down';
+      });
 
-      positionControlHost(
-        host,
-        rect.left,
-        rect.top
+      const onControlResize = () => {
+        const rect =
+          host.getBoundingClientRect();
+
+        positionControlHost(
+          host,
+          rect.left,
+          rect.top
+        );
+      };
+
+      state.controlResizeHandler =
+        onControlResize;
+
+      window.addEventListener(
+        'resize',
+        onControlResize,
+        { passive: true }
       );
-    };
+    }
 
-    state.controlResizeHandler =
-      onControlResize;
-
-    window.addEventListener(
-      'resize',
-      onControlResize,
-      { passive: true }
-    );
+    document.body.appendChild(host);
 
     const drag = {
       active: false,

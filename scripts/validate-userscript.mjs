@@ -187,6 +187,11 @@ requireText(
 );
 requireText(
   shared,
+  'shadow.append(style, panel);',
+  'native-anchor direct panel mount'
+);
+requireText(
+  shared,
   "'ChatGPT Web 菜单'",
   'script panel dialog accessibility'
 );
