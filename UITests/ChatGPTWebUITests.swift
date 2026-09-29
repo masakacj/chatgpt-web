@@ -28,6 +28,48 @@ final class ChatGPTWebUITests: XCTestCase {
             "Native floating control is not hittable"
         )
 
+        button.tap()
+
+        let initialCancelAction =
+            app.descendants(
+                matching: .any
+            )[
+                "取消"
+            ]
+
+        XCTAssertTrue(
+            initialCancelAction.waitForExistence(
+                timeout: 3
+            ),
+            "Initial single tap did not open the native action sheet"
+        )
+
+        let initialCacheAction =
+            app.descendants(
+                matching: .any
+            )[
+                "清除网页缓存（保留登录）"
+            ]
+
+        XCTAssertTrue(
+            initialCacheAction.waitForExistence(
+                timeout: 3
+            ),
+            "Initial action sheet is missing the cache action"
+        )
+
+        initialCancelAction.tap()
+
+        XCTAssertTrue(
+            button.waitForExistence(
+                timeout: 3
+            )
+        )
+        XCTAssertTrue(
+            button.isHittable,
+            "Floating control did not become hittable after dismissing the action sheet"
+        )
+
         let initialFrame = button.frame
 
         let destination =
@@ -94,7 +136,7 @@ final class ChatGPTWebUITests: XCTestCase {
             cancelAction.waitForExistence(
                 timeout: 3
             ),
-            "Single tap did not open the native action sheet"
+            "Single tap after drag did not open the native action sheet"
         )
 
         let cacheAction =
@@ -108,7 +150,7 @@ final class ChatGPTWebUITests: XCTestCase {
             cacheAction.waitForExistence(
                 timeout: 3
             ),
-            "Single tap did not open the native menu or cache action is missing"
+            "Post-drag action sheet is missing the cache action"
         )
     }
 }

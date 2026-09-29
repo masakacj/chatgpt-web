@@ -554,11 +554,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                     ),
                 for: .touchUpInside
             )
-            control.addInteraction(
-                UIContextMenuInteraction(
-                    delegate: self
-                )
-            )
 
             let pan = UIPanGestureRecognizer(
                 target: self,
@@ -577,7 +572,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             rootView.floatingControl = control
 
             mainControlButton = control
-            control.menu = makeMainControlMenu()
             control.isHidden = false
 
             DispatchQueue.main.async {
@@ -1118,8 +1112,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.isHidden = false
             control.alpha = 1
             control.isUserInteractionEnabled = true
-            control.menu =
-                makeMainControlMenu()
 
             clampMainControl(
                 control,
