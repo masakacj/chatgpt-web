@@ -110,6 +110,10 @@ struct ChatGPTWebView: UIViewRepresentable {
             initialGestureScript: initialGestureScript
         )
 
+        context.coordinator.installMainAnchor(
+            in: container
+        )
+
         let isUITesting =
             ProcessInfo.processInfo.arguments
                 .contains("--ui-testing")
@@ -150,7 +154,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         _ uiView: ChatGPTWebContainerView,
         context: Context
     ) {
-        // Main floating UI is owned by the hot-update userscript.
+        context.coordinator.refreshMainAnchor()
     }
 
     static func dismantleUIView(
@@ -256,6 +260,16 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private var latestKnownVersion: String?
 
+        private weak var mainAnchorButton: UIButton?
+        private var mainAnchorDragStartCenter =
+            CGPoint.zero
+        private var mainAnchorDidDrag = false
+
+        private static let mainAnchorPositionXKey =
+            "ChatGPTWeb.mainAnchorPositionX"
+        private static let mainAnchorPositionYKey =
+            "ChatGPTWeb.mainAnchorPositionY"
+
         private weak var externalWebView: WKWebView?
         private weak var browserControlButton: UIButton?
         private weak var browserMenuView: UIVisualEffectView?
@@ -304,6 +318,495 @@ struct ChatGPTWebView: UIViewRepresentable {
                 : "bundled"
         }
 
+        func installMainAnchor(
+            in rootView: ChatGPTWebContainerView
+        ) {
+            guard mainAnchorButton == nil else {
+                return
+            }
+
+            let control = UIButton(type: .system)
+            control.translatesAutoresizingMaskIntoConstraints = true
+            control.frame = CGRect(
+                x: 0,
+                y: 0,
+                width: 44,
+                height: 44
+            )
+
+            control.setTitle("S", for: .normal)
+            control.titleLabel?.font =
+                UIFont.systemFont(
+                    ofSize: 14,
+                    weight: .bold
+                )
+            control.tintColor = .label
+            control.backgroundColor =
+                UIColor.secondarySystemBackground
+                    .withAlphaComponent(0.98)
+
+            control.layer.cornerRadius = 22
+            control.layer.shadowColor =
+                UIColor.black.cgColor
+            control.layer.shadowOpacity = 0.22
+            control.layer.shadowRadius = 8
+            control.layer.shadowOffset =
+                CGSize(width: 0, height: 3)
+
+            control.accessibilityLabel =
+                "ChatGPT Web 控制，可拖动"
+            control.accessibilityIdentifier =
+                "chatgpt.web.floatingAnchor"
+            control.isAccessibilityElement = true
+
+            control.addTarget(
+                self,
+                action:
+                    #selector(
+                        handleMainAnchorTouchDown(_:)
+                    ),
+                for: .touchDown
+            )
+            control.addTarget(
+                self,
+                action:
+                    #selector(
+                        handleMainAnchorTap(_:)
+                    ),
+                for: .touchUpInside
+            )
+
+            let pan = UIPanGestureRecognizer(
+                target: self,
+                action:
+                    #selector(
+                        handleMainAnchorPan(_:)
+                    )
+            )
+            pan.minimumNumberOfTouches = 1
+            pan.maximumNumberOfTouches = 1
+            pan.cancelsTouchesInView = false
+            control.addGestureRecognizer(pan)
+
+            rootView.addSubview(control)
+            mainAnchorButton = control
+
+            DispatchQueue.main.async {
+                [weak self, weak rootView] in
+                guard
+                    let self,
+                    let rootView
+                else {
+                    return
+                }
+
+                rootView.layoutIfNeeded()
+                self.restoreMainAnchorPosition(
+                    in: rootView
+                )
+                rootView.bringSubviewToFront(
+                    control
+                )
+            }
+        }
+
+        func refreshMainAnchor() {
+            guard
+                let rootView,
+                let control = mainAnchorButton
+            else {
+                return
+            }
+
+            control.isHidden = false
+            control.alpha = 1
+            control.isUserInteractionEnabled = true
+
+            clampMainAnchor(
+                control,
+                in: rootView
+            )
+            rootView.bringSubviewToFront(
+                control
+            )
+        }
+
+        private func mainAnchorCenterBounds(
+            in rootView: UIView
+        ) -> (
+            minX: CGFloat,
+            maxX: CGFloat,
+            minY: CGFloat,
+            maxY: CGFloat
+        ) {
+            rootView.layoutIfNeeded()
+
+            var safe =
+                rootView.safeAreaLayoutGuide
+                    .layoutFrame
+
+            if safe.width <= 0 ||
+               safe.height <= 0 {
+                safe = rootView.bounds
+            }
+
+            let half: CGFloat = 22
+            let padding: CGFloat = 6
+
+            let minX =
+                safe.minX + half + padding
+            let maxX =
+                max(
+                    minX,
+                    safe.maxX - half - padding
+                )
+            let minY =
+                safe.minY + half + padding
+            let maxY =
+                max(
+                    minY,
+                    safe.maxY - half - padding
+                )
+
+            return (
+                minX,
+                maxX,
+                minY,
+                maxY
+            )
+        }
+
+        private func clampMainAnchor(
+            _ control: UIButton,
+            in rootView: UIView
+        ) {
+            let bounds =
+                mainAnchorCenterBounds(
+                    in: rootView
+                )
+
+            control.center = CGPoint(
+                x:
+                    min(
+                        bounds.maxX,
+                        max(
+                            bounds.minX,
+                            control.center.x
+                        )
+                    ),
+                y:
+                    min(
+                        bounds.maxY,
+                        max(
+                            bounds.minY,
+                            control.center.y
+                        )
+                    )
+            )
+        }
+
+        private func saveMainAnchorPosition(
+            _ control: UIButton,
+            in rootView: UIView
+        ) {
+            let bounds =
+                mainAnchorCenterBounds(
+                    in: rootView
+                )
+
+            let width =
+                max(
+                    1,
+                    bounds.maxX -
+                    bounds.minX
+                )
+            let height =
+                max(
+                    1,
+                    bounds.maxY -
+                    bounds.minY
+                )
+
+            let x =
+                min(
+                    1,
+                    max(
+                        0,
+                        (control.center.x -
+                            bounds.minX) /
+                            width
+                    )
+                )
+            let y =
+                min(
+                    1,
+                    max(
+                        0,
+                        (control.center.y -
+                            bounds.minY) /
+                            height
+                    )
+                )
+
+            UserDefaults.standard.set(
+                Double(x),
+                forKey:
+                    Self.mainAnchorPositionXKey
+            )
+            UserDefaults.standard.set(
+                Double(y),
+                forKey:
+                    Self.mainAnchorPositionYKey
+            )
+        }
+
+        private func restoreMainAnchorPosition(
+            in rootView: UIView
+        ) {
+            guard
+                let control = mainAnchorButton
+            else {
+                return
+            }
+
+            let bounds =
+                mainAnchorCenterBounds(
+                    in: rootView
+                )
+            let defaults =
+                UserDefaults.standard
+
+            if
+                defaults.object(
+                    forKey:
+                        Self.mainAnchorPositionXKey
+                ) != nil,
+                defaults.object(
+                    forKey:
+                        Self.mainAnchorPositionYKey
+                ) != nil
+            {
+                let x =
+                    min(
+                        1,
+                        max(
+                            0,
+                            CGFloat(
+                                defaults.double(
+                                    forKey:
+                                        Self.mainAnchorPositionXKey
+                                )
+                            )
+                        )
+                    )
+                let y =
+                    min(
+                        1,
+                        max(
+                            0,
+                            CGFloat(
+                                defaults.double(
+                                    forKey:
+                                        Self.mainAnchorPositionYKey
+                                )
+                            )
+                        )
+                    )
+
+                control.center = CGPoint(
+                    x:
+                        bounds.minX +
+                        (
+                            bounds.maxX -
+                            bounds.minX
+                        ) * x,
+                    y:
+                        bounds.minY +
+                        (
+                            bounds.maxY -
+                            bounds.minY
+                        ) * y
+                )
+            } else {
+                control.center = CGPoint(
+                    x: bounds.maxX,
+                    y: bounds.minY
+                )
+            }
+
+            clampMainAnchor(
+                control,
+                in: rootView
+            )
+        }
+
+        @objc private func handleMainAnchorTouchDown(
+            _ sender: UIButton
+        ) {
+            mainAnchorDidDrag = false
+        }
+
+        @objc private func handleMainAnchorTap(
+            _ sender: UIButton
+        ) {
+            guard !mainAnchorDidDrag else {
+                return
+            }
+
+            toggleScriptPanel(
+                from: sender,
+                retry: true
+            )
+        }
+
+        @objc private func handleMainAnchorPan(
+            _ gesture: UIPanGestureRecognizer
+        ) {
+            guard
+                let control = mainAnchorButton,
+                let rootView
+            else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                mainAnchorDidDrag = true
+                mainAnchorDragStartCenter =
+                    control.center
+                closeScriptPanel()
+
+            case .changed:
+                let translation =
+                    gesture.translation(
+                        in: rootView
+                    )
+
+                control.center = CGPoint(
+                    x:
+                        mainAnchorDragStartCenter.x +
+                        translation.x,
+                    y:
+                        mainAnchorDragStartCenter.y +
+                        translation.y
+                )
+
+                clampMainAnchor(
+                    control,
+                    in: rootView
+                )
+
+            case .ended, .cancelled, .failed:
+                clampMainAnchor(
+                    control,
+                    in: rootView
+                )
+                saveMainAnchorPosition(
+                    control,
+                    in: rootView
+                )
+
+            default:
+                break
+            }
+        }
+
+        private func toggleScriptPanel(
+            from sender: UIButton,
+            retry: Bool
+        ) {
+            guard let webView else {
+                return
+            }
+
+            let rect =
+                sender.convert(
+                    sender.bounds,
+                    to: webView
+                )
+
+            let payload:
+                [String: Double] = [
+                    "left": Double(rect.minX),
+                    "top": Double(rect.minY),
+                    "right": Double(rect.maxX),
+                    "bottom": Double(rect.maxY),
+                    "width": Double(rect.width),
+                    "height": Double(rect.height)
+                ]
+
+            guard
+                let data =
+                    try? JSONSerialization.data(
+                        withJSONObject: payload
+                    ),
+                let json =
+                    String(
+                        data: data,
+                        encoding: .utf8
+                    )
+            else {
+                return
+            }
+
+            let source =
+                """
+                (() => {
+                  const api =
+                    window.ChatGPTWeb ||
+                    window.ChatGPTSafari;
+                  return Boolean(
+                    api?.toggleNativePanel?.((json))
+                  );
+                })()
+                """
+
+            webView.evaluateJavaScript(
+                source
+            ) { [weak self, weak sender] result, _ in
+                guard
+                    let self,
+                    let sender
+                else {
+                    return
+                }
+
+                if (result as? Bool) == true {
+                    return
+                }
+
+                guard retry else {
+                    return
+                }
+
+                self.ensureScriptsAreRunning()
+
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + 0.18
+                ) { [weak self, weak sender] in
+                    guard
+                        let self,
+                        let sender
+                    else {
+                        return
+                    }
+
+                    self.toggleScriptPanel(
+                        from: sender,
+                        retry: false
+                    )
+                }
+            }
+        }
+
+        private func closeScriptPanel() {
+            webView?.evaluateJavaScript(
+                """
+                window.ChatGPTWeb?.closeNativePanel?.();
+                window.ChatGPTSafari?.closeNativePanel?.();
+                """
+            )
+        }
 
         func startHotUpdate() {
             guard !checkingUpdate else {

@@ -16,19 +16,26 @@ final class ChatGPTWebUITests: XCTestCase {
 
         let button =
             app.buttons[
-                "ChatGPT Web 控制"
+                "chatgpt.web.floatingAnchor"
             ]
 
         XCTAssertTrue(
             button.waitForExistence(
                 timeout: 10
             ),
-            "Script floating control did not appear"
+            "Native anchor did not appear"
         )
 
         XCTAssertTrue(
             button.isHittable,
-            "Script floating control is not hittable"
+            "Native anchor is not hittable"
+        )
+
+        XCTAssertFalse(
+            app.buttons[
+                "ChatGPT Web 控制"
+            ].exists,
+            "Hybrid container should not expose the JS fallback S button"
         )
 
         button.tap()
@@ -79,7 +86,7 @@ final class ChatGPTWebUITests: XCTestCase {
 
         XCTAssertTrue(
             button.isHittable,
-            "Floating control stopped being hittable after collapsing the script panel"
+            "Native anchor stopped being hittable after collapsing the script panel"
         )
 
         let initialFrame = button.frame
@@ -117,7 +124,7 @@ final class ChatGPTWebUITests: XCTestCase {
 
         XCTAssertTrue(
             button.isHittable,
-            "Floating control stopped being hittable after drag. Initial: \(initialFrame), moved: \(movedFrame), app: \(app.frame)"
+            "Native anchor stopped being hittable after drag. Initial: \(initialFrame), moved: \(movedFrame), app: \(app.frame)"
         )
         let movement =
             abs(
@@ -132,7 +139,7 @@ final class ChatGPTWebUITests: XCTestCase {
         XCTAssertGreaterThan(
             movement,
             20,
-            "Floating control did not actually move"
+            "Native anchor did not actually move"
         )
 
         button.tap()

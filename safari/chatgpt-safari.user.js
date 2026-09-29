@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.30
+// @version      0.3.31
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.30';
+  const VERSION = '0.3.31';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -58,8 +58,8 @@
   const CONTROL_MIGRATION_KEY = 'cgpt-unified-control-visible-v031';
   const CONTROL_POSITION_KEY =
     'cgpt-unified-control-position-v1';
-  const NATIVE_SCRIPT_CONTROL_MIN_VERSION =
-    '0.3.29';
+  const NATIVE_ANCHOR_MIN_VERSION =
+    '0.3.31';
   const CONVERSATION_STATE_KEY = 'cgpt-safari-conversation-state-v1';
   const STATE_CHANNEL = 'cgpt-safari-conversation-state';
   const SETTLE_MS = 2800;
@@ -1194,12 +1194,13 @@
     return true;
   }
 
-  function nativeScriptControlSupported() {
-    if (!IS_NATIVE_IOS) return true;
-
-    return versionAtLeast(
-      state.nativeStatus?.appVersion,
-      NATIVE_SCRIPT_CONTROL_MIN_VERSION
+  function nativeAnchorSupported() {
+    return Boolean(
+      IS_NATIVE_IOS &&
+      versionAtLeast(
+        state.nativeStatus?.appVersion,
+        NATIVE_ANCHOR_MIN_VERSION
+      )
     );
   }
 
@@ -1358,10 +1359,7 @@
   }
 
   function ensureControlMounted() {
-    if (
-      state.destroyed ||
-      !nativeScriptControlSupported()
-    ) {
+    if (state.destroyed) {
       return false;
     }
 
@@ -1391,8 +1389,7 @@
   ) {
     if (
       state.destroyed ||
-      !IS_NATIVE_IOS ||
-      !nativeScriptControlSupported()
+      !IS_NATIVE_IOS
     ) {
       return;
     }
@@ -1414,7 +1411,6 @@
   }
 
   function createControl() {
-    if (!nativeScriptControlSupported()) return;
     if (
       (!state.settings.showControl && !IS_NATIVE_IOS) ||
       state.destroyed
@@ -1428,6 +1424,9 @@
     ) {
       return;
     }
+
+    const usingNativeAnchor =
+      nativeAnchorSupported();
 
     const host = document.createElement('div');
     host.id = HOST_ID;
@@ -1486,6 +1485,17 @@
 
     const panel = document.createElement('div');
     panel.className = 'panel';
+
+    if (usingNativeAnchor) {
+      button.style.display = 'none';
+      host.style.left = '0px';
+      host.style.top = '0px';
+      host.style.right = 'auto';
+      host.style.width = '0px';
+      host.style.height = '0px';
+      host.style.pointerEvents = 'none';
+      panel.style.pointerEvents = 'auto';
+    }
 
     const title = document.createElement('div');
     title.className = 'title';
@@ -1860,6 +1870,144 @@
       gestureInfo: gestureInfo?.value || null,
     };
     updateUI(currentTurnCount());
+  }
+
+  function positionNativePanel(
+    anchor
+  ) {
+    const panel = state.ui?.panel;
+
+    if (
+      !(panel instanceof HTMLElement) ||
+      !anchor
+    ) {
+      return;
+    }
+
+    const padding = 8;
+    const gap = 8;
+    const viewportWidth =
+      Math.max(window.innerWidth, 1);
+    const viewportHeight =
+      Math.max(window.innerHeight, 1);
+
+    panel.style.position = 'fixed';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel.style.visibility = 'hidden';
+
+    const rect =
+      panel.getBoundingClientRect();
+
+    const anchorLeft =
+      Number(anchor.left) || 0;
+    const anchorTop =
+      Number(anchor.top) || 0;
+    const anchorRight =
+      Number(anchor.right) ||
+      anchorLeft +
+        (Number(anchor.width) || 44);
+    const anchorBottom =
+      Number(anchor.bottom) ||
+      anchorTop +
+        (Number(anchor.height) || 44);
+
+    const preferRight =
+      anchorLeft +
+        (anchorRight - anchorLeft) / 2 <
+      viewportWidth / 2;
+
+    let left =
+      preferRight
+        ? anchorRight + gap
+        : anchorLeft -
+          rect.width -
+          gap;
+
+    left = clamp(
+      left,
+      padding,
+      Math.max(
+        padding,
+        viewportWidth -
+          rect.width -
+          padding
+      )
+    );
+
+    let top = anchorTop;
+
+    if (
+      top + rect.height >
+      viewportHeight - padding
+    ) {
+      top =
+        anchorBottom -
+        rect.height;
+    }
+
+    top = clamp(
+      top,
+      padding,
+      Math.max(
+        padding,
+        viewportHeight -
+          rect.height -
+          padding
+      )
+    );
+
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+    panel.style.visibility = 'visible';
+  }
+
+  function toggleNativePanel(anchor) {
+    if (!nativeAnchorSupported()) {
+      return false;
+    }
+
+    ensureControlMounted();
+
+    const panel = state.ui?.panel;
+
+    if (!(panel instanceof HTMLElement)) {
+      return false;
+    }
+
+    const opening =
+      !panel.classList.contains('open');
+
+    if (!opening) {
+      panel.classList.remove('open');
+      return true;
+    }
+
+    panel.classList.add('open');
+
+    state.nativeStatus = {
+      ...state.nativeStatus,
+      ...(window.__CHATGPT_NATIVE__ || {}),
+    };
+
+    updateUI(currentTurnCount());
+    requestNativeUpdateCheck();
+    scheduleRefresh(0);
+    evaluateConversationState();
+    renderConversationStates();
+
+    window.requestAnimationFrame(() => {
+      positionNativePanel(anchor);
+    });
+
+    return true;
+  }
+
+  function closeNativePanel() {
+    state.ui?.panel?.classList.remove(
+      'open'
+    );
+    return true;
   }
 
   function makeInfoRow(label) {
@@ -2277,6 +2425,8 @@
     setEnabled,
     setNativeStatus,
     nativeActionResult,
+    toggleNativePanel,
+    closeNativePanel,
     requestNativeUpdateCheck,
     showControl,
     refresh: () => scheduleRefresh(0),

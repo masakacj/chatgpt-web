@@ -172,13 +172,23 @@ requireText(
 );
 requireText(
   shared,
-  'function nativeScriptControlSupported()',
-  'native script-owned floating control gate'
+  'function nativeAnchorSupported()',
+  'native anchor capability gate'
+);
+requireText(
+  shared,
+  'function toggleNativePanel(anchor)',
+  'native-anchor script panel bridge'
+);
+requireText(
+  shared,
+  'function closeNativePanel()',
+  'native-anchor panel close bridge'
 );
 requireText(
   shared,
   "'ChatGPT Web 控制'",
-  'script-owned native control accessibility'
+  'fallback browser control accessibility'
 );
 requireText(
   shared,
