@@ -398,6 +398,55 @@ struct ChatGPTWebView: UIViewRepresentable {
                 : "bundled"
         }
 
+        private func uiTestingLatestScriptVersion()
+            -> String?
+        {
+            let prefix =
+                "--ui-testing-latest-script="
+
+            guard
+                let argument =
+                    ProcessInfo.processInfo
+                        .arguments
+                        .first(where: {
+                            $0.hasPrefix(prefix)
+                        })
+            else {
+                return nil
+            }
+
+            return String(
+                argument.dropFirst(
+                    prefix.count
+                )
+            )
+        }
+
+        private func applyUITestingScriptUpdate(
+            version: String
+        ) {
+            guard
+                let activeScript
+            else {
+                return
+            }
+
+            latestKnownVersion = version
+
+            self.activeScript =
+                UnifiedScriptPayload(
+                    source:
+                        activeScript.source,
+                    version: version,
+                    origin: "ui-test"
+                )
+
+            updateStatus = "updated"
+            checkingUpdate = false
+            updateMainVersionLabels()
+            updateRuntimeStatus()
+        }
+
         func startHotUpdate() {
             guard !checkingUpdate else {
                 updateRuntimeStatus()
@@ -409,6 +458,18 @@ struct ChatGPTWebView: UIViewRepresentable {
             gestureUpdateStatus = "checking"
             updateMainVersionLabels()
             updateRuntimeStatus()
+
+            if let testVersion =
+                uiTestingLatestScriptVersion()
+            {
+                DispatchQueue.main.async {
+                    [weak self] in
+                    self?.applyUITestingScriptUpdate(
+                        version: testVersion
+                    )
+                }
+                return
+            }
 
             Task { [weak self] in
                 guard let self else {
@@ -913,10 +974,11 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private func updateMainVersionLabels() {
             let current =
-                scriptStore.appVersion
+                activeScript?.version ??
+                "—"
 
             mainCurrentVersionLabel?.text =
-                "当前 " + current
+                "当前脚本 " + current
 
             if checkingUpdate {
                 mainLatestVersionLabel?.text =

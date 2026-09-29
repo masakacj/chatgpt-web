@@ -12,6 +12,9 @@ final class ChatGPTWebUITests: XCTestCase {
         app.launchArguments.append(
             "--ui-testing"
         )
+        app.launchArguments.append(
+            "--ui-testing-latest-script=9.9.9"
+        )
         app.launch()
 
         let button =
@@ -53,6 +56,38 @@ final class ChatGPTWebUITests: XCTestCase {
                 timeout: 3
             ),
             "Compact latest-version label is missing"
+        )
+
+        let currentVersionUpdated =
+            expectation(
+                for:
+                    NSPredicate(
+                        format:
+                            "label == %@",
+                        "当前脚本 9.9.9"
+                    ),
+                evaluatedWith:
+                    currentVersion
+            )
+
+        let latestVersionUpdated =
+            expectation(
+                for:
+                    NSPredicate(
+                        format:
+                            "label == %@",
+                        "最新 9.9.9"
+                    ),
+                evaluatedWith:
+                    latestVersion
+            )
+
+        wait(
+            for: [
+                currentVersionUpdated,
+                latestVersionUpdated
+            ],
+            timeout: 3
         )
 
         let initialCacheAction =
