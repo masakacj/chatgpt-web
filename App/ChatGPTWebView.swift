@@ -157,13 +157,38 @@ struct ChatGPTWebView: UIViewRepresentable {
             in: container
         )
 
-        var request = URLRequest(
-            url: URL(string: "https://chatgpt.com/")!
-        )
-        request.cachePolicy = .useProtocolCachePolicy
-        webView.load(request)
+        let isUITesting =
+            ProcessInfo.processInfo.arguments
+                .contains("--ui-testing")
 
-        context.coordinator.startHotUpdate()
+        if isUITesting {
+            webView.loadHTMLString(
+                """
+                <!doctype html>
+                <html>
+                  <head>
+                    <meta name="viewport"
+                          content="width=device-width,initial-scale=1">
+                  </head>
+                  <body></body>
+                </html>
+                """,
+                baseURL: URL(
+                    string: "https://chatgpt.com/"
+                )
+            )
+        } else {
+            var request = URLRequest(
+                url: URL(
+                    string: "https://chatgpt.com/"
+                )!
+            )
+            request.cachePolicy =
+                .useProtocolCachePolicy
+            webView.load(request)
+
+            context.coordinator.startHotUpdate()
+        }
 
         return container
     }

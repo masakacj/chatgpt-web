@@ -9,6 +9,9 @@ final class ChatGPTWebUITests: XCTestCase {
         throws
     {
         let app = XCUIApplication()
+        app.launchArguments.append(
+            "--ui-testing"
+        )
         app.launch()
 
         let button =
