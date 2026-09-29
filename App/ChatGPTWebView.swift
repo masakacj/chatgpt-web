@@ -571,14 +571,15 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.isAccessibilityElement = true
             control.isUserInteractionEnabled = true
             control.showsMenuAsPrimaryAction = false
-            control.addTarget(
-                self,
+            let tap = UITapGestureRecognizer(
+                target: self,
                 action:
                     #selector(
-                        handleMainControlTap(_:)
-                    ),
-                for: .touchUpInside
+                        handleMainControlTapGesture(_:)
+                    )
             )
+            tap.cancelsTouchesInView = false
+            control.addGestureRecognizer(tap)
 
             let pan = UIPanGestureRecognizer(
                 target: self,
@@ -591,6 +592,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             pan.maximumNumberOfTouches = 1
             pan.cancelsTouchesInView = true
             pan.delegate = self
+            pan.require(toFail: tap)
             control.addGestureRecognizer(pan)
 
             rootView.addSubview(control)
@@ -942,21 +944,11 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return true
             }
 
-            let translation =
-                pan.translation(
-                    in: rootView
-                )
-
-            let distance =
-                hypot(
-                    translation.x,
-                    translation.y
-                )
-
-            // A tap can report a high instantaneous velocity even
-            // when the finger barely moved. Gate dragging on actual
-            // travel distance so taps still reach touchUpInside.
-            return distance >= 8
+            // Tap recognition owns a true tap. The pan waits for the
+            // tap recognizer to fail, so an actual drag can begin
+            // without a separate velocity/distance heuristic here.
+            _ = pan
+            return true
         }
 
         func contextMenuInteraction(
@@ -973,11 +965,19 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
         }
 
-        @objc private func handleMainControlTap(
-            _ sender: UIButton
+        @objc private func handleMainControlTapGesture(
+            _ gesture: UITapGestureRecognizer
         ) {
+            guard
+                gesture.state == .ended,
+                let control =
+                    mainControlButton
+            else {
+                return
+            }
+
             presentMainControlActionSheet(
-                sourceView: sender
+                sourceView: control
             )
         }
 
