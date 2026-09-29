@@ -81,7 +81,7 @@ final class ChatGPTWebUITests: XCTestCase {
             "Floating control did not actually move"
         )
 
-        button.tap()
+        button.press(forDuration: 0.65)
 
         let cacheAction =
             app.descendants(
