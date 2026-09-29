@@ -258,7 +258,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         NSObject,
         WKNavigationDelegate,
         WKUIDelegate,
-        WKScriptMessageHandler
+        WKScriptMessageHandler,
+        UIGestureRecognizerDelegate
     {
         static let nativeMessageHandler = "chatGPTNative"
 
@@ -543,7 +544,15 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             control.isAccessibilityElement = true
             control.isUserInteractionEnabled = true
-            control.showsMenuAsPrimaryAction = true
+            control.showsMenuAsPrimaryAction = false
+            control.addTarget(
+                self,
+                action:
+                    #selector(
+                        showMainControlMenu(_:)
+                    ),
+                for: .touchUpInside
+            )
 
             let pan = UIPanGestureRecognizer(
                 target: self,
@@ -552,7 +561,10 @@ struct ChatGPTWebView: UIViewRepresentable {
                         handleMainControlPan(_:)
                     )
             )
+            pan.minimumNumberOfTouches = 1
+            pan.maximumNumberOfTouches = 1
             pan.cancelsTouchesInView = true
+            pan.delegate = self
             control.addGestureRecognizer(pan)
 
             rootView.addSubview(control)
@@ -882,6 +894,51 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith
+                otherGestureRecognizer:
+                    UIGestureRecognizer
+        ) -> Bool {
+            false
+        }
+
+        func gestureRecognizerShouldBegin(
+            _ gestureRecognizer:
+                UIGestureRecognizer
+        ) -> Bool {
+            guard
+                gestureRecognizer.view ===
+                    mainControlButton,
+                let pan =
+                    gestureRecognizer as?
+                        UIPanGestureRecognizer
+            else {
+                return true
+            }
+
+            let velocity =
+                pan.velocity(
+                    in: rootView
+                )
+
+            return
+                abs(velocity.x) +
+                abs(velocity.y) >
+                30
+        }
+
+        @objc private func showMainControlMenu(
+            _ sender: UIButton
+        ) {
+            sender.menu = makeMainControlMenu()
+            sender.showsMenuAsPrimaryAction = true
+            sender.sendActions(
+                for: .touchUpInside
+            )
+            sender.showsMenuAsPrimaryAction = false
+        }
+
         @objc private func handleMainControlPan(
             _ gesture: UIPanGestureRecognizer
         ) {
@@ -897,10 +954,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             case .began:
                 mainControlDragStartCenter =
                     control.center
-
-                control.menu = nil
-                control.showsMenuAsPrimaryAction =
-                    false
 
             case .changed:
                 let translation =
@@ -932,22 +985,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                     control,
                     in: rootView
                 )
-
-                DispatchQueue.main.asyncAfter(
-                    deadline: .now() + 0.15
-                ) { [weak self, weak control] in
-                    guard
-                        let self,
-                        let control
-                    else {
-                        return
-                    }
-
-                    control.menu =
-                        self.makeMainControlMenu()
-                    control.showsMenuAsPrimaryAction =
-                        true
-                }
 
             default:
                 break
