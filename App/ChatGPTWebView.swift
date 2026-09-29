@@ -306,6 +306,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         private weak var mainControlButton: UIButton?
         private var mainControlDragStartCenter =
             CGPoint.zero
+        private var mainControlDidDrag = false
 
         private static let mainControlPositionXKey =
             "ChatGPTWeb.mainControlPositionX"
@@ -571,15 +572,22 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.isAccessibilityElement = true
             control.isUserInteractionEnabled = true
             control.showsMenuAsPrimaryAction = false
-            let tap = UITapGestureRecognizer(
-                target: self,
+            control.addTarget(
+                self,
                 action:
                     #selector(
-                        handleMainControlTapGesture(_:)
-                    )
+                        handleMainControlTouchDown(_:)
+                    ),
+                for: .touchDown
             )
-            tap.cancelsTouchesInView = false
-            control.addGestureRecognizer(tap)
+            control.addTarget(
+                self,
+                action:
+                    #selector(
+                        handleMainControlTap(_:)
+                    ),
+                for: .touchUpInside
+            )
 
             let pan = UIPanGestureRecognizer(
                 target: self,
@@ -590,9 +598,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
             pan.minimumNumberOfTouches = 1
             pan.maximumNumberOfTouches = 1
-            pan.cancelsTouchesInView = true
+            pan.cancelsTouchesInView = false
             pan.delegate = self
-            pan.require(toFail: tap)
             control.addGestureRecognizer(pan)
 
             rootView.addSubview(control)
@@ -944,9 +951,10 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return true
             }
 
-            // Tap recognition owns a true tap. The pan waits for the
-            // tap recognizer to fail, so an actual drag can begin
-            // without a separate velocity/distance heuristic here.
+            // UIPanGestureRecognizer already has its own movement
+            // threshold. Keep it available, but do not cancel button
+            // tracking; a true tap therefore still reaches
+            // touchUpInside.
             _ = pan
             return true
         }
@@ -965,19 +973,21 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
         }
 
-        @objc private func handleMainControlTapGesture(
-            _ gesture: UITapGestureRecognizer
+        @objc private func handleMainControlTouchDown(
+            _ sender: UIButton
         ) {
-            guard
-                gesture.state == .ended,
-                let control =
-                    mainControlButton
-            else {
+            mainControlDidDrag = false
+        }
+
+        @objc private func handleMainControlTap(
+            _ sender: UIButton
+        ) {
+            guard !mainControlDidDrag else {
                 return
             }
 
             presentMainControlActionSheet(
-                sourceView: control
+                sourceView: sender
             )
         }
 
@@ -1093,6 +1103,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             switch gesture.state {
             case .began:
+                mainControlDidDrag = true
                 mainControlDragStartCenter =
                     control.center
 
