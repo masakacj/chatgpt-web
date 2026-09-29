@@ -222,8 +222,13 @@ requireText(
 );
 requireText(
   shared,
-  "makeInfoRow('脚本版本')",
-  'shared script version row'
+  "makeInfoRow('当前脚本')",
+  'shared current script version row'
+);
+requireText(
+  shared,
+  "makeInfoRow('最新脚本')",
+  'shared latest script version row'
 );
 requireText(
   shared,
