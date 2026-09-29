@@ -271,7 +271,6 @@ const sharedForbidden = [
   ['minTurns', 'length-gated optimization'],
   ['keepRecent', 'legacy recent-turn threshold'],
   ['nodes.some((other, otherIndex)', 'quadratic turn containment scan'],
-  ['if (IS_NATIVE_IOS) return;', 'native control disabled in shared script'],
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
   [".removeAttribute('src')", 'media source unloading'],

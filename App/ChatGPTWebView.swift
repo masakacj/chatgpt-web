@@ -149,7 +149,9 @@ struct ChatGPTWebView: UIViewRepresentable {
     func updateUIView(
         _ uiView: ChatGPTWebContainerView,
         context: Context
-    ) {}
+    ) {
+        // Main floating UI is owned by the hot-update userscript.
+    }
 
     static func dismantleUIView(
         _ uiView: ChatGPTWebContainerView,
