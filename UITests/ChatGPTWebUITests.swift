@@ -33,6 +33,28 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
+        let currentVersion =
+            app.staticTexts[
+                "chatgpt.web.currentVersion"
+            ]
+        let latestVersion =
+            app.staticTexts[
+                "chatgpt.web.latestVersion"
+            ]
+
+        XCTAssertTrue(
+            currentVersion.waitForExistence(
+                timeout: 3
+            ),
+            "Compact current-version label is missing"
+        )
+        XCTAssertTrue(
+            latestVersion.waitForExistence(
+                timeout: 3
+            ),
+            "Compact latest-version label is missing"
+        )
+
         let initialCacheAction =
             app.descendants(
                 matching: .any

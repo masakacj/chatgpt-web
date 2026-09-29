@@ -337,6 +337,9 @@ struct ChatGPTWebView: UIViewRepresentable {
         private weak var mainMenuView: UIVisualEffectView?
         private weak var mainBackButton: UIButton?
         private weak var mainForwardButton: UIButton?
+        private weak var mainCurrentVersionLabel: UILabel?
+        private weak var mainLatestVersionLabel: UILabel?
+        private var latestKnownVersion: String?
         private var mainControlsExpanded = false
         private var mainControlDragStartCenter =
             CGPoint.zero
@@ -381,6 +384,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             self.activeScript = initialScript
             self.activeGestureScript =
                 initialGestureScript
+            self.latestKnownVersion =
+                initialScript?.version
 
             self.updateStatus =
                 initialScript?.origin == "cached"
@@ -402,6 +407,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             checkingUpdate = true
             updateStatus = "checking"
             gestureUpdateStatus = "checking"
+            updateMainVersionLabels()
             updateRuntimeStatus()
 
             Task { [weak self] in
@@ -438,6 +444,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                         )
 
                     self.installForFutureNavigations()
+                    self.updateMainVersionLabels()
                     self.updateRuntimeStatus()
 
                     if scriptChanged,
@@ -505,9 +512,12 @@ struct ChatGPTWebView: UIViewRepresentable {
                     activeScript?.version != latest.version ||
                     activeScript?.source != latest.source
 
+                latestKnownVersion =
+                    latest.version
                 activeScript = latest
                 updateStatus =
                     changed ? "updated" : "latest"
+                updateMainVersionLabels()
 
                 return changed
 
@@ -684,7 +694,15 @@ struct ChatGPTWebView: UIViewRepresentable {
             button.translatesAutoresizingMaskIntoConstraints = false
             var config =
                 UIButton.Configuration.plain()
-            config.title = title
+            var attributedTitle =
+                AttributedString(title)
+            attributedTitle.font =
+                UIFont.systemFont(
+                    ofSize: 12.5,
+                    weight: .regular
+                )
+            config.attributedTitle =
+                attributedTitle
             config.image =
                 UIImage(systemName: systemName)
             config.imagePadding = 10
@@ -692,10 +710,10 @@ struct ChatGPTWebView: UIViewRepresentable {
                 destructive ? .systemRed : .label
             config.contentInsets =
                 NSDirectionalEdgeInsets(
-                    top: 8,
-                    leading: 12,
-                    bottom: 8,
-                    trailing: 12
+                    top: 5,
+                    leading: 11,
+                    bottom: 5,
+                    trailing: 11
                 )
             button.configuration = config
             button.contentHorizontalAlignment = .leading
@@ -706,7 +724,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 for: .touchUpInside
             )
             button.heightAnchor.constraint(
-                equalToConstant: 42
+                equalToConstant: 34
             ).isActive = true
             return button
         }
@@ -723,8 +741,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             blur.frame = CGRect(
                 x: 0,
                 y: 0,
-                width: 242,
-                height: 226
+                width: 232,
+                height: 222
             )
             blur.layer.cornerRadius = 16
             blur.clipsToBounds = true
@@ -738,6 +756,58 @@ struct ChatGPTWebView: UIViewRepresentable {
                 "chatgpt.web.floatingMenu"
             blur.isAccessibilityElement = false
             blur.isUserInteractionEnabled = true
+
+            let currentVersion =
+                UILabel()
+            currentVersion.translatesAutoresizingMaskIntoConstraints = false
+            currentVersion.font =
+                UIFont.monospacedDigitSystemFont(
+                    ofSize: 10.5,
+                    weight: .medium
+                )
+            currentVersion.textColor =
+                .secondaryLabel
+            currentVersion.accessibilityIdentifier =
+                "chatgpt.web.currentVersion"
+
+            let latestVersion =
+                UILabel()
+            latestVersion.translatesAutoresizingMaskIntoConstraints = false
+            latestVersion.font =
+                UIFont.monospacedDigitSystemFont(
+                    ofSize: 10.5,
+                    weight: .medium
+                )
+            latestVersion.textColor =
+                .secondaryLabel
+            latestVersion.textAlignment =
+                .right
+            latestVersion.accessibilityIdentifier =
+                "chatgpt.web.latestVersion"
+
+            let versionRow =
+                UIStackView(
+                    arrangedSubviews: [
+                        currentVersion,
+                        latestVersion
+                    ]
+                )
+            versionRow.axis = .horizontal
+            versionRow.alignment = .center
+            versionRow.distribution = .fillEqually
+            versionRow.translatesAutoresizingMaskIntoConstraints = false
+            versionRow.heightAnchor.constraint(
+                equalToConstant: 28
+            ).isActive = true
+
+            let separator = UIView()
+            separator.translatesAutoresizingMaskIntoConstraints = false
+            separator.backgroundColor =
+                UIColor.separator
+                    .withAlphaComponent(0.45)
+            separator.heightAnchor.constraint(
+                equalToConstant: 0.5
+            ).isActive = true
 
             let back =
                 makeMainInlineMenuButton(
@@ -793,6 +863,8 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             let stack = UIStackView(
                 arrangedSubviews: [
+                    versionRow,
+                    separator,
                     back,
                     forward,
                     reload,
@@ -819,19 +891,46 @@ struct ChatGPTWebView: UIViewRepresentable {
                 stack.topAnchor.constraint(
                     equalTo:
                         blur.contentView.topAnchor,
-                    constant: 8
+                    constant: 6
                 ),
                 stack.bottomAnchor.constraint(
                     equalTo:
                         blur.contentView.bottomAnchor,
-                    constant: -8
+                    constant: -6
                 )
             ])
 
             mainBackButton = back
             mainForwardButton = forward
+            mainCurrentVersionLabel =
+                currentVersion
+            mainLatestVersionLabel =
+                latestVersion
+            updateMainVersionLabels()
 
             return blur
+        }
+
+        private func updateMainVersionLabels() {
+            let current =
+                scriptStore.appVersion
+
+            mainCurrentVersionLabel?.text =
+                "当前 " + current
+
+            if checkingUpdate {
+                mainLatestVersionLabel?.text =
+                    "最新 …"
+                return
+            }
+
+            let latest =
+                latestKnownVersion ??
+                activeScript?.version ??
+                "—"
+
+            mainLatestVersionLabel?.text =
+                "最新 " + latest
         }
 
         private func collapseMainInlineMenu() {
@@ -918,6 +1017,8 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             let active =
                 activeBrowserWebView()
+
+            updateMainVersionLabels()
 
             mainBackButton?.isEnabled =
                 active?.canGoBack == true
@@ -1328,6 +1429,11 @@ struct ChatGPTWebView: UIViewRepresentable {
             mainMenuView?.isHidden =
                 !mainControlsExpanded
             updateMainInlineMenu()
+
+            if mainControlsExpanded {
+                startHotUpdate()
+                updateMainVersionLabels()
+            }
         }
 
         @objc private func handleMainControlPan(
