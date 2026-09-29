@@ -107,7 +107,7 @@ requireText(
 );
 requireText(
   shared,
-  "const liveTurn = streaming ? turns[turns.length - 1] : null;",
+  "const liveTurn =\n      streaming && turns.length\n        ? turns[turns.length - 1]\n        : null;",
   'streaming turn protection'
 );
 requireText(
