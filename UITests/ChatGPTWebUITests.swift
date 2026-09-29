@@ -59,12 +59,12 @@ final class ChatGPTWebUITests: XCTestCase {
             )
         )
 
+        let movedFrame = button.frame
+
         XCTAssertTrue(
             button.isHittable,
-            "Floating control stopped being hittable after drag"
+            "Floating control stopped being hittable after drag. Initial: \(initialFrame), moved: \(movedFrame), app: \(app.frame)"
         )
-
-        let movedFrame = button.frame
         let movement =
             abs(
                 movedFrame.midX -
