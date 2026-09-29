@@ -756,7 +756,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                     window.ChatGPTWeb ||
                     window.ChatGPTSafari;
                   return Boolean(
-                    api?.toggleNativePanel?.((json))
+                    api?.toggleNativePanel?.(\(json))
                   );
                 })()
                 """
