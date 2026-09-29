@@ -545,12 +545,10 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             control.isAccessibilityElement = true
             control.isUserInteractionEnabled = true
-            control.showsMenuAsPrimaryAction = false
-            control.addInteraction(
-                UIContextMenuInteraction(
-                    delegate: self
-                )
-            )
+            // A normal tap opens the menu immediately.
+            // The pan recognizer still owns drag gestures and cancels
+            // the button touch once dragging actually begins.
+            control.showsMenuAsPrimaryAction = true
 
             let pan = UIPanGestureRecognizer(
                 target: self,

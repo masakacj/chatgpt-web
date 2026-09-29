@@ -81,7 +81,7 @@ final class ChatGPTWebUITests: XCTestCase {
             "Floating control did not actually move"
         )
 
-        button.press(forDuration: 0.65)
+        button.tap()
 
         let cacheAction =
             app.descendants(
@@ -94,7 +94,7 @@ final class ChatGPTWebUITests: XCTestCase {
             cacheAction.waitForExistence(
                 timeout: 3
             ),
-            "Cache clearing action is missing from the native menu"
+            "Single tap did not open the native menu or cache action is missing"
         )
     }
 }
