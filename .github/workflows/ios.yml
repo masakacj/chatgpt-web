@@ -52,7 +52,7 @@ jobs:
 
           rm -rf UITestDerivedData
 
-          xcodebuild             -project ChatGPTWeb.xcodeproj             -scheme ChatGPTWeb             -configuration Debug             -sdk iphonesimulator             -destination "id=$UDID"             -derivedDataPath "$PWD/UITestDerivedData"             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             test
+          xcodebuild             -project ChatGPTWeb.xcodeproj             -scheme ChatGPTWeb             -configuration Debug             -sdk iphonesimulator             -destination "id=$UDID"             -derivedDataPath "$PWD/UITestDerivedData"             -parallel-testing-enabled NO             -test-timeouts-enabled YES             -default-test-execution-time-allowance 90             -maximum-test-execution-time-allowance 120             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             test
 
       - name: Build unsigned device app
         run: |
