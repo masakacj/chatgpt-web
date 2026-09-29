@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.16
+// @version      0.3.17
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.16';
+  const VERSION = '0.3.17';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -170,11 +170,59 @@
     }
   }
 
+  function isActiveCycleStatus(status) {
+    return (
+      status === 'running' ||
+      status === 'waiting_user' ||
+      status === 'settling'
+    );
+  }
+
+  function sameConversationCycle(left, right) {
+    const leftStartedAt = Number(left?.runStartedAt || 0);
+    const rightStartedAt = Number(right?.runStartedAt || 0);
+    return (
+      leftStartedAt > 0 &&
+      rightStartedAt > 0 &&
+      leftStartedAt === rightStartedAt
+    );
+  }
+
+  function completionStatusForCurrentView(id) {
+    return (
+      !document.hidden &&
+      id === currentConversationId()
+    )
+      ? 'completed_read'
+      : 'completed_unread';
+  }
+
+  function shouldRenderConversationState(id, status) {
+    if (!status || status === 'completed_read') return false;
+
+    if (
+      status === 'completed_unread' &&
+      !document.hidden &&
+      id === currentConversationId()
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
   function setConversationState(id, status, extra = {}) {
     if (!id) return;
 
     const previous = state.conversationStates[id] || {};
     const now = Date.now();
+    const enteringActiveCycle =
+      (
+        status === 'running' ||
+        status === 'waiting_user'
+      ) &&
+      !isActiveCycleStatus(previous.status);
+
     const next = {
       ...previous,
       ...extra,
@@ -182,17 +230,29 @@
       updatedAt: now,
     };
 
+    if (enteringActiveCycle) {
+      next.runStartedAt = now;
+    }
+
     if (status === 'completed_unread' && !next.completedAt) {
       next.completedAt = now;
     }
+
     if (status === 'completed_read') {
       next.readAt = now;
+    } else if (
+      isActiveCycleStatus(status) ||
+      status === 'completed_unread'
+    ) {
+      next.readAt = 0;
     }
 
     const unchanged =
       previous.status === next.status &&
       Number(previous.settlingSince || 0) === Number(next.settlingSince || 0) &&
-      Number(previous.completedAt || 0) === Number(next.completedAt || 0);
+      Number(previous.completedAt || 0) === Number(next.completedAt || 0) &&
+      Number(previous.readAt || 0) === Number(next.readAt || 0) &&
+      Number(previous.runStartedAt || 0) === Number(next.runStartedAt || 0);
 
     if (unchanged) return;
 
@@ -207,8 +267,38 @@
 
   function mergeConversationState(id, record) {
     if (!id || !record || typeof record !== 'object') return;
+
     const current = state.conversationStates[id];
-    if (current && Number(current.updatedAt || 0) >= Number(record.updatedAt || 0)) return;
+
+    if (
+      current?.status === 'completed_read' &&
+      record.status === 'completed_unread'
+    ) {
+      if (sameConversationCycle(current, record)) {
+        return;
+      }
+
+      const currentReadAt = Number(current.readAt || 0);
+      const incomingCompletedAt = Number(record.completedAt || 0);
+      const incomingRunStartedAt = Number(record.runStartedAt || 0);
+
+      if (
+        incomingRunStartedAt === 0 &&
+        currentReadAt > 0 &&
+        incomingCompletedAt > 0 &&
+        currentReadAt >= incomingCompletedAt
+      ) {
+        return;
+      }
+    }
+
+    if (
+      current &&
+      Number(current.updatedAt || 0) >=
+        Number(record.updatedAt || 0)
+    ) {
+      return;
+    }
 
     state.conversationStates[id] = record;
     persistConversationStates();
@@ -224,7 +314,7 @@
       const id = conversationIdFromHref(anchor.href);
       const status = id ? state.conversationStates[id]?.status : null;
 
-      if (status && status !== 'completed_read') {
+      if (shouldRenderConversationState(id, status)) {
         anchor.setAttribute('data-cgpt-safari-chat-state', status);
       } else {
         anchor.removeAttribute('data-cgpt-safari-chat-state');
@@ -331,7 +421,8 @@
     if (record.status === 'settling') {
       const since = Number(record.settlingSince || state.settlingSince || now);
       if (now - since >= SETTLE_MS) {
-        setConversationState(id, 'completed_unread', {
+        const nextStatus = completionStatusForCurrentView(id);
+        setConversationState(id, nextStatus, {
           settlingSince: 0,
           completedAt: now,
         });

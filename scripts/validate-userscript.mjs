@@ -112,6 +112,36 @@ requireText(
 );
 requireText(
   shared,
+  'function completionStatusForCurrentView(id)',
+  'visible completion read-state helper'
+);
+requireText(
+  shared,
+  'function shouldRenderConversationState(id, status)',
+  'active unread-dot suppression helper'
+);
+requireText(
+  shared,
+  'function sameConversationCycle(left, right)',
+  'cross-tab generation-cycle helper'
+);
+requireText(
+  shared,
+  'sameConversationCycle(current, record)',
+  'read state downgrade protection'
+);
+requireText(
+  shared,
+  'const nextStatus = completionStatusForCurrentView(id);',
+  'visible completion direct-read transition'
+);
+requireText(
+  shared,
+  'next.runStartedAt = now;',
+  'generation cycle timestamp'
+);
+requireText(
+  shared,
   "window.addEventListener('storage', onStorageSync)",
   'storage-event sync fallback'
 );
