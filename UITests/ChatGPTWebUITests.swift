@@ -40,6 +40,18 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
+        let scriptPanel =
+            app.otherElements[
+                "ChatGPT Web 菜单"
+            ]
+
+        XCTAssertTrue(
+            scriptPanel.waitForExistence(
+                timeout: 3
+            ),
+            "Native anchor did not open the script dialog"
+        )
+
         let currentScript =
             app.staticTexts[
                 "当前脚本"

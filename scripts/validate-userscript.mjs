@@ -187,6 +187,16 @@ requireText(
 );
 requireText(
   shared,
+  "'ChatGPT Web 菜单'",
+  'script panel dialog accessibility'
+);
+requireText(
+  shared,
+  "panel.setAttribute(\n      'aria-hidden',",
+  'script panel visibility accessibility'
+);
+requireText(
+  shared,
   "'ChatGPT Web 控制'",
   'fallback browser control accessibility'
 );

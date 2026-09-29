@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.31
+// @version      0.3.32
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.31';
+  const VERSION = '0.3.32';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1485,15 +1485,26 @@
 
     const panel = document.createElement('div');
     panel.className = 'panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute(
+      'aria-label',
+      'ChatGPT Web 菜单'
+    );
+    panel.setAttribute(
+      'aria-hidden',
+      'true'
+    );
 
     if (usingNativeAnchor) {
       button.style.display = 'none';
       host.style.left = '0px';
       host.style.top = '0px';
-      host.style.right = 'auto';
-      host.style.width = '0px';
-      host.style.height = '0px';
+      host.style.right = '0px';
+      host.style.bottom = '0px';
+      host.style.width = 'auto';
+      host.style.height = 'auto';
       host.style.pointerEvents = 'none';
+      wrap.style.pointerEvents = 'none';
       panel.style.pointerEvents = 'auto';
     }
 
@@ -1833,6 +1844,10 @@
       restoreOptimizedTurns();
       updateUI(currentTurnCount());
       panel.classList.remove('open');
+      panel.setAttribute(
+        'aria-hidden',
+        'true'
+      );
     });
 
     hide.addEventListener('click', () => {
@@ -1980,10 +1995,18 @@
 
     if (!opening) {
       panel.classList.remove('open');
+      panel.setAttribute(
+        'aria-hidden',
+        'true'
+      );
       return true;
     }
 
     panel.classList.add('open');
+    panel.setAttribute(
+      'aria-hidden',
+      'false'
+    );
 
     state.nativeStatus = {
       ...state.nativeStatus,
@@ -2004,8 +2027,11 @@
   }
 
   function closeNativePanel() {
-    state.ui?.panel?.classList.remove(
-      'open'
+    const panel = state.ui?.panel;
+    panel?.classList.remove('open');
+    panel?.setAttribute(
+      'aria-hidden',
+      'true'
     );
     return true;
   }
