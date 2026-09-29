@@ -917,15 +917,21 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return true
             }
 
-            let velocity =
-                pan.velocity(
+            let translation =
+                pan.translation(
                     in: rootView
                 )
 
-            return
-                abs(velocity.x) +
-                abs(velocity.y) >
-                30
+            let distance =
+                hypot(
+                    translation.x,
+                    translation.y
+                )
+
+            // A tap can report a high instantaneous velocity even
+            // when the finger barely moved. Gate dragging on actual
+            // travel distance so taps still reach touchUpInside.
+            return distance >= 8
         }
 
         func contextMenuInteraction(
