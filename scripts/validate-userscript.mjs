@@ -192,6 +192,21 @@ requireText(
 );
 requireText(
   shared,
+  'function ensureControlMounted()',
+  'self-healing script control mount'
+);
+requireText(
+  shared,
+  'function scheduleControlRecovery(',
+  'script control recovery scheduler'
+);
+requireText(
+  shared,
+  'cleanupDetachedControl();',
+  'detached control cleanup'
+);
+requireText(
+  shared,
   "const GLOBAL_KEY = 'ChatGPTWeb';",
   'shared global API'
 );

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.29
+// @version      0.3.30
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.29';
+  const VERSION = '0.3.30';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -108,6 +108,7 @@
     channel: null,
     ui: null,
     controlResizeHandler: null,
+    controlRecoveryTimer: 0,
   };
 
   function clamp(value, min, max) {
@@ -1337,13 +1338,96 @@
     }
   }
 
+  function cleanupDetachedControl() {
+    if (
+      state.ui?.host &&
+      state.ui.host.isConnected
+    ) {
+      return;
+    }
+
+    if (state.controlResizeHandler) {
+      window.removeEventListener(
+        'resize',
+        state.controlResizeHandler
+      );
+      state.controlResizeHandler = null;
+    }
+
+    state.ui = null;
+  }
+
+  function ensureControlMounted() {
+    if (
+      state.destroyed ||
+      !nativeScriptControlSupported()
+    ) {
+      return false;
+    }
+
+    const existing =
+      document.getElementById(HOST_ID);
+
+    if (existing?.isConnected) {
+      return true;
+    }
+
+    cleanupDetachedControl();
+
+    if (!document.body) {
+      return false;
+    }
+
+    createControl();
+
+    return Boolean(
+      document.getElementById(HOST_ID)
+        ?.isConnected
+    );
+  }
+
+  function scheduleControlRecovery(
+    delay = 80
+  ) {
+    if (
+      state.destroyed ||
+      !IS_NATIVE_IOS ||
+      !nativeScriptControlSupported()
+    ) {
+      return;
+    }
+
+    clearTimeout(
+      state.controlRecoveryTimer
+    );
+
+    state.controlRecoveryTimer =
+      window.setTimeout(() => {
+        state.controlRecoveryTimer = 0;
+
+        if (ensureControlMounted()) {
+          return;
+        }
+
+        scheduleControlRecovery(220);
+      }, delay);
+  }
+
   function createControl() {
     if (!nativeScriptControlSupported()) return;
     if (
       (!state.settings.showControl && !IS_NATIVE_IOS) ||
       state.destroyed
     ) return;
-    if (!document.body || document.getElementById(HOST_ID)) return;
+
+    cleanupDetachedControl();
+
+    if (
+      !document.body ||
+      document.getElementById(HOST_ID)
+    ) {
+      return;
+    }
 
     const host = document.createElement('div');
     host.id = HOST_ID;
@@ -1854,7 +1938,18 @@
     if (!next || typeof next !== 'object') return;
     state.nativeStatus = { ...state.nativeStatus, ...next };
     window.__CHATGPT_NATIVE__ = { ...(window.__CHATGPT_NATIVE__ || {}), ...next };
-    if (state.ui?.foot) state.ui.foot.textContent = versionLine();
+    if (state.ui?.foot) {
+      state.ui.foot.textContent =
+        versionLine();
+    }
+
+    if (
+      IS_NATIVE_IOS &&
+      !document.getElementById(HOST_ID)
+    ) {
+      scheduleControlRecovery(0);
+    }
+
     updateUI(currentTurnCount());
   }
 
@@ -1967,6 +2062,13 @@
   function setupObservers() {
     state.observer = new MutationObserver(
       (mutations) => {
+        if (
+          IS_NATIVE_IOS &&
+          !document.getElementById(HOST_ID)
+        ) {
+          scheduleControlRecovery(40);
+        }
+
         let relevant = !IS_NATIVE_IOS;
         let turnStructureChanged = false;
 
@@ -2041,6 +2143,13 @@
 
     state.statusTimer = window.setInterval(() => {
       if (!state.destroyed) {
+        if (
+          IS_NATIVE_IOS &&
+          !document.getElementById(HOST_ID)
+        ) {
+          scheduleControlRecovery(0);
+        }
+
         evaluateConversationState();
         renderConversationStates();
       }
@@ -2062,6 +2171,13 @@
 
   function onVisibility() {
     if (!document.hidden) {
+      if (
+        IS_NATIVE_IOS &&
+        !document.getElementById(HOST_ID)
+      ) {
+        scheduleControlRecovery(0);
+      }
+
       scheduleRefresh(0);
       evaluateConversationState();
       renderConversationStates();
@@ -2114,6 +2230,7 @@
 
     clearTimeout(state.refreshTimer);
     clearTimeout(state.updateWatchdogTimer);
+    clearTimeout(state.controlRecoveryTimer);
     clearInterval(state.statusTimer);
     state.observer?.disconnect();
     state.windowObserver?.disconnect();
