@@ -259,7 +259,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         WKNavigationDelegate,
         WKUIDelegate,
         WKScriptMessageHandler,
-        UIGestureRecognizerDelegate
+        UIGestureRecognizerDelegate,
+        UIContextMenuInteractionDelegate
     {
         static let nativeMessageHandler = "chatGPTNative"
 
@@ -545,13 +546,10 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.isAccessibilityElement = true
             control.isUserInteractionEnabled = true
             control.showsMenuAsPrimaryAction = false
-            control.addTarget(
-                self,
-                action:
-                    #selector(
-                        showMainControlMenu(_:)
-                    ),
-                for: .touchUpInside
+            control.addInteraction(
+                UIContextMenuInteraction(
+                    delegate: self
+                )
             )
 
             let pan = UIPanGestureRecognizer(
@@ -928,15 +926,18 @@ struct ChatGPTWebView: UIViewRepresentable {
                 30
         }
 
-        @objc private func showMainControlMenu(
-            _ sender: UIButton
-        ) {
-            sender.menu = makeMainControlMenu()
-            sender.showsMenuAsPrimaryAction = true
-            sender.sendActions(
-                for: .touchUpInside
-            )
-            sender.showsMenuAsPrimaryAction = false
+        func contextMenuInteraction(
+            _ interaction:
+                UIContextMenuInteraction,
+            configurationForMenuAtLocation
+                location: CGPoint
+        ) -> UIContextMenuConfiguration? {
+            UIContextMenuConfiguration(
+                identifier: nil,
+                previewProvider: nil
+            ) { [weak self] _ in
+                self?.makeMainControlMenu()
+            }
         }
 
         @objc private func handleMainControlPan(
