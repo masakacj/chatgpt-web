@@ -2,6 +2,111 @@ import SwiftUI
 import UIKit
 import WebKit
 
+final class ChatGPTFloatingAnchorButton: UIButton {
+    var onTap: (() -> Void)?
+    var onDragBegan: (() -> Void)?
+    var onDragChanged:
+        ((CGPoint) -> CGPoint)?
+    var onDragEnded: (() -> Void)?
+
+    private var trackingStartPoint =
+        CGPoint.zero
+    private var trackingStartCenter =
+        CGPoint.zero
+    private var trackingDidDrag = false
+
+    override func beginTracking(
+        _ touch: UITouch,
+        with event: UIEvent?
+    ) -> Bool {
+        guard
+            isEnabled,
+            let superview
+        else {
+            return false
+        }
+
+        trackingStartPoint =
+            touch.location(in: superview)
+        trackingStartCenter = center
+        trackingDidDrag = false
+        isHighlighted = true
+        return true
+    }
+
+    override func continueTracking(
+        _ touch: UITouch,
+        with event: UIEvent?
+    ) -> Bool {
+        guard let superview else {
+            return false
+        }
+
+        let point =
+            touch.location(in: superview)
+        let dx =
+            point.x -
+            trackingStartPoint.x
+        let dy =
+            point.y -
+            trackingStartPoint.y
+
+        if
+            !trackingDidDrag,
+            sqrt(dx * dx + dy * dy) >= 6
+        {
+            trackingDidDrag = true
+            isHighlighted = false
+            onDragBegan?()
+        }
+
+        if trackingDidDrag {
+            let proposed =
+                CGPoint(
+                    x:
+                        trackingStartCenter.x +
+                        dx,
+                    y:
+                        trackingStartCenter.y +
+                        dy
+                )
+
+            center =
+                onDragChanged?(proposed) ??
+                proposed
+        }
+
+        return true
+    }
+
+    override func endTracking(
+        _ touch: UITouch?,
+        with event: UIEvent?
+    ) {
+        isHighlighted = false
+
+        if trackingDidDrag {
+            onDragEnded?()
+        } else {
+            onTap?()
+        }
+
+        trackingDidDrag = false
+    }
+
+    override func cancelTracking(
+        with event: UIEvent?
+    ) {
+        isHighlighted = false
+
+        if trackingDidDrag {
+            onDragEnded?()
+        }
+
+        trackingDidDrag = false
+    }
+}
+
 final class ChatGPTWebContainerView: UIView {
     let webView: WKWebView
 
@@ -260,10 +365,8 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private var latestKnownVersion: String?
 
-        private weak var mainAnchorButton: UIButton?
-        private var mainAnchorDragStartCenter =
-            CGPoint.zero
-        private var mainAnchorDidDrag = false
+        private weak var mainAnchorButton:
+            ChatGPTFloatingAnchorButton?
 
         private static let mainAnchorPositionXKey =
             "ChatGPTWeb.mainAnchorPositionX"
@@ -325,7 +428,10 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return
             }
 
-            let control = UIButton(type: .system)
+            let control =
+                ChatGPTFloatingAnchorButton(
+                    type: .system
+                )
             control.translatesAutoresizingMaskIntoConstraints = true
             control.frame = CGRect(
                 x: 0,
@@ -359,34 +465,64 @@ struct ChatGPTWebView: UIViewRepresentable {
                 "chatgpt.web.floatingAnchor"
             control.isAccessibilityElement = true
 
-            control.addTarget(
-                self,
-                action:
-                    #selector(
-                        handleMainAnchorTouchDown(_:)
-                    ),
-                for: .touchDown
-            )
-            control.addTarget(
-                self,
-                action:
-                    #selector(
-                        handleMainAnchorTap(_:)
-                    ),
-                for: .touchUpInside
-            )
+            control.onTap = {
+                [weak self, weak control] in
+                guard
+                    let self,
+                    let control
+                else {
+                    return
+                }
 
-            let pan = UIPanGestureRecognizer(
-                target: self,
-                action:
-                    #selector(
-                        handleMainAnchorPan(_:)
-                    )
-            )
-            pan.minimumNumberOfTouches = 1
-            pan.maximumNumberOfTouches = 1
-            pan.cancelsTouchesInView = false
-            control.addGestureRecognizer(pan)
+                control.accessibilityValue =
+                    "panel-requested"
+
+                self.toggleScriptPanel(
+                    from: control,
+                    retry: true
+                )
+            }
+
+            control.onDragBegan = {
+                [weak self] in
+                self?.closeScriptPanel()
+            }
+
+            control.onDragChanged = {
+                [weak self, weak rootView]
+                proposed in
+                guard
+                    let self,
+                    let rootView
+                else {
+                    return proposed
+                }
+
+                return self.clampedMainAnchorCenter(
+                    proposed,
+                    in: rootView
+                )
+            }
+
+            control.onDragEnded = {
+                [weak self, weak control, weak rootView] in
+                guard
+                    let self,
+                    let control,
+                    let rootView
+                else {
+                    return
+                }
+
+                self.clampMainAnchor(
+                    control,
+                    in: rootView
+                )
+                self.saveMainAnchorPosition(
+                    control,
+                    in: rootView
+                )
+            }
 
             rootView.addSubview(control)
             mainAnchorButton = control
@@ -476,22 +612,22 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        private func clampMainAnchor(
-            _ control: UIButton,
+        private func clampedMainAnchorCenter(
+            _ center: CGPoint,
             in rootView: UIView
-        ) {
+        ) -> CGPoint {
             let bounds =
                 mainAnchorCenterBounds(
                     in: rootView
                 )
 
-            control.center = CGPoint(
+            return CGPoint(
                 x:
                     min(
                         bounds.maxX,
                         max(
                             bounds.minX,
-                            control.center.x
+                            center.x
                         )
                     ),
                 y:
@@ -499,10 +635,21 @@ struct ChatGPTWebView: UIViewRepresentable {
                         bounds.maxY,
                         max(
                             bounds.minY,
-                            control.center.y
+                            center.y
                         )
                     )
             )
+        }
+
+        private func clampMainAnchor(
+            _ control: UIButton,
+            in rootView: UIView
+        ) {
+            control.center =
+                clampedMainAnchorCenter(
+                    control.center,
+                    in: rootView
+                )
         }
 
         private func saveMainAnchorPosition(
@@ -640,76 +787,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        @objc private func handleMainAnchorTouchDown(
-            _ sender: UIButton
-        ) {
-            mainAnchorDidDrag = false
-        }
-
-        @objc private func handleMainAnchorTap(
-            _ sender: UIButton
-        ) {
-            guard !mainAnchorDidDrag else {
-                return
-            }
-
-            toggleScriptPanel(
-                from: sender,
-                retry: true
-            )
-        }
-
-        @objc private func handleMainAnchorPan(
-            _ gesture: UIPanGestureRecognizer
-        ) {
-            guard
-                let control = mainAnchorButton,
-                let rootView
-            else {
-                return
-            }
-
-            switch gesture.state {
-            case .began:
-                mainAnchorDidDrag = true
-                mainAnchorDragStartCenter =
-                    control.center
-                closeScriptPanel()
-
-            case .changed:
-                let translation =
-                    gesture.translation(
-                        in: rootView
-                    )
-
-                control.center = CGPoint(
-                    x:
-                        mainAnchorDragStartCenter.x +
-                        translation.x,
-                    y:
-                        mainAnchorDragStartCenter.y +
-                        translation.y
-                )
-
-                clampMainAnchor(
-                    control,
-                    in: rootView
-                )
-
-            case .ended, .cancelled, .failed:
-                clampMainAnchor(
-                    control,
-                    in: rootView
-                )
-                saveMainAnchorPosition(
-                    control,
-                    in: rootView
-                )
-
-            default:
-                break
-            }
-        }
 
         private func toggleScriptPanel(
             from sender: UIButton,
@@ -772,10 +849,14 @@ struct ChatGPTWebView: UIViewRepresentable {
                 }
 
                 if (result as? Bool) == true {
+                    sender.accessibilityValue =
+                        "panel-open"
                     return
                 }
 
                 guard retry else {
+                    sender.accessibilityValue =
+                        "panel-unavailable"
                     return
                 }
 

@@ -40,6 +40,23 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
+        let panelOpen =
+            expectation(
+                for:
+                    NSPredicate(
+                        format:
+                            "value == %@",
+                        "panel-open"
+                    ),
+                evaluatedWith:
+                    button
+            )
+
+        wait(
+            for: [panelOpen],
+            timeout: 3
+        )
+
         let scriptPanel =
             app.otherElements[
                 "ChatGPT Web 菜单"
