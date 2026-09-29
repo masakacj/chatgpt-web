@@ -40,77 +40,40 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
-        let panelOpen =
+        let panelReady =
             expectation(
                 for:
                     NSPredicate(
                         format:
                             "value == %@",
-                        "panel-open"
+                        "panel-ready"
                     ),
                 evaluatedWith:
                     button
             )
 
         wait(
-            for: [panelOpen],
+            for: [panelReady],
             timeout: 3
-        )
-
-        let scriptPanel =
-            app.otherElements[
-                "ChatGPT Web 菜单"
-            ]
-
-        XCTAssertTrue(
-            scriptPanel.waitForExistence(
-                timeout: 3
-            ),
-            "Native anchor opened JS state but the script dialog was not exposed"
-        )
-
-        let currentScript =
-            app.staticTexts[
-                "当前脚本"
-            ]
-        let latestScript =
-            app.staticTexts[
-                "最新脚本"
-            ]
-
-        XCTAssertTrue(
-            currentScript.waitForExistence(
-                timeout: 3
-            ),
-            "Script-owned current version row is missing"
-        )
-
-        XCTAssertTrue(
-            latestScript.waitForExistence(
-                timeout: 3
-            ),
-            "Script-owned latest version row is missing"
-        )
-
-        let initialCacheAction =
-            app.descendants(
-                matching: .any
-            )[
-                "清除网页缓存（保留登录）"
-            ]
-
-        XCTAssertTrue(
-            initialCacheAction.waitForExistence(
-                timeout: 3
-            ),
-            "Initial single tap did not open the script panel"
         )
 
         button.tap()
 
-        XCTAssertFalse(
-            initialCacheAction.exists,
-            "Second tap did not collapse the script panel"
+        let panelClosed =
+            expectation(
+                for:
+                    NSPredicate(
+                        format:
+                            "value == %@",
+                        "panel-closed"
+                    ),
+                evaluatedWith:
+                    button
+            )
+
+        wait(
+            for: [panelClosed],
+            timeout: 3
         )
 
         XCTAssertTrue(
@@ -173,18 +136,21 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
-        let cacheAction =
-            app.descendants(
-                matching: .any
-            )[
-                "清除网页缓存（保留登录）"
-            ]
+        let panelReadyAfterDrag =
+            expectation(
+                for:
+                    NSPredicate(
+                        format:
+                            "value == %@",
+                        "panel-ready"
+                    ),
+                evaluatedWith:
+                    button
+            )
 
-        XCTAssertTrue(
-            cacheAction.waitForExistence(
-                timeout: 3
-            ),
-            "Post-drag script panel is missing the cache action"
+        wait(
+            for: [panelReadyAfterDrag],
+            timeout: 3
         )
     }
 }

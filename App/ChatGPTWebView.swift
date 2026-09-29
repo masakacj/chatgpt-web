@@ -832,8 +832,13 @@ struct ChatGPTWebView: UIViewRepresentable {
                   const api =
                     window.ChatGPTWeb ||
                     window.ChatGPTSafari;
-                  return Boolean(
-                    api?.toggleNativePanel?.(\(json))
+                  return (
+                    api?.toggleNativePanel?.(\(json)) ??
+                    {
+                      ok: false,
+                      open: false,
+                      ready: false
+                    }
                   );
                 })()
                 """
@@ -845,6 +850,33 @@ struct ChatGPTWebView: UIViewRepresentable {
                     let self,
                     let sender
                 else {
+                    return
+                }
+
+                if
+                    let state =
+                        result as? [String: Any],
+                    let ok =
+                        state["ok"] as? Bool,
+                    ok
+                {
+                    let open =
+                        state["open"] as? Bool ??
+                        false
+                    let ready =
+                        state["ready"] as? Bool ??
+                        false
+
+                    if !open {
+                        sender.accessibilityValue =
+                            "panel-closed"
+                    } else if ready {
+                        sender.accessibilityValue =
+                            "panel-ready"
+                    } else {
+                        sender.accessibilityValue =
+                            "panel-open-not-ready"
+                    }
                     return
                 }
 
@@ -881,6 +913,9 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         private func closeScriptPanel() {
+            mainAnchorButton?.accessibilityValue =
+                "panel-closed"
+
             webView?.evaluateJavaScript(
                 """
                 window.ChatGPTWeb?.closeNativePanel?.();

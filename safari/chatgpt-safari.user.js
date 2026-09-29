@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.35
+// @version      0.3.36
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.35';
+  const VERSION = '0.3.36';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1983,9 +1983,80 @@
     panel.style.visibility = 'visible';
   }
 
+  function nativePanelRenderState() {
+    const panel = state.ui?.panel;
+
+    if (!(panel instanceof HTMLElement)) {
+      return {
+        ok: false,
+        open: false,
+        ready: false,
+      };
+    }
+
+    const open =
+      panel.classList.contains('open');
+    const style =
+      window.getComputedStyle(panel);
+    const rect =
+      panel.getBoundingClientRect();
+
+    const visible =
+      open &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      Number.parseFloat(
+        style.opacity || '1'
+      ) > 0 &&
+      rect.width > 120 &&
+      rect.height > 80 &&
+      rect.right > 0 &&
+      rect.bottom > 0 &&
+      rect.left < window.innerWidth &&
+      rect.top < window.innerHeight;
+
+    const interactive =
+      style.pointerEvents !== 'none';
+
+    const hasCurrent =
+      Boolean(
+        state.ui?.scriptInfo?.isConnected
+      );
+    const hasLatest =
+      Boolean(
+        state.ui?.latestInfo?.isConnected
+      );
+    const hasCache =
+      Boolean(
+        state.ui?.clearCache?.isConnected
+      );
+
+    return {
+      ok: true,
+      open,
+      ready:
+        visible &&
+        interactive &&
+        hasCurrent &&
+        hasLatest &&
+        hasCache,
+      visible,
+      interactive,
+      hasCurrent,
+      hasLatest,
+      hasCache,
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  }
+
   function toggleNativePanel(anchor) {
     if (!nativeAnchorSupported()) {
-      return false;
+      return {
+        ok: false,
+        open: false,
+        ready: false,
+      };
     }
 
     ensureControlMounted();
@@ -1993,7 +2064,11 @@
     const panel = state.ui?.panel;
 
     if (!(panel instanceof HTMLElement)) {
-      return false;
+      return {
+        ok: false,
+        open: false,
+        ready: false,
+      };
     }
 
     const opening =
@@ -2005,7 +2080,12 @@
         'aria-hidden',
         'true'
       );
-      return true;
+
+      return {
+        ok: true,
+        open: false,
+        ready: true,
+      };
     }
 
     panel.classList.add('open');
@@ -2013,6 +2093,8 @@
       'aria-hidden',
       'false'
     );
+
+    positionNativePanel(anchor);
 
     state.nativeStatus = {
       ...state.nativeStatus,
@@ -2025,11 +2107,7 @@
     evaluateConversationState();
     renderConversationStates();
 
-    window.requestAnimationFrame(() => {
-      positionNativePanel(anchor);
-    });
-
-    return true;
+    return nativePanelRenderState();
   }
 
   function closeNativePanel() {

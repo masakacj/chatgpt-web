@@ -182,6 +182,26 @@ requireText(
 );
 requireText(
   shared,
+  'function nativePanelRenderState()',
+  'native panel rendered-state self-check'
+);
+requireText(
+  shared,
+  'hasCurrent',
+  'native panel current-version readiness'
+);
+requireText(
+  shared,
+  'hasLatest',
+  'native panel latest-version readiness'
+);
+requireText(
+  shared,
+  'hasCache',
+  'native panel cache-action readiness'
+);
+requireText(
+  shared,
   'function closeNativePanel()',
   'native-anchor panel close bridge'
 );
