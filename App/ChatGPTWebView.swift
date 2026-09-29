@@ -5,6 +5,7 @@ import WebKit
 final class ChatGPTWebContainerView: UIView {
     let webView: WKWebView
     weak var floatingControl: UIView?
+    weak var floatingMenu: UIView?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -34,6 +35,14 @@ final class ChatGPTWebContainerView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
 
+        if let floatingMenu,
+           floatingMenu.superview === self,
+           !floatingMenu.isHidden {
+            bringSubviewToFront(
+                floatingMenu
+            )
+        }
+
         if let floatingControl,
            floatingControl.superview === self {
             bringSubviewToFront(
@@ -46,6 +55,27 @@ final class ChatGPTWebContainerView: UIView {
         _ point: CGPoint,
         with event: UIEvent?
     ) -> UIView? {
+        if let floatingMenu,
+           !floatingMenu.isHidden,
+           floatingMenu.alpha > 0.01,
+           floatingMenu.isUserInteractionEnabled {
+            let localPoint =
+                floatingMenu.convert(
+                    point,
+                    from: self
+                )
+
+            if floatingMenu.point(
+                inside: localPoint,
+                with: event
+            ) {
+                return floatingMenu.hitTest(
+                    localPoint,
+                    with: event
+                )
+            }
+        }
+
         if let floatingControl,
            !floatingControl.isHidden,
            floatingControl.alpha > 0.01,
@@ -304,6 +334,10 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var recoveryAlertPresented = false
 
         private weak var mainControlButton: UIButton?
+        private weak var mainMenuView: UIVisualEffectView?
+        private weak var mainBackButton: UIButton?
+        private weak var mainForwardButton: UIButton?
+        private var mainControlsExpanded = false
         private var mainControlDragStartCenter =
             CGPoint.zero
         private var mainControlDidDrag = false
@@ -602,11 +636,18 @@ struct ChatGPTWebView: UIViewRepresentable {
             pan.delegate = self
             control.addGestureRecognizer(pan)
 
+            let menu =
+                makeMainInlineMenu()
+            rootView.addSubview(menu)
+            rootView.floatingMenu = menu
+
             rootView.addSubview(control)
             rootView.floatingControl = control
 
+            mainMenuView = menu
             mainControlButton = control
             control.isHidden = false
+            menu.isHidden = true
 
             DispatchQueue.main.async {
                 [weak self, weak rootView] in
@@ -631,6 +672,303 @@ struct ChatGPTWebView: UIViewRepresentable {
             -> WKWebView?
         {
             externalWebView ?? webView
+        }
+
+        private func makeMainInlineMenuButton(
+            title: String,
+            systemName: String,
+            action: Selector,
+            destructive: Bool = false
+        ) -> UIButton {
+            let button = UIButton(type: .system)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            var config =
+                UIButton.Configuration.plain()
+            config.title = title
+            config.image =
+                UIImage(systemName: systemName)
+            config.imagePadding = 10
+            config.baseForegroundColor =
+                destructive ? .systemRed : .label
+            config.contentInsets =
+                NSDirectionalEdgeInsets(
+                    top: 8,
+                    leading: 12,
+                    bottom: 8,
+                    trailing: 12
+                )
+            button.configuration = config
+            button.contentHorizontalAlignment = .leading
+            button.accessibilityLabel = title
+            button.addTarget(
+                self,
+                action: action,
+                for: .touchUpInside
+            )
+            button.heightAnchor.constraint(
+                equalToConstant: 42
+            ).isActive = true
+            return button
+        }
+
+        private func makeMainInlineMenu()
+            -> UIVisualEffectView
+        {
+            let blur = UIVisualEffectView(
+                effect: UIBlurEffect(
+                    style: .systemMaterial
+                )
+            )
+            blur.translatesAutoresizingMaskIntoConstraints = true
+            blur.frame = CGRect(
+                x: 0,
+                y: 0,
+                width: 242,
+                height: 226
+            )
+            blur.layer.cornerRadius = 16
+            blur.clipsToBounds = true
+            blur.layer.shadowColor =
+                UIColor.black.cgColor
+            blur.layer.shadowOpacity = 0.18
+            blur.layer.shadowRadius = 12
+            blur.layer.shadowOffset =
+                CGSize(width: 0, height: 4)
+            blur.accessibilityIdentifier =
+                "chatgpt.web.floatingMenu"
+            blur.isAccessibilityElement = false
+            blur.isUserInteractionEnabled = true
+
+            let back =
+                makeMainInlineMenuButton(
+                    title: "后退",
+                    systemName:
+                        "chevron.backward",
+                    action:
+                        #selector(
+                            mainMenuBack
+                        )
+                )
+            let forward =
+                makeMainInlineMenuButton(
+                    title: "前进",
+                    systemName:
+                        "chevron.forward",
+                    action:
+                        #selector(
+                            mainMenuForward
+                        )
+                )
+            let reload =
+                makeMainInlineMenuButton(
+                    title: "刷新",
+                    systemName:
+                        "arrow.clockwise",
+                    action:
+                        #selector(
+                            mainMenuReload
+                        )
+                )
+            let update =
+                makeMainInlineMenuButton(
+                    title: "检查脚本更新",
+                    systemName:
+                        "arrow.triangle.2.circlepath",
+                    action:
+                        #selector(
+                            mainMenuUpdate
+                        )
+                )
+            let clear =
+                makeMainInlineMenuButton(
+                    title:
+                        "清除网页缓存（保留登录）",
+                    systemName: "trash",
+                    action:
+                        #selector(
+                            mainMenuClearCache
+                        ),
+                    destructive: true
+                )
+
+            let stack = UIStackView(
+                arrangedSubviews: [
+                    back,
+                    forward,
+                    reload,
+                    update,
+                    clear
+                ]
+            )
+            stack.axis = .vertical
+            stack.spacing = 0
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            blur.contentView.addSubview(stack)
+
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(
+                    equalTo:
+                        blur.contentView.leadingAnchor,
+                    constant: 6
+                ),
+                stack.trailingAnchor.constraint(
+                    equalTo:
+                        blur.contentView.trailingAnchor,
+                    constant: -6
+                ),
+                stack.topAnchor.constraint(
+                    equalTo:
+                        blur.contentView.topAnchor,
+                    constant: 8
+                ),
+                stack.bottomAnchor.constraint(
+                    equalTo:
+                        blur.contentView.bottomAnchor,
+                    constant: -8
+                )
+            ])
+
+            mainBackButton = back
+            mainForwardButton = forward
+
+            return blur
+        }
+
+        private func collapseMainInlineMenu() {
+            mainControlsExpanded = false
+            mainMenuView?.isHidden = true
+        }
+
+        private func layoutMainInlineMenu(
+            in rootView: UIView
+        ) {
+            guard
+                let menu = mainMenuView,
+                let control = mainControlButton
+            else {
+                return
+            }
+
+            rootView.layoutIfNeeded()
+
+            let safe =
+                rootView.safeAreaLayoutGuide
+                    .layoutFrame
+            let padding: CGFloat = 8
+            let gap: CGFloat = 8
+            let size = menu.bounds.size
+
+            let preferLeft =
+                control.center.x >
+                rootView.bounds.midX
+
+            var x =
+                preferLeft
+                ? control.frame.minX -
+                    gap - size.width
+                : control.frame.maxX +
+                    gap
+
+            x = min(
+                max(
+                    safe.minX + padding,
+                    x
+                ),
+                max(
+                    safe.minX + padding,
+                    safe.maxX -
+                        padding -
+                        size.width
+                )
+            )
+
+            var y =
+                control.frame.minY
+
+            if y + size.height >
+                safe.maxY - padding {
+                y =
+                    control.frame.maxY -
+                    size.height
+            }
+
+            y = min(
+                max(
+                    safe.minY + padding,
+                    y
+                ),
+                max(
+                    safe.minY + padding,
+                    safe.maxY -
+                        padding -
+                        size.height
+                )
+            )
+
+            menu.frame.origin =
+                CGPoint(x: x, y: y)
+        }
+
+        private func updateMainInlineMenu() {
+            guard
+                let rootView
+            else {
+                return
+            }
+
+            let active =
+                activeBrowserWebView()
+
+            mainBackButton?.isEnabled =
+                active?.canGoBack == true
+            mainBackButton?.alpha =
+                active?.canGoBack == true
+                ? 1.0
+                : 0.35
+
+            mainForwardButton?.isEnabled =
+                active?.canGoForward == true
+            mainForwardButton?.alpha =
+                active?.canGoForward == true
+                ? 1.0
+                : 0.35
+
+            layoutMainInlineMenu(
+                in: rootView
+            )
+
+            if let menu = mainMenuView,
+               !menu.isHidden {
+                rootView.bringSubviewToFront(menu)
+            }
+            if let control = mainControlButton {
+                rootView.bringSubviewToFront(control)
+            }
+        }
+
+        @objc private func mainMenuBack() {
+            collapseMainInlineMenu()
+            activeBrowserWebView()?.goBack()
+        }
+
+        @objc private func mainMenuForward() {
+            collapseMainInlineMenu()
+            activeBrowserWebView()?.goForward()
+        }
+
+        @objc private func mainMenuReload() {
+            collapseMainInlineMenu()
+            activeBrowserWebView()?.reload()
+        }
+
+        @objc private func mainMenuUpdate() {
+            collapseMainInlineMenu()
+            startHotUpdate()
+        }
+
+        @objc private func mainMenuClearCache() {
+            collapseMainInlineMenu()
+            clearWebCacheKeepingLogin()
         }
 
         private func makeMainControlMenu()
@@ -986,108 +1324,10 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return
             }
 
-            presentMainControlActionSheet(
-                sourceView: sender
-            )
-        }
-
-        private func presentMainControlActionSheet(
-            sourceView: UIView
-        ) {
-            guard
-                let presenter = topViewController()
-            else {
-                return
-            }
-
-            let active = activeBrowserWebView()
-            let sheet = UIAlertController(
-                title: nil,
-                message: nil,
-                preferredStyle: .actionSheet
-            )
-
-            let back = UIAlertAction(
-                title: "后退",
-                style: .default
-            ) { [weak self] _ in
-                self?.activeBrowserWebView()?
-                    .goBack()
-            }
-            back.isEnabled =
-                active?.canGoBack == true
-            sheet.addAction(back)
-
-            let forward = UIAlertAction(
-                title: "前进",
-                style: .default
-            ) { [weak self] _ in
-                self?.activeBrowserWebView()?
-                    .goForward()
-            }
-            forward.isEnabled =
-                active?.canGoForward == true
-            sheet.addAction(forward)
-
-            sheet.addAction(
-                UIAlertAction(
-                    title: "刷新",
-                    style: .default
-                ) { [weak self] _ in
-                    self?.activeBrowserWebView()?
-                        .reload()
-                }
-            )
-
-            sheet.addAction(
-                UIAlertAction(
-                    title: "检查脚本更新",
-                    style: .default
-                ) { [weak self] _ in
-                    self?.startHotUpdate()
-                }
-            )
-
-            sheet.addAction(
-                UIAlertAction(
-                    title: "清除网页缓存（保留登录）",
-                    style: .destructive
-                ) { [weak self] _ in
-                    self?.clearWebCacheKeepingLogin()
-                }
-            )
-
-            if externalWebView != nil {
-                sheet.addAction(
-                    UIAlertAction(
-                        title:
-                            "关闭网页并返回 ChatGPT",
-                        style: .default
-                    ) { [weak self] _ in
-                        self?.browserClose()
-                    }
-                )
-            }
-
-            sheet.addAction(
-                UIAlertAction(
-                    title: "取消",
-                    style: .cancel
-                )
-            )
-
-            if let popover =
-                sheet.popoverPresentationController
-            {
-                popover.sourceView = sourceView
-                popover.sourceRect =
-                    sourceView.bounds
-            }
-
-            presenter.present(
-                sheet,
-                animated: true
-            )
+            mainControlsExpanded.toggle()
+            mainMenuView?.isHidden =
+                !mainControlsExpanded
+            updateMainInlineMenu()
         }
 
         @objc private func handleMainControlPan(
@@ -1104,6 +1344,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             switch gesture.state {
             case .began:
                 mainControlDidDrag = true
+                collapseMainInlineMenu()
                 mainControlDragStartCenter =
                     control.center
 
@@ -1124,6 +1365,9 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                 clampMainControl(
                     control,
+                    in: rootView
+                )
+                layoutMainInlineMenu(
                     in: rootView
                 )
 
@@ -1154,6 +1398,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.isHidden = false
             control.alpha = 1
             control.isUserInteractionEnabled = true
+            updateMainInlineMenu()
 
             clampMainControl(
                 control,

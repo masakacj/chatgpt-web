@@ -33,20 +33,6 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
-        let initialCancelAction =
-            app.descendants(
-                matching: .any
-            )[
-                "取消"
-            ]
-
-        XCTAssertTrue(
-            initialCancelAction.waitForExistence(
-                timeout: 3
-            ),
-            "Initial single tap did not open the native action sheet"
-        )
-
         let initialCacheAction =
             app.descendants(
                 matching: .any
@@ -58,19 +44,19 @@ final class ChatGPTWebUITests: XCTestCase {
             initialCacheAction.waitForExistence(
                 timeout: 3
             ),
-            "Initial action sheet is missing the cache action"
+            "Initial single tap did not open the inline menu"
         )
 
-        initialCancelAction.tap()
+        button.tap()
 
-        XCTAssertTrue(
-            button.waitForExistence(
-                timeout: 3
-            )
+        XCTAssertFalse(
+            initialCacheAction.exists,
+            "Second tap did not collapse the inline menu"
         )
+
         XCTAssertTrue(
             button.isHittable,
-            "Floating control did not become hittable after dismissing the action sheet"
+            "Floating control stopped being hittable after collapsing the inline menu"
         )
 
         let initialFrame = button.frame
@@ -128,20 +114,6 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
-        let cancelAction =
-            app.descendants(
-                matching: .any
-            )[
-                "取消"
-            ]
-
-        XCTAssertTrue(
-            cancelAction.waitForExistence(
-                timeout: 3
-            ),
-            "Single tap after drag did not open the native action sheet"
-        )
-
         let cacheAction =
             app.descendants(
                 matching: .any
@@ -153,7 +125,7 @@ final class ChatGPTWebUITests: XCTestCase {
             cacheAction.waitForExistence(
                 timeout: 3
             ),
-            "Post-drag action sheet is missing the cache action"
+            "Post-drag inline menu is missing the cache action"
         )
     }
 }
