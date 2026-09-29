@@ -545,10 +545,20 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             control.isAccessibilityElement = true
             control.isUserInteractionEnabled = true
-            // A normal tap opens the menu immediately.
-            // The pan recognizer still owns drag gestures and cancels
-            // the button touch once dragging actually begins.
-            control.showsMenuAsPrimaryAction = true
+            control.showsMenuAsPrimaryAction = false
+            control.addTarget(
+                self,
+                action:
+                    #selector(
+                        handleMainControlTap(_:)
+                    ),
+                for: .touchUpInside
+            )
+            control.addInteraction(
+                UIContextMenuInteraction(
+                    delegate: self
+                )
+            )
 
             let pan = UIPanGestureRecognizer(
                 target: self,
@@ -936,6 +946,113 @@ struct ChatGPTWebView: UIViewRepresentable {
             ) { [weak self] _ in
                 self?.makeMainControlMenu()
             }
+        }
+
+        @objc private func handleMainControlTap(
+            _ sender: UIButton
+        ) {
+            presentMainControlActionSheet(
+                sourceView: sender
+            )
+        }
+
+        private func presentMainControlActionSheet(
+            sourceView: UIView
+        ) {
+            guard
+                let presenter = topViewController()
+            else {
+                return
+            }
+
+            let active = activeBrowserWebView()
+            let sheet = UIAlertController(
+                title: nil,
+                message: nil,
+                preferredStyle: .actionSheet
+            )
+
+            let back = UIAlertAction(
+                title: "后退",
+                style: .default
+            ) { [weak self] _ in
+                self?.activeBrowserWebView()?
+                    .goBack()
+            }
+            back.isEnabled =
+                active?.canGoBack == true
+            sheet.addAction(back)
+
+            let forward = UIAlertAction(
+                title: "前进",
+                style: .default
+            ) { [weak self] _ in
+                self?.activeBrowserWebView()?
+                    .goForward()
+            }
+            forward.isEnabled =
+                active?.canGoForward == true
+            sheet.addAction(forward)
+
+            sheet.addAction(
+                UIAlertAction(
+                    title: "刷新",
+                    style: .default
+                ) { [weak self] _ in
+                    self?.activeBrowserWebView()?
+                        .reload()
+                }
+            )
+
+            sheet.addAction(
+                UIAlertAction(
+                    title: "检查脚本更新",
+                    style: .default
+                ) { [weak self] _ in
+                    self?.startHotUpdate()
+                }
+            )
+
+            sheet.addAction(
+                UIAlertAction(
+                    title: "清除网页缓存（保留登录）",
+                    style: .destructive
+                ) { [weak self] _ in
+                    self?.clearWebCacheKeepingLogin()
+                }
+            )
+
+            if externalWebView != nil {
+                sheet.addAction(
+                    UIAlertAction(
+                        title:
+                            "关闭网页并返回 ChatGPT",
+                        style: .default
+                    ) { [weak self] _ in
+                        self?.browserClose()
+                    }
+                )
+            }
+
+            sheet.addAction(
+                UIAlertAction(
+                    title: "取消",
+                    style: .cancel
+                )
+            )
+
+            if let popover =
+                sheet.popoverPresentationController
+            {
+                popover.sourceView = sourceView
+                popover.sourceRect =
+                    sourceView.bounds
+            }
+
+            presenter.present(
+                sheet,
+                animated: true
+            )
         }
 
         @objc private func handleMainControlPan(

@@ -83,6 +83,20 @@ final class ChatGPTWebUITests: XCTestCase {
 
         button.tap()
 
+        let cancelAction =
+            app.descendants(
+                matching: .any
+            )[
+                "取消"
+            ]
+
+        XCTAssertTrue(
+            cancelAction.waitForExistence(
+                timeout: 3
+            ),
+            "Single tap did not open the native action sheet"
+        )
+
         let cacheAction =
             app.descendants(
                 matching: .any
