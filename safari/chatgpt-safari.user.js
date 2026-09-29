@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.26
+// @version      0.3.27
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.26';
+  const VERSION = '0.3.27';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -33,8 +33,23 @@
     IS_NATIVE_IOS ? 420 : 120;
   const STATUS_INTERVAL_MS =
     IS_NATIVE_IOS ? 1500 : 600;
-  const IOS_KEEP_RECENT_TURNS = 10;
-  const IOS_TOOL_SWEEP_MS = 2200;
+  const IOS_KEEP_RECENT_TURNS = 6;
+  const IOS_TOOL_SWEEP_MS = 6500;
+  const TURN_CACHE_MAX_AGE_MS =
+    IS_NATIVE_IOS ? 5000 : 3000;
+  const WINDOW_ROOT_MARGIN =
+    IS_NATIVE_IOS
+      ? '220% 0px 260% 0px'
+      : '180% 0px 220% 0px';
+  const WINDOW_MIN_HEIGHT = 56;
+  const TURN_SELECTORS = [
+    'article[data-testid^="conversation-turn-"]',
+    '[data-testid^="conversation-turn-"]',
+    'main article[data-scroll-anchor]',
+    'main [data-message-author-role]',
+  ];
+  const TURN_SELECTOR_QUERY =
+    TURN_SELECTORS.join(',');
 
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -69,6 +84,13 @@
     statusTimer: 0,
     updateWatchdogTimer: 0,
     optimizedTurns: new Set(),
+    turnCache: [],
+    turnSet: new Set(),
+    turnCacheDirty: true,
+    lastTurnScanAt: 0,
+    nearTurns: new Set(),
+    turnRecords: new WeakMap(),
+    windowObserver: null,
     toolGroups: new Set(),
     toolRecords: new WeakMap(),
     toolCounts: { groups: 0, collapsed: 0 },
@@ -303,7 +325,7 @@
     state.conversationStates[id] = record;
     persistConversationStates();
     renderConversationStates();
-    updateUI(turnCandidates().length);
+    updateUI(currentTurnCount());
   }
 
   function renderConversationStates() {
@@ -370,7 +392,7 @@
 
     if (!id) {
       renderConversationStates();
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
       return;
     }
 
@@ -383,7 +405,7 @@
         settlingSince: 0,
         completedAt: 0,
       });
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
       return;
     }
 
@@ -393,7 +415,7 @@
         settlingSince: 0,
         completedAt: 0,
       });
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
       return;
     }
 
@@ -404,7 +426,7 @@
         settlingSince: 0,
         completedAt: now,
       });
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
       return;
     }
 
@@ -414,7 +436,7 @@
         settlingSince: now,
         completedAt: 0,
       });
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
       return;
     }
 
@@ -427,7 +449,7 @@
           completedAt: now,
         });
       }
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
       return;
     }
 
@@ -442,7 +464,7 @@
       }
     }
 
-    updateUI(turnCandidates().length);
+    updateUI(currentTurnCount());
   }
 
   function setupConversationStateSync() {
@@ -475,9 +497,16 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = [
-      '[data-cgpt-safari-opt="1"] {',
-      '  content-visibility: auto !important;',
-      '  contain-intrinsic-size: auto 720px !important;',
+      '[data-cgpt-windowed="1"] {',
+      '  height: var(--cgpt-window-height) !important;',
+      '  min-height: var(--cgpt-window-height) !important;',
+      '  max-height: var(--cgpt-window-height) !important;',
+      '  overflow: hidden !important;',
+      '  contain: strict !important;',
+      '  content-visibility: visible !important;',
+      '}',
+      '[data-cgpt-windowed="1"] > * {',
+      '  display: none !important;',
       '}',
       '[data-cgpt-tool-group="1"] {',
       '  content-visibility: auto !important;',
@@ -528,27 +557,278 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
-  function turnCandidates() {
-    const selectors = [
-      'article[data-testid^="conversation-turn-"]',
-      '[data-testid^="conversation-turn-"]',
-      'main article[data-scroll-anchor]',
-      'main [data-message-author-role]',
-    ];
+  function collectTurnCandidates() {
+    for (const selector of TURN_SELECTORS) {
+      const nodes =
+        Array.from(
+          document.querySelectorAll(selector)
+        ).filter(
+          (node) =>
+            node instanceof HTMLElement &&
+            node.isConnected
+        );
 
-    for (const selector of selectors) {
-      const nodes = Array.from(document.querySelectorAll(selector));
-      if (!nodes.length) continue;
-
-      return nodes.filter((node, index) => {
-        if (!(node instanceof HTMLElement)) return false;
-        return !nodes.some((other, otherIndex) => {
-          return otherIndex !== index && other instanceof HTMLElement && other.contains(node);
-        });
-      });
+      if (nodes.length) {
+        return nodes;
+      }
     }
 
     return [];
+  }
+
+  function turnIdentity(turn) {
+    if (!(turn instanceof HTMLElement)) return '';
+
+    return [
+      turn.getAttribute('data-testid') || '',
+      turn.getAttribute('data-scroll-anchor') || '',
+      turn.getAttribute('data-message-author-role') || '',
+    ].join('|');
+  }
+
+  function ensureWindowObserver() {
+    if (
+      state.windowObserver ||
+      typeof IntersectionObserver !== 'function'
+    ) {
+      return;
+    }
+
+    state.windowObserver =
+      new IntersectionObserver(
+        (entries) => {
+          if (state.destroyed) return;
+
+          const turns = turnCandidates();
+          const protectedTurns =
+            new Set(
+              turns.slice(
+                -IOS_KEEP_RECENT_TURNS
+              )
+            );
+          const liveTurn =
+            isStreaming() &&
+            turns.length
+              ? turns[turns.length - 1]
+              : null;
+
+          for (const entry of entries) {
+            const turn = entry.target;
+            if (!(turn instanceof HTMLElement)) {
+              continue;
+            }
+
+            if (entry.isIntersecting) {
+              state.nearTurns.add(turn);
+              restoreWindowedTurn(turn);
+              continue;
+            }
+
+            state.nearTurns.delete(turn);
+
+            if (
+              state.settings.enabled &&
+              canWindowTurn(
+                turn,
+                protectedTurns,
+                liveTurn
+              )
+            ) {
+              windowTurn(turn);
+            } else {
+              restoreWindowedTurn(turn);
+            }
+          }
+        },
+        {
+          root: null,
+          rootMargin: WINDOW_ROOT_MARGIN,
+          threshold: 0,
+        }
+      );
+  }
+
+  function registerTurn(turn) {
+    if (!(turn instanceof HTMLElement)) return;
+
+    const identity = turnIdentity(turn);
+    const previous = state.turnRecords.get(turn);
+
+    if (
+      previous?.identity &&
+      previous.identity !== identity
+    ) {
+      restoreWindowedTurn(turn);
+    }
+
+    state.turnRecords.set(turn, {
+      ...(previous || {}),
+      identity,
+    });
+
+    if (!state.turnSet.has(turn)) {
+      state.turnSet.add(turn);
+      ensureWindowObserver();
+      state.windowObserver?.observe(turn);
+    }
+  }
+
+  function turnCandidates(force = false) {
+    const now = performance.now();
+
+    if (
+      !force &&
+      !state.turnCacheDirty &&
+      now - state.lastTurnScanAt <
+        TURN_CACHE_MAX_AGE_MS
+    ) {
+      return state.turnCache;
+    }
+
+    const turns = collectTurnCandidates();
+    const nextSet = new Set(turns);
+
+    for (const oldTurn of Array.from(state.turnSet)) {
+      if (
+        oldTurn.isConnected &&
+        nextSet.has(oldTurn)
+      ) {
+        continue;
+      }
+
+      state.windowObserver?.unobserve(oldTurn);
+      state.nearTurns.delete(oldTurn);
+      restoreWindowedTurn(oldTurn);
+      state.turnSet.delete(oldTurn);
+    }
+
+    for (const turn of turns) {
+      registerTurn(turn);
+    }
+
+    state.turnCache = turns;
+    state.turnCacheDirty = false;
+    state.lastTurnScanAt = now;
+
+    return turns;
+  }
+
+  function currentTurnCount() {
+    return turnCandidates().length;
+  }
+
+  function selectionTouches(turn) {
+    const selection = window.getSelection?.();
+    if (!selection || selection.rangeCount < 1) {
+      return false;
+    }
+
+    const anchor = selection.anchorNode;
+    const focus = selection.focusNode;
+
+    return Boolean(
+      (anchor && turn.contains(anchor)) ||
+      (focus && turn.contains(focus))
+    );
+  }
+
+  function turnHasActiveMedia(turn) {
+    return Array.from(
+      turn.querySelectorAll('audio,video')
+    ).some(
+      (media) =>
+        media instanceof HTMLMediaElement &&
+        !media.paused
+    );
+  }
+
+  function canWindowTurn(
+    turn,
+    protectedTurns,
+    liveTurn
+  ) {
+    if (!(turn instanceof HTMLElement)) {
+      return false;
+    }
+
+    if (
+      turn === liveTurn ||
+      protectedTurns.has(turn) ||
+      turn.matches(':focus-within') ||
+      selectionTouches(turn) ||
+      turnHasActiveMedia(turn)
+    ) {
+      return false;
+    }
+
+    if (
+      turn.querySelector(
+        '[aria-busy="true"],' +
+        '[role="progressbar"],' +
+        '[data-state="loading"],' +
+        '[data-loading="true"]'
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function windowTurn(turn) {
+    if (
+      !(turn instanceof HTMLElement) ||
+      turn.hasAttribute('data-cgpt-windowed')
+    ) {
+      return;
+    }
+
+    const rect = turn.getBoundingClientRect();
+    const height = Math.ceil(rect.height);
+
+    if (
+      !Number.isFinite(height) ||
+      height < WINDOW_MIN_HEIGHT ||
+      turn.childElementCount === 0
+    ) {
+      return;
+    }
+
+    const record =
+      state.turnRecords.get(turn) || {};
+
+    record.height = height;
+    record.identity = turnIdentity(turn);
+    state.turnRecords.set(turn, record);
+
+    turn.style.setProperty(
+      '--cgpt-window-height',
+      height + 'px'
+    );
+    turn.setAttribute(
+      'data-cgpt-windowed',
+      '1'
+    );
+    state.optimizedTurns.add(turn);
+  }
+
+  function restoreWindowedTurn(turn) {
+    if (!(turn instanceof HTMLElement)) {
+      return;
+    }
+
+    turn.removeAttribute(
+      'data-cgpt-windowed'
+    );
+    turn.style.removeProperty(
+      '--cgpt-window-height'
+    );
+    state.optimizedTurns.delete(turn);
+  }
+
+  function invalidateTurnCache() {
+    state.turnCacheDirty = true;
+    state.lastTurnScanAt = 0;
   }
 
   function nodeLabel(node) {
@@ -737,10 +1017,11 @@
   }
 
   function restoreOptimizedTurns() {
-    for (const turn of Array.from(state.optimizedTurns)) {
-      if (turn instanceof HTMLElement) {
-        turn.removeAttribute('data-cgpt-safari-opt');
-      }
+    for (
+      const turn of
+        Array.from(state.optimizedTurns)
+    ) {
+      restoreWindowedTurn(turn);
     }
     state.optimizedTurns.clear();
   }
@@ -755,59 +1036,57 @@
       return;
     }
 
+    ensureWindowObserver();
+
     const streaming = isStreaming();
-    const liveTurn = streaming ? turns[turns.length - 1] : null;
-    const nextOptimized = new Set();
-    const viewport = Math.max(window.innerHeight || 0, 1);
-    const protectedStart = Math.max(
-      0,
-      turns.length - IOS_KEEP_RECENT_TURNS
-    );
+    const liveTurn =
+      streaming && turns.length
+        ? turns[turns.length - 1]
+        : null;
 
-    turns.forEach((turn, index) => {
-      if (!(turn instanceof HTMLElement)) return;
+    const protectedTurns =
+      turns.slice(
+        -IOS_KEEP_RECENT_TURNS
+      );
 
-      const interactive = turn.matches(':focus-within');
-      const rect = turn.getBoundingClientRect();
-      const farFromViewport =
-        rect.bottom < -viewport * 1.5 ||
-        rect.top > viewport * 2.5;
-
-      const mobileEligible =
-        !IS_NATIVE_IOS ||
-        (
-          index < protectedStart &&
-          farFromViewport
-        );
-
-      const shouldOptimize =
-        !interactive &&
-        turn !== liveTurn &&
-        mobileEligible;
-
-      if (shouldOptimize) {
-        turn.setAttribute('data-cgpt-safari-opt', '1');
-        nextOptimized.add(turn);
-      } else {
-        turn.removeAttribute('data-cgpt-safari-opt');
-      }
-    });
-
-    for (const oldTurn of Array.from(state.optimizedTurns)) {
-      if (!nextOptimized.has(oldTurn) && oldTurn instanceof HTMLElement) {
-        oldTurn.removeAttribute('data-cgpt-safari-opt');
-      }
+    for (const turn of protectedTurns) {
+      restoreWindowedTurn(turn);
     }
 
-    state.optimizedTurns = nextOptimized;
+    if (liveTurn) {
+      restoreWindowedTurn(liveTurn);
+    }
+
+    const activeTurnSet =
+      new Set([
+        ...state.nearTurns,
+        ...protectedTurns,
+      ]);
+
+    if (liveTurn) {
+      activeTurnSet.add(liveTurn);
+    }
+
+    const activeTurns =
+      Array.from(activeTurnSet)
+        .filter(
+          (turn) =>
+            turn instanceof HTMLElement &&
+            turn.isConnected &&
+            !turn.hasAttribute(
+              'data-cgpt-windowed'
+            )
+        );
 
     const now = performance.now();
     if (
-      !IS_NATIVE_IOS ||
       now - state.lastToolSweepAt >=
         IOS_TOOL_SWEEP_MS
     ) {
-      optimizeToolGroups(turns, liveTurn);
+      optimizeToolGroups(
+        activeTurns,
+        liveTurn
+      );
       state.lastToolSweepAt = now;
     }
 
@@ -836,6 +1115,9 @@
       if (route !== state.lastRoute) {
         state.lastRoute = route;
         restoreOptimizedTurns();
+        restoreToolGroups();
+        state.nearTurns.clear();
+        invalidateTurnCache();
       }
       window.requestAnimationFrame(applyPerformanceHints);
     }, delay);
@@ -1037,7 +1319,7 @@
         scheduleRefresh(0);
         evaluateConversationState();
         renderConversationStates();
-        updateUI(turnCandidates().length);
+        updateUI(currentTurnCount());
       }
     });
 
@@ -1049,7 +1331,7 @@
 
     update.addEventListener('click', () => {
       requestNativeUpdateCheck();
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
     });
 
     reload.addEventListener('click', () => location.reload());
@@ -1059,7 +1341,7 @@
       perfSwitch.checked = false;
       saveSettings();
       restoreOptimizedTurns();
-      updateUI(turnCandidates().length);
+      updateUI(currentTurnCount());
       panel.classList.remove('open');
     });
 
@@ -1084,7 +1366,7 @@
       toolInfo: toolInfo.value,
       gestureInfo: gestureInfo?.value || null,
     };
-    updateUI(turnCandidates().length);
+    updateUI(currentTurnCount());
   }
 
   function makeInfoRow(label) {
@@ -1130,7 +1412,7 @@
     state.nativeStatus = { ...state.nativeStatus, ...next };
     window.__CHATGPT_NATIVE__ = { ...(window.__CHATGPT_NATIVE__ || {}), ...next };
     if (state.ui?.foot) state.ui.foot.textContent = versionLine();
-    updateUI(turnCandidates().length);
+    updateUI(currentTurnCount());
   }
 
   function updateUI(turnCount) {
@@ -1221,46 +1503,59 @@
     state.observer = new MutationObserver(
       (mutations) => {
         let relevant = !IS_NATIVE_IOS;
+        let turnStructureChanged = false;
 
-        if (IS_NATIVE_IOS) {
-          const selector = [
-            'main',
-            'aside',
-            'nav',
-            '[data-message-author-role]',
-            '[data-testid^="conversation-turn-"]',
-          ].join(',');
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (!(node instanceof Element)) {
+              continue;
+            }
 
-          for (const mutation of mutations) {
+            if (
+              node.matches?.(
+                TURN_SELECTOR_QUERY
+              ) ||
+              node.querySelector?.(
+                TURN_SELECTOR_QUERY
+              )
+            ) {
+              turnStructureChanged = true;
+              relevant = true;
+              break;
+            }
+          }
+
+          if (turnStructureChanged) {
+            break;
+          }
+
+          if (IS_NATIVE_IOS) {
             const target =
               mutation.target instanceof Element
                 ? mutation.target
                 : mutation.target?.parentElement;
 
-            if (target?.closest?.(selector)) {
+            if (
+              target?.closest?.(
+                'main,aside,nav,' +
+                TURN_SELECTOR_QUERY
+              )
+            ) {
               relevant = true;
-              break;
             }
-
-            for (const node of mutation.addedNodes) {
-              if (!(node instanceof Element)) continue;
-              if (
-                node.matches?.(selector) ||
-                node.querySelector?.(selector)
-              ) {
-                relevant = true;
-                break;
-              }
-            }
-
-            if (relevant) break;
           }
         }
 
         if (!relevant) return;
 
+        if (turnStructureChanged) {
+          invalidateTurnCache();
+        }
+
         scheduleRefresh(
-          IS_NATIVE_IOS ? 420 : 180
+          turnStructureChanged
+            ? 120
+            : (IS_NATIVE_IOS ? 520 : 220)
         );
 
         if (!IS_NATIVE_IOS) {
@@ -1291,6 +1586,10 @@
     state.activeConversationId = null;
     state.activeRouteSince = Date.now();
     state.settlingSince = 0;
+    restoreOptimizedTurns();
+    restoreToolGroups();
+    state.nearTurns.clear();
+    invalidateTurnCache();
     scheduleRefresh(0);
     evaluateConversationState();
     renderConversationStates();
@@ -1324,6 +1623,14 @@
       enabled: state.settings.enabled,
       turns: turns.length,
       optimizedTurns: state.optimizedTurns.size,
+      windowing: {
+        cachedTurns: state.turnCache.length,
+        nearTurns: state.nearTurns.size,
+        windowedTurns:
+          state.optimizedTurns.size,
+        observer:
+          Boolean(state.windowObserver),
+      },
       toolGroups: { ...state.toolCounts },
       streaming: isStreaming(),
       conversationId: currentConversationId(),
@@ -1344,6 +1651,8 @@
     clearTimeout(state.updateWatchdogTimer);
     clearInterval(state.statusTimer);
     state.observer?.disconnect();
+    state.windowObserver?.disconnect();
+    state.windowObserver = null;
 
     window.removeEventListener('popstate', onRoute);
     window.removeEventListener('hashchange', onRoute);
@@ -1353,6 +1662,9 @@
 
     restoreOptimizedTurns();
     restoreToolGroups();
+    state.nearTurns.clear();
+    state.turnSet.clear();
+    state.turnCache = [];
     for (const anchor of document.querySelectorAll('[data-cgpt-safari-chat-state]')) {
       anchor.removeAttribute('data-cgpt-safari-chat-state');
     }

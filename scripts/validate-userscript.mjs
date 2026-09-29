@@ -82,8 +82,28 @@ requireText(
 );
 requireText(
   shared,
-  'content-visibility: auto',
-  'conservative rendering hint'
+  'new IntersectionObserver(',
+  'viewport-driven long-chat windowing'
+);
+requireText(
+  shared,
+  'data-cgpt-windowed',
+  'windowed historical turn marker'
+);
+requireText(
+  shared,
+  '--cgpt-window-height',
+  'preserved historical turn geometry'
+);
+requireText(
+  shared,
+  'function turnCandidates(force = false)',
+  'cached turn discovery'
+);
+requireText(
+  shared,
+  'state.turnCacheDirty',
+  'incremental turn cache invalidation'
 );
 requireText(
   shared,
@@ -197,8 +217,8 @@ requireText(
 );
 requireText(
   shared,
-  'optimizeToolGroups(turns, liveTurn)',
-  'tool compaction refresh'
+  'optimizeToolGroups(\n        activeTurns,\n        liveTurn\n      )',
+  'viewport-scoped tool compaction'
 );
 
 for (const status of [
@@ -225,6 +245,7 @@ const sharedForbidden = [
   ['ChatGPTIOSGestures', 'iOS gesture global in shared script'],
   ['minTurns', 'length-gated optimization'],
   ['keepRecent', 'legacy recent-turn threshold'],
+  ['nodes.some((other, otherIndex)', 'quadratic turn containment scan'],
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
   [".removeAttribute('src')", 'media source unloading'],
