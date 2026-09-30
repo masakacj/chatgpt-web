@@ -2728,6 +2728,17 @@
       restoreWindowedTurn(turn);
     }
 
+    for (
+      const turn of
+        Array.from(state.turnSet)
+    ) {
+      if (turn instanceof HTMLElement) {
+        turn.removeAttribute(
+          'data-cgpt-passive-turn'
+        );
+      }
+    }
+
     state.optimizedTurns.clear();
   }
 
@@ -2829,6 +2840,183 @@
         applyPerformanceHints
       );
     }, delay);
+  }
+
+  function scheduleToolScan(
+    delay = EXTREME_NATIVE_MODE
+      ? 80
+      : 160
+  ) {
+    if (
+      state.destroyed ||
+      !state.settings.enabled ||
+      state.toolScanTimer
+    ) {
+      return;
+    }
+
+    state.toolScanTimer =
+      window.setTimeout(() => {
+        state.toolScanTimer = 0;
+
+        if (
+          state.destroyed ||
+          routeIsSettling()
+        ) {
+          return;
+        }
+
+        const activeTurn =
+          ChatGPTDOMAdapter.activeTurn();
+
+        if (activeTurn) {
+          processToolMutationNode(
+            activeTurn
+          );
+        }
+      }, delay);
+  }
+
+  function conversationScroller() {
+    const anchor =
+      ChatGPTDOMAdapter.activeTurn() ||
+      ChatGPTDOMAdapter.conversationRoot();
+
+    let node =
+      anchor instanceof Element
+        ? anchor.parentElement
+        : null;
+
+    while (
+      node &&
+      node !== document.body &&
+      node !== document.documentElement
+    ) {
+      const style =
+        window.getComputedStyle(node);
+      const overflowY =
+        style.overflowY || '';
+
+      if (
+        /^(?:auto|scroll|overlay)$/i
+          .test(overflowY) &&
+        node.scrollHeight >
+          node.clientHeight + 24
+      ) {
+        return node;
+      }
+
+      node = node.parentElement;
+    }
+
+    return (
+      document.scrollingElement ||
+      document.documentElement
+    );
+  }
+
+  function scrollConversationToBottom() {
+    if (!currentConversationId()) {
+      return false;
+    }
+
+    const scroller =
+      conversationScroller();
+
+    if (!scroller) {
+      return false;
+    }
+
+    try {
+      if (
+        scroller ===
+          document.scrollingElement ||
+        scroller ===
+          document.documentElement ||
+        scroller ===
+          document.body
+      ) {
+        window.scrollTo(
+          0,
+          Math.max(
+            document.body?.scrollHeight || 0,
+            document.documentElement
+              ?.scrollHeight || 0
+          )
+        );
+      } else {
+        scroller.scrollTop =
+          scroller.scrollHeight;
+      }
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function clearInitialBottomScroll() {
+    for (
+      const timer of
+        state.bottomScrollTimers
+    ) {
+      clearTimeout(timer);
+    }
+
+    state.bottomScrollTimers.clear();
+    state.bottomScrollUntil = 0;
+  }
+
+  function scheduleInitialBottomScroll(
+    force = false
+  ) {
+    if (!EXTREME_NATIVE_MODE) {
+      return;
+    }
+
+    const id = currentConversationId();
+
+    if (!id) {
+      clearInitialBottomScroll();
+      state.lastBottomConversationId = '';
+      return;
+    }
+
+    if (
+      !force &&
+      state.lastBottomConversationId === id
+    ) {
+      return;
+    }
+
+    clearInitialBottomScroll();
+    state.lastBottomConversationId = id;
+    state.bottomScrollUntil =
+      performance.now() + 3200;
+
+    for (
+      const delay of
+        INITIAL_BOTTOM_SCROLL_DELAYS
+    ) {
+      const timer =
+        window.setTimeout(() => {
+          state.bottomScrollTimers
+            .delete(timer);
+
+          if (
+            state.destroyed ||
+            currentConversationId() !== id
+          ) {
+            return;
+          }
+
+          window.requestAnimationFrame(
+            scrollConversationToBottom
+          );
+        }, delay);
+
+      state.bottomScrollTimers.add(timer);
+    }
   }
 
   function requestNativeUpdateCheck() {
@@ -4243,6 +4431,8 @@
         bindScopedObservers(true);
         invalidateTurnCache();
         turnCandidates(true);
+        scheduleToolScan(30);
+        scheduleInitialBottomScroll(true);
         scheduleRefresh(120);
         scheduleStateEvaluation(180);
       }, Math.max(delay, remaining));
@@ -4310,6 +4500,7 @@
 
       for (const node of mutation.removedNodes) {
         if (!(node instanceof Element)) continue;
+
         if (
           node.matches?.(TURN_ELEMENT_QUERY) ||
           node.querySelector?.(TURN_ELEMENT_QUERY)
@@ -4354,6 +4545,16 @@
 
     if (turnStructureChanged) {
       scheduleRefresh(80);
+
+      if (
+        EXTREME_NATIVE_MODE &&
+        performance.now() <
+          state.bottomScrollUntil
+      ) {
+        window.requestAnimationFrame(
+          scrollConversationToBottom
+        );
+      }
     }
 
     if (
@@ -4361,6 +4562,7 @@
       turnStructureChanged
     ) {
       scheduleStateEvaluation();
+      scheduleToolScan();
     }
 
     recordTelemetryCost(
@@ -4653,6 +4855,8 @@
     setupObservers();
     invalidateTurnCache();
     turnCandidates(true);
+    scheduleToolScan(20);
+    scheduleInitialBottomScroll(true);
     scheduleRefresh(0);
     evaluateConversationState();
     renderConversationStates();
@@ -4713,6 +4917,8 @@
     state.conversationLinks.clear();
     invalidateTurnCache();
 
+    scheduleInitialBottomScroll(true);
+
     state.routeSettlingUntil =
       performance.now() +
       ROUTE_SETTLE_DELAY_MS;
@@ -4753,6 +4959,7 @@
         bindScopedObservers();
       }
 
+      scheduleInitialBottomScroll(false);
       scheduleRefresh(0);
       scheduleStateEvaluation(0);
       scheduleSidebarReconcile(0);
@@ -4899,6 +5106,8 @@
     clearTimeout(state.updateWatchdogTimer);
     clearTimeout(state.controlRecoveryTimer);
     clearTimeout(state.sidebarReconcileTimer);
+    clearTimeout(state.toolScanTimer);
+    clearInitialBottomScroll();
     clearInterval(state.statusTimer);
 
     state.observer?.disconnect();
