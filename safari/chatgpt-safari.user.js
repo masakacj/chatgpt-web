@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.7
+// @version      0.4.8
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.7';
+  const VERSION = '0.4.8';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -29,6 +29,17 @@
   const IS_NATIVE_IOS = Boolean(
     window.__CHATGPT_NATIVE__?.hotUpdate
   );
+  const EXTREME_NATIVE_MODE =
+    IS_NATIVE_IOS;
+  const NATIVE_PASSIVE_RECENT_TURNS = 4;
+  const INITIAL_BOTTOM_SCROLL_DELAYS = [
+    0,
+    120,
+    360,
+    900,
+    1600,
+    2400,
+  ];
   const PERF_REFRESH_DELAY_MS =
     IS_NATIVE_IOS ? 180 : 100;
   const STATUS_INTERVAL_MS =
@@ -94,9 +105,11 @@
       debugDurationMs: 180000,
     });
 
-  const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called)/i;
+  const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called|MCP|connector|连接器)/i;
   const TOOL_ACTION_RE = /(?:Ran command|Run command|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|运行命令|执行命令|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
+  const PROCESS_GROUP_RE = /(?:Thought for|Thinking|Reasoning|思考过程|思考了|正在思考|分析中)/i;
   const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
+  const TOOL_USER_ACTION_RE = /(?:allow|approve|confirm|yes,?\s*(?:run|proceed)|run\s+(?:it|command)|continue|permission|authorization|允许|批准|确认|继续|运行此|授权|权限)/i;
 
   try {
     window[GLOBAL_KEY]?.destroy?.();
@@ -118,6 +131,10 @@
     conversationObserver: null,
     sidebarObserver: null,
     sidebarReconcileTimer: 0,
+    toolScanTimer: 0,
+    bottomScrollTimers: new Set(),
+    bottomScrollUntil: 0,
+    lastBottomConversationId: '',
     conversationRoot: null,
     sidebarRoot: null,
     refreshTimer: 0,
@@ -1858,10 +1875,26 @@
       '[data-cgpt-windowed="1"] > * {',
       '  display: none !important;',
       '}',
+      '[data-cgpt-passive-turn="1"] {',
+      '  content-visibility: auto !important;',
+      '  contain-intrinsic-size: auto 320px !important;',
+      '}',
       '[data-cgpt-tool-group="1"] {',
       '  content-visibility: auto !important;',
       '  contain: layout style paint !important;',
       '  contain-intrinsic-size: auto 42px !important;',
+      '}',
+      '[data-cgpt-tool-hidden="1"] {',
+      '  display: none !important;',
+      '  content-visibility: hidden !important;',
+      '  contain: strict !important;',
+      '  height: 0 !important;',
+      '  min-height: 0 !important;',
+      '  max-height: 0 !important;',
+      '  margin: 0 !important;',
+      '  padding: 0 !important;',
+      '  overflow: hidden !important;',
+      '  pointer-events: none !important;',
       '}',
       '[data-cgpt-tool-collapsed="1"] {',
       '  display: block !important;',
@@ -2050,6 +2083,42 @@
     }
 
     state.turnCache = turns;
+
+    if (
+      EXTREME_NATIVE_MODE &&
+      state.settings.enabled
+    ) {
+      const passiveBefore =
+        Math.max(
+          0,
+          turns.length -
+            NATIVE_PASSIVE_RECENT_TURNS
+        );
+
+      for (
+        let index = 0;
+        index < turns.length;
+        index += 1
+      ) {
+        const turn = turns[index];
+
+        if (!(turn instanceof HTMLElement)) {
+          continue;
+        }
+
+        if (index < passiveBefore) {
+          turn.setAttribute(
+            'data-cgpt-passive-turn',
+            '1'
+          );
+        } else {
+          turn.removeAttribute(
+            'data-cgpt-passive-turn'
+          );
+        }
+      }
+    }
+
     state.turnCacheDirty = false;
     state.lastTurnScanAt = now;
     state.metrics.turnRefreshes += 1;
@@ -2199,6 +2268,7 @@
 
   function findToolGroupContainer(heading, turn) {
     let node = heading.parentElement;
+    let fallback = null;
 
     for (
       let depth = 0;
@@ -2206,6 +2276,7 @@
       depth += 1, node = node.parentElement
     ) {
       const role = node.getAttribute?.('role');
+
       if (
         node.tagName === 'BUTTON' ||
         node.tagName === 'SUMMARY' ||
@@ -2214,15 +2285,21 @@
         continue;
       }
 
+      fallback ||= node;
+
+      if (node.children.length >= 2) {
+        return node;
+      }
+
       if (
-        node.children.length >= 2 ||
+        !EXTREME_NATIVE_MODE &&
         toolActionNodes(node).length > 0
       ) {
         return node;
       }
     }
 
-    return null;
+    return fallback;
   }
 
   function toolGroupNeedsAttention(group) {
@@ -2242,6 +2319,25 @@
       }
       return TOOL_ATTENTION_RE.test(nodeLabel(node));
     });
+  }
+
+  function toolGroupRequiresUserAction(group) {
+    const nodes =
+      group.querySelectorAll(
+        'button,[role="button"],summary,[aria-label]'
+      );
+
+    for (const node of nodes) {
+      if (
+        TOOL_USER_ACTION_RE.test(
+          nodeLabel(node)
+        )
+      ) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   function toolSummary(group) {
@@ -2288,6 +2384,9 @@
       if (
         group.hasAttribute(
           'data-cgpt-tool-collapsed'
+        ) ||
+        group.hasAttribute(
+          'data-cgpt-tool-hidden'
         )
       ) {
         collapsed += 1;
@@ -2315,6 +2414,34 @@
       '1'
     );
 
+    if (EXTREME_NATIVE_MODE) {
+      const requiresAction =
+        group.matches(':focus-within') ||
+        toolGroupRequiresUserAction(
+          group
+        );
+
+      group.removeAttribute(
+        'data-cgpt-tool-collapsed'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-summary'
+      );
+
+      if (requiresAction) {
+        group.removeAttribute(
+          'data-cgpt-tool-hidden'
+        );
+      } else {
+        group.setAttribute(
+          'data-cgpt-tool-hidden',
+          '1'
+        );
+      }
+
+      return;
+    }
+
     const active =
       turn === liveTurn ||
       toolGroupNeedsAttention(group) ||
@@ -2326,6 +2453,9 @@
       );
       group.removeAttribute(
         'data-cgpt-tool-summary'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-hidden'
       );
     } else {
       group.setAttribute(
@@ -2349,11 +2479,19 @@
       'summary,[aria-expanded]';
     const result = [];
 
+    const isProcessHeading = (node) => {
+      const label = nodeLabel(node);
+
+      return (
+        TOOL_GROUP_RE.test(label) ||
+        TOOL_ACTION_RE.test(label) ||
+        PROCESS_GROUP_RE.test(label)
+      );
+    };
+
     if (
       scope.matches(selector) &&
-      TOOL_GROUP_RE.test(
-        nodeLabel(scope)
-      )
+      isProcessHeading(scope)
     ) {
       result.push(scope);
     }
@@ -2362,11 +2500,7 @@
       const node of
         scope.querySelectorAll(selector)
     ) {
-      if (
-        TOOL_GROUP_RE.test(
-          nodeLabel(node)
-        )
-      ) {
+      if (isProcessHeading(node)) {
         result.push(node);
       }
     }
@@ -2399,9 +2533,13 @@
     }
 
     const liveTurn =
-      isStreaming()
-        ? ChatGPTDOMAdapter.activeTurn()
-        : null;
+      EXTREME_NATIVE_MODE
+        ? null
+        : (
+            isStreaming()
+              ? ChatGPTDOMAdapter.activeTurn()
+              : null
+          );
 
     for (
       const heading of
@@ -2435,7 +2573,26 @@
       changed = true;
     }
 
-    if (changed) {
+    if (EXTREME_NATIVE_MODE) {
+      for (
+        const group of
+          Array.from(state.toolGroups)
+      ) {
+        if (
+          group instanceof HTMLElement &&
+          group.isConnected &&
+          turn.contains(group)
+        ) {
+          registerToolGroup(
+            group,
+            turn,
+            null
+          );
+        }
+      }
+    }
+
+    if (changed || EXTREME_NATIVE_MODE) {
       updateToolCounts();
     }
 
@@ -2454,6 +2611,46 @@
       ChatGPTDOMAdapter.activeTurn();
 
     if (!(activeTurn instanceof HTMLElement)) {
+      return;
+    }
+
+    if (EXTREME_NATIVE_MODE) {
+      let changed = false;
+
+      for (
+        const group of
+          Array.from(state.toolGroups)
+      ) {
+        if (
+          !(group instanceof HTMLElement) ||
+          !group.isConnected
+        ) {
+          state.toolGroups.delete(group);
+          changed = true;
+          continue;
+        }
+
+        if (
+          activeTurn.contains(group) &&
+          !group.matches(':focus-within')
+        ) {
+          group.setAttribute(
+            'data-cgpt-tool-hidden',
+            '1'
+          );
+          group.removeAttribute(
+            'data-cgpt-tool-collapsed'
+          );
+          group.removeAttribute(
+            'data-cgpt-tool-summary'
+          );
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        updateToolCounts();
+      }
       return;
     }
 
@@ -2510,6 +2707,9 @@
       );
       group.removeAttribute(
         'data-cgpt-tool-summary'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-hidden'
       );
     }
 
