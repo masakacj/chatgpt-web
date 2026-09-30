@@ -34,11 +34,7 @@
   const NATIVE_PASSIVE_RECENT_TURNS = 4;
   const INITIAL_BOTTOM_SCROLL_DELAYS = [
     0,
-    120,
-    360,
-    900,
-    1600,
-    2400,
+    700,
   ];
   const PERF_REFRESH_DELAY_MS =
     IS_NATIVE_IOS ? 180 : 100;
@@ -2520,85 +2516,101 @@
       return;
     }
 
-    state.metrics.toolNodesProcessed += 1;
     const toolStarted =
       performance.now();
-    let changed = false;
 
     const turn =
       ChatGPTDOMAdapter.turnFromNode(node);
 
     if (!(turn instanceof HTMLElement)) {
-      recordTelemetryCost(
-        'toolProcessMs',
-        performance.now() - toolStarted
-      );
       return;
     }
 
-    const liveTurn =
-      EXTREME_NATIVE_MODE
-        ? null
-        : (
-            isStreaming()
-              ? ChatGPTDOMAdapter.activeTurn()
-              : null
-          );
+    const selector =
+      'button,[role="button"],' +
+      'summary,[aria-expanded]';
 
-    for (
-      const heading of
-        toolHeadingsInScope(node)
-    ) {
+    const candidates = [];
+
+    if (node.matches?.(selector)) {
+      candidates.push(node);
+    }
+
+    if (candidates.length < 12) {
+      for (
+        const candidate of
+          node.querySelectorAll?.(
+            selector
+          ) || []
+      ) {
+        candidates.push(candidate);
+        if (candidates.length >= 12) {
+          break;
+        }
+      }
+    }
+
+    for (const candidate of candidates) {
+      const label =
+        nodeLabel(candidate);
+
+      const existing =
+        candidate.closest?.(
+          '[data-cgpt-tool-group="1"]'
+        );
+
       if (
-        state.processedToolHeadings
-          .has(heading)
+        existing &&
+        TOOL_USER_ACTION_RE.test(label)
+      ) {
+        existing.removeAttribute(
+          'data-cgpt-tool-hidden'
+        );
+        continue;
+      }
+
+      if (
+        !TOOL_GROUP_RE.test(label) &&
+        !TOOL_ACTION_RE.test(label) &&
+        !PROCESS_GROUP_RE.test(label)
       ) {
         continue;
       }
 
       const group =
         findToolGroupContainer(
-          heading,
+          candidate,
           turn
         );
 
-      if (!(group instanceof HTMLElement)) {
+      if (
+        !(group instanceof HTMLElement) ||
+        group === turn
+      ) {
         continue;
       }
 
-      state.processedToolHeadings
-        .add(heading);
-
-      registerToolGroup(
-        group,
-        turn,
-        liveTurn
+      group.setAttribute(
+        'data-cgpt-tool-group',
+        '1'
       );
-      changed = true;
-    }
 
-    if (EXTREME_NATIVE_MODE) {
-      for (
-        const group of
-          Array.from(state.toolGroups)
+      if (
+        TOOL_USER_ACTION_RE.test(label)
       ) {
-        if (
-          group instanceof HTMLElement &&
-          group.isConnected &&
-          turn.contains(group)
-        ) {
-          registerToolGroup(
-            group,
-            turn,
-            null
-          );
-        }
+        group.removeAttribute(
+          'data-cgpt-tool-hidden'
+        );
+      } else {
+        group.setAttribute(
+          'data-cgpt-tool-hidden',
+          '1'
+        );
       }
     }
 
-    if (changed || EXTREME_NATIVE_MODE) {
-      updateToolCounts();
-    }
+    state.metrics.toolNodesProcessed +=
+      candidates.length;
 
     recordTelemetryCost(
       'toolProcessMs',
@@ -2607,7 +2619,10 @@
   }
 
   function finalizeTrackedToolGroups() {
-    if (!state.settings.enabled) {
+    if (
+      EXTREME_NATIVE_MODE ||
+      !state.settings.enabled
+    ) {
       return;
     }
 
@@ -2615,46 +2630,6 @@
       ChatGPTDOMAdapter.activeTurn();
 
     if (!(activeTurn instanceof HTMLElement)) {
-      return;
-    }
-
-    if (EXTREME_NATIVE_MODE) {
-      let changed = false;
-
-      for (
-        const group of
-          Array.from(state.toolGroups)
-      ) {
-        if (
-          !(group instanceof HTMLElement) ||
-          !group.isConnected
-        ) {
-          state.toolGroups.delete(group);
-          changed = true;
-          continue;
-        }
-
-        if (
-          activeTurn.contains(group) &&
-          !group.matches(':focus-within')
-        ) {
-          group.setAttribute(
-            'data-cgpt-tool-hidden',
-            '1'
-          );
-          group.removeAttribute(
-            'data-cgpt-tool-collapsed'
-          );
-          group.removeAttribute(
-            'data-cgpt-tool-summary'
-          );
-          changed = true;
-        }
-      }
-
-      if (changed) {
-        updateToolCounts();
-      }
       return;
     }
 
@@ -2697,7 +2672,11 @@
   function restoreToolGroups() {
     for (
       const group of
-        Array.from(state.toolGroups)
+        document.querySelectorAll(
+          '[data-cgpt-tool-group="1"],' +
+          '[data-cgpt-tool-hidden="1"],' +
+          '[data-cgpt-tool-collapsed="1"]'
+        )
     ) {
       if (!(group instanceof HTMLElement)) {
         continue;
@@ -2800,15 +2779,15 @@
       return;
     }
 
-    const streaming = isStreaming();
-    const liveTurn =
-      streaming && turns.length
-        ? turns[turns.length - 1]
-        : null;
-
     if (
       state.settings.aggressiveWindowing
     ) {
+      const streaming = isStreaming();
+      const liveTurn =
+        streaming && turns.length
+          ? turns[turns.length - 1]
+          : null;
+
       applyAggressiveWindowing(
         turns,
         liveTurn
@@ -2819,7 +2798,10 @@
       restoreOptimizedTurns();
     }
 
-    updateToolCounts();
+    if (!EXTREME_NATIVE_MODE) {
+      updateToolCounts();
+    }
+
     updateUI(turns.length);
   }
 
@@ -2924,35 +2906,30 @@
       return false;
     }
 
-    const scroller =
-      conversationScroller();
-
-    if (!scroller) {
-      return false;
-    }
+    const target =
+      ChatGPTDOMAdapter.activeTurn() ||
+      lastConversationTurn();
 
     try {
       if (
-        scroller ===
-          document.scrollingElement ||
-        scroller ===
-          document.documentElement ||
-        scroller ===
-          document.body
+        target instanceof HTMLElement
       ) {
-        window.scrollTo(
-          0,
-          Math.max(
-            document.body?.scrollHeight || 0,
-            document.documentElement
-              ?.scrollHeight || 0
-          )
-        );
-      } else {
-        scroller.scrollTop =
-          scroller.scrollHeight;
+        target.scrollIntoView({
+          block: 'end',
+          inline: 'nearest',
+          behavior: 'auto',
+        });
+        return true;
       }
 
+      window.scrollTo(
+        0,
+        Math.max(
+          document.body?.scrollHeight || 0,
+          document.documentElement
+            ?.scrollHeight || 0
+        )
+      );
       return true;
     } catch (_) {
       return false;
@@ -4452,7 +4429,6 @@
         bindScopedObservers(true);
         invalidateTurnCache();
         turnCandidates(true);
-        scheduleToolScan(30);
         scheduleInitialBottomScroll(true);
         scheduleRefresh(120);
         scheduleStateEvaluation(180);
@@ -4488,23 +4464,7 @@
     }
 
     let turnStructureChanged = false;
-    let toolMutationRelevant = false;
-
-    const activeRecord =
-      state.activeConversationId
-        ? state.conversationStates[
-            state.activeConversationId
-          ]
-        : null;
-
-    let stateRelevant = Boolean(
-      activeRecord &&
-      (
-        activeRecord.status === 'running' ||
-        activeRecord.status === 'waiting_user' ||
-        activeRecord.status === 'settling'
-      )
-    );
+    let stateRelevant = false;
 
     for (const mutation of mutations) {
       const target =
@@ -4520,20 +4480,16 @@
         stateRelevant = true;
       }
 
-      if (
-        target?.closest?.(
-          '[data-cgpt-tool-group="1"]'
-        )
-      ) {
-        toolMutationRelevant = true;
-      }
-
       for (const node of mutation.removedNodes) {
-        if (!(node instanceof Element)) continue;
+        if (!(node instanceof Element)) {
+          continue;
+        }
 
         if (
           node.matches?.(TURN_ELEMENT_QUERY) ||
-          node.querySelector?.(TURN_ELEMENT_QUERY)
+          node.querySelector?.(
+            TURN_ELEMENT_QUERY
+          )
         ) {
           invalidateTurnCache();
           turnStructureChanged = true;
@@ -4552,26 +4508,12 @@
           turnStructureChanged = true;
         }
 
-        if (
-          node.matches?.(
-            'button,[role="button"],summary,[aria-expanded]'
-          ) ||
-          node.querySelector?.(
-            'button,[role="button"],summary,[aria-expanded]'
-          )
-        ) {
-          toolMutationRelevant = true;
+        if (EXTREME_NATIVE_MODE) {
+          processToolMutationNode(node);
         }
 
         if (
           node.matches?.(
-            '[aria-busy="true"],' +
-            '[role="progressbar"],' +
-            '[data-state="loading"],' +
-            '[data-loading="true"],' +
-            '[data-testid="stop-button"]'
-          ) ||
-          node.querySelector?.(
             '[aria-busy="true"],' +
             '[role="progressbar"],' +
             '[data-state="loading"],' +
@@ -4586,16 +4528,6 @@
 
     if (turnStructureChanged) {
       scheduleRefresh(80);
-
-      if (
-        EXTREME_NATIVE_MODE &&
-        performance.now() <
-          state.bottomScrollUntil
-      ) {
-        window.requestAnimationFrame(
-          scrollConversationToBottom
-        );
-      }
     }
 
     if (
@@ -4603,10 +4535,6 @@
       turnStructureChanged
     ) {
       scheduleStateEvaluation();
-    }
-
-    if (toolMutationRelevant) {
-      scheduleToolScan();
     }
 
     recordTelemetryCost(
@@ -4707,7 +4635,10 @@
         const activeTurn =
           ChatGPTDOMAdapter.activeTurn();
 
-        if (activeTurn) {
+        if (
+          EXTREME_NATIVE_MODE &&
+          activeTurn
+        ) {
           processToolMutationNode(
             activeTurn
           );
@@ -4899,7 +4830,6 @@
     setupObservers();
     invalidateTurnCache();
     turnCandidates(true);
-    scheduleToolScan(20);
     scheduleInitialBottomScroll(true);
     scheduleRefresh(0);
     evaluateConversationState();
@@ -5150,7 +5080,6 @@
     clearTimeout(state.updateWatchdogTimer);
     clearTimeout(state.controlRecoveryTimer);
     clearTimeout(state.sidebarReconcileTimer);
-    clearTimeout(state.toolScanTimer);
     clearInitialBottomScroll();
     clearInterval(state.statusTimer);
 
