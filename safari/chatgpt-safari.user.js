@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.5
+// @version      0.4.6
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.5';
+  const VERSION = '0.4.6';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -117,6 +117,7 @@
     observer: null,
     conversationObserver: null,
     sidebarObserver: null,
+    sidebarReconcileTimer: 0,
     conversationRoot: null,
     sidebarRoot: null,
     refreshTimer: 0,
@@ -1494,6 +1495,40 @@
     ) {
       renderConversationStateForId(id);
     }
+  }
+
+  function reconcileSidebarConversationLinks() {
+    if (state.destroyed) return;
+
+    const root =
+      ChatGPTDOMAdapter.sidebarRoot();
+
+    if (!(root instanceof Element)) {
+      state.conversationLinks.clear();
+      return;
+    }
+
+    state.sidebarRoot = root;
+    state.conversationLinks.clear();
+
+    registerConversationLinks(root);
+    renderConversationStates();
+  }
+
+  function scheduleSidebarReconcile(
+    delay = 80
+  ) {
+    if (state.destroyed) return;
+
+    clearTimeout(
+      state.sidebarReconcileTimer
+    );
+
+    state.sidebarReconcileTimer =
+      window.setTimeout(() => {
+        state.sidebarReconcileTimer = 0;
+        reconcileSidebarConversationLinks();
+      }, delay);
   }
 
   function lastConversationTurn() {
@@ -4153,7 +4188,21 @@
       return;
     }
 
+    let needsReconcile = false;
+
     for (const mutation of mutations) {
+      if (mutation.type === 'attributes') {
+        needsReconcile = true;
+        continue;
+      }
+
+      if (
+        mutation.addedNodes.length ||
+        mutation.removedNodes.length
+      ) {
+        needsReconcile = true;
+      }
+
       for (const node of mutation.addedNodes) {
         if (!(node instanceof Element)) {
           continue;
@@ -4162,6 +4211,10 @@
         registerConversationLinks(node);
         renderConversationStates(node);
       }
+    }
+
+    if (needsReconcile) {
+      scheduleSidebarReconcile(60);
     }
 
     recordTelemetryCost(
@@ -4241,13 +4294,15 @@
           {
             childList: true,
             subtree: true,
+            attributes: true,
+            attributeFilter: [
+              'href',
+              'data-conversation-id',
+            ],
           }
         );
 
-        registerConversationLinks(
-          sidebarRoot
-        );
-        renderConversationStates();
+        reconcileSidebarConversationLinks();
       }
     }
   }
@@ -4379,6 +4434,7 @@
         }
 
         evaluateConversationState();
+        scheduleSidebarReconcile(0);
       }, STATUS_INTERVAL_MS);
   }
 
@@ -4499,6 +4555,7 @@
 
       scheduleRefresh(0);
       scheduleStateEvaluation(0);
+      scheduleSidebarReconcile(0);
       renderConversationStates();
     }
   }
@@ -4641,6 +4698,7 @@
     clearTimeout(state.routeRebindTimer);
     clearTimeout(state.updateWatchdogTimer);
     clearTimeout(state.controlRecoveryTimer);
+    clearTimeout(state.sidebarReconcileTimer);
     clearInterval(state.statusTimer);
 
     state.observer?.disconnect();
