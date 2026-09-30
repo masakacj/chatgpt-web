@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.0
+// @version      0.4.1
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -34,7 +34,9 @@
   const STATUS_INTERVAL_MS =
     IS_NATIVE_IOS ? 8000 : 5000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
-    IS_NATIVE_IOS ? 1200 : 700;
+    IS_NATIVE_IOS ? 4000 : 1200;
+  const ROUTE_SETTLE_DELAY_MS =
+    IS_NATIVE_IOS ? 1400 : 500;
   const STATE_EVAL_DEBOUNCE_MS =
     IS_NATIVE_IOS ? 220 : 120;
   const IOS_KEEP_RECENT_TURNS = 6;
@@ -65,6 +67,7 @@
   const HOST_ID = 'cgpt-safari-lite-host';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
   const CONTROL_MIGRATION_KEY = 'cgpt-unified-control-visible-v031';
+  const SAFE_LOAD_MIGRATION_KEY = 'cgpt-safe-load-v041';
   const CONTROL_POSITION_KEY =
     'cgpt-unified-control-position-v1';
   const NATIVE_ANCHOR_MIN_VERSION =
@@ -102,6 +105,8 @@
     refreshTimer: 0,
     stateEvalTimer: 0,
     phaseTwoTimer: 0,
+    routeRebindTimer: 0,
+    routeSettlingUntil: 0,
     phaseTwoStarted: false,
     statusTimer: 0,
     updateWatchdogTimer: 0,
@@ -151,8 +156,13 @@
     try {
       const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
       const shouldRestoreControl = localStorage.getItem(CONTROL_MIGRATION_KEY) !== '1';
+      const shouldApplySafeLoadReset =
+        localStorage.getItem(SAFE_LOAD_MIGRATION_KEY) !== '1';
       if (shouldRestoreControl) {
         localStorage.setItem(CONTROL_MIGRATION_KEY, '1');
+      }
+      if (shouldApplySafeLoadReset) {
+        localStorage.setItem(SAFE_LOAD_MIGRATION_KEY, '1');
       }
       return {
         enabled: stored.enabled !== false,
@@ -161,7 +171,9 @@
             ? true
             : stored.showControl !== false,
         aggressiveWindowing:
-          stored.aggressiveWindowing === true,
+          shouldApplySafeLoadReset
+            ? false
+            : stored.aggressiveWindowing === true,
       };
     } catch (_) {
       return { ...defaults };
@@ -2785,7 +2797,6 @@
       }
 
       registerTurn(turn);
-      processToolMutationNode(turn);
       found = true;
     }
 
@@ -2803,6 +2814,47 @@
     ) !== state.lastRoute;
   }
 
+  function routeIsSettling() {
+    return (
+      performance.now() <
+      state.routeSettlingUntil
+    );
+  }
+
+  function scheduleRouteRebind(
+    delay = ROUTE_SETTLE_DELAY_MS
+  ) {
+    if (state.destroyed) return;
+
+    clearTimeout(state.routeRebindTimer);
+
+    const remaining =
+      Math.max(
+        0,
+        state.routeSettlingUntil -
+          performance.now()
+      );
+
+    state.routeRebindTimer =
+      window.setTimeout(() => {
+        state.routeRebindTimer = 0;
+        state.routeSettlingUntil = 0;
+
+        if (
+          state.destroyed ||
+          !state.phaseTwoStarted
+        ) {
+          return;
+        }
+
+        bindScopedObservers(true);
+        invalidateTurnCache();
+        turnCandidates(true);
+        scheduleRefresh(120);
+        scheduleStateEvaluation(180);
+      }, Math.max(delay, remaining));
+  }
+
   function handleConversationMutations(
     mutations
   ) {
@@ -2812,6 +2864,11 @@
 
     if (routeChanged()) {
       onRoute();
+      return;
+    }
+
+    if (routeIsSettling()) {
+      scheduleRouteRebind();
       return;
     }
 
@@ -2857,8 +2914,6 @@
         ) {
           turnStructureChanged = true;
         }
-
-        processToolMutationNode(node);
 
         if (
           node.matches?.(
@@ -3060,8 +3115,17 @@
           scheduleControlRecovery(40);
         }
 
+        if (routeChanged()) {
+          onRoute();
+          return;
+        }
+
+        if (routeIsSettling()) {
+          scheduleRouteRebind();
+          return;
+        }
+
         if (
-          routeChanged() ||
           ChatGPTDOMAdapter
             .conversationRoot() !==
             state.conversationRoot ||
@@ -3194,12 +3258,26 @@
     state.conversationLinks.clear();
     invalidateTurnCache();
 
+    state.routeSettlingUntil =
+      performance.now() +
+      ROUTE_SETTLE_DELAY_MS;
+
+    state.conversationObserver
+      ?.disconnect();
+    state.conversationObserver = null;
+    state.conversationRoot =
+      ChatGPTDOMAdapter.conversationRoot();
+
     if (state.phaseTwoStarted) {
-      bindScopedObservers(true);
+      scheduleRouteRebind();
     }
 
-    scheduleRefresh(0);
-    scheduleStateEvaluation(0);
+    scheduleRefresh(
+      ROUTE_SETTLE_DELAY_MS + 120
+    );
+    scheduleStateEvaluation(
+      ROUTE_SETTLE_DELAY_MS + 180
+    );
     renderConversationStates();
   }
 
@@ -3346,6 +3424,7 @@
     clearTimeout(state.refreshTimer);
     clearTimeout(state.stateEvalTimer);
     clearTimeout(state.phaseTwoTimer);
+    clearTimeout(state.routeRebindTimer);
     clearTimeout(state.updateWatchdogTimer);
     clearTimeout(state.controlRecoveryTimer);
     clearInterval(state.statusTimer);
