@@ -1220,11 +1220,152 @@ struct ChatGPTWebView: UIViewRepresentable {
             case "clear-cache":
                 clearWebCacheKeepingLogin()
 
+            case "telemetry":
+                if
+                    let batchId =
+                        body["batchId"] as? String,
+                    let payload =
+                        body["payload"] as? [String: Any]
+                {
+                    uploadTelemetry(
+                        batchId: batchId,
+                        payload: payload
+                    )
+                }
+
             default:
                 break
             }
         }
 
+
+        private func uploadTelemetry(
+            batchId: String,
+            payload: [String: Any]
+        ) {
+            guard
+                let url = URL(
+                    string:
+                        "https://chatgpt-web-telemetry.masakacj.workers.dev/v1/telemetry"
+                ),
+                JSONSerialization.isValidJSONObject(
+                    payload
+                ),
+                let data =
+                    try? JSONSerialization.data(
+                        withJSONObject: payload
+                    ),
+                data.count <= 64 * 1024
+            else {
+                sendTelemetryResult(
+                    batchId: batchId,
+                    ok: false,
+                    status: "invalid_payload"
+                )
+                return
+            }
+
+            var request =
+                URLRequest(
+                    url: url,
+                    timeoutInterval: 15
+                )
+
+            request.httpMethod = "POST"
+            request.httpBody = data
+            request.cachePolicy =
+                .reloadIgnoringLocalCacheData
+            request.setValue(
+                "application/json",
+                forHTTPHeaderField:
+                    "Content-Type"
+            )
+            request.setValue(
+                "1",
+                forHTTPHeaderField:
+                    "X-ChatGPT-Web-Telemetry"
+            )
+            request.setValue(
+                "ChatGPTWeb-iOS/telemetry",
+                forHTTPHeaderField:
+                    "User-Agent"
+            )
+
+            URLSession.shared.dataTask(
+                with: request
+            ) { [weak self] _, response, error in
+                let statusCode =
+                    (
+                        response as?
+                            HTTPURLResponse
+                    )?.statusCode
+
+                let ok =
+                    error == nil &&
+                    statusCode.map {
+                        (200..<300).contains($0)
+                    } == true
+
+                let detail: String
+
+                if let error =
+                    error as? URLError
+                {
+                    detail =
+                        "url_" +
+                        String(
+                            error.code.rawValue
+                        )
+                } else if let statusCode {
+                    detail =
+                        "http_" +
+                        String(statusCode)
+                } else {
+                    detail = "no_response"
+                }
+
+                DispatchQueue.main.async {
+                    self?.sendTelemetryResult(
+                        batchId: batchId,
+                        ok: ok,
+                        status: detail
+                    )
+                }
+            }.resume()
+        }
+
+        private func sendTelemetryResult(
+            batchId: String,
+            ok: Bool,
+            status: String
+        ) {
+            guard
+                let webView,
+                let data =
+                    try? JSONSerialization.data(
+                        withJSONObject: [
+                            "type": "telemetry",
+                            "ok": ok,
+                            "batchId": batchId,
+                            "status": status
+                        ]
+                    ),
+                let json =
+                    String(
+                        data: data,
+                        encoding: .utf8
+                    )
+            else {
+                return
+            }
+
+            webView.evaluateJavaScript(
+                """
+                window.ChatGPTWeb?.nativeActionResult?.(\(json));
+                window.ChatGPTSafari?.nativeActionResult?.(\(json));
+                """
+            )
+        }
 
         private func clearWebCacheKeepingLogin() {
             let dataTypes: Set<String> = [
