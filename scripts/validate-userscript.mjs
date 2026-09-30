@@ -117,13 +117,28 @@ requireText(
 );
 requireText(
   shared,
-  "const liveTurn =\n      streaming && turns.length\n        ? turns[turns.length - 1]\n        : null;",
-  'streaming turn protection'
+  'const EXTREME_NATIVE_MODE =',
+  'native subtractive performance mode'
 );
 requireText(
   shared,
-  "perfLabel.textContent = '低干扰增量优化';",
-  'low-interference optimization label'
+  'data-cgpt-passive-turn',
+  'native passive historical turn rendering'
+);
+requireText(
+  shared,
+  'data-cgpt-tool-hidden',
+  'native static process hiding'
+);
+requireText(
+  shared,
+  'const INITIAL_BOTTOM_SCROLL_DELAYS = [',
+  'fixed bottom-scroll schedule'
+);
+requireText(
+  shared,
+  "perfLabel.textContent = '极速模式';",
+  'extreme mode setting label'
 );
 requireText(
   shared,
@@ -139,11 +154,6 @@ requireText(
   shared,
   'state.sidebarObserver.observe(',
   'sidebar-root observer'
-);
-requireText(
-  shared,
-  'function processToolMutationNode(node)',
-  'incremental tool processing'
 );
 requireText(
   shared,
@@ -232,17 +242,12 @@ requireText(
 );
 requireText(
   shared,
-  'hasCurrent',
-  'native panel current-version readiness'
+  'state.ui?.update',
+  'native panel update-action readiness'
 );
 requireText(
   shared,
-  'hasLatest',
-  'native panel latest-version readiness'
-);
-requireText(
-  shared,
-  'hasCache',
+  'state.ui?.clearCache',
   'native panel cache-action readiness'
 );
 requireText(
@@ -312,8 +317,18 @@ requireText(
 );
 requireText(
   shared,
-  'requestNativeUpdateCheck()',
-  'S-triggered native update check'
+  "update.textContent = '检查更新';",
+  'single explicit update action'
+);
+requireText(
+  shared,
+  "settings.textContent = '设置';",
+  'settings entry in first-layer menu'
+);
+requireText(
+  shared,
+  "reload.textContent = '重新加载 ChatGPT';",
+  'first-layer reload action'
 );
 requireText(
   shared,
@@ -322,18 +337,18 @@ requireText(
 );
 requireText(
   shared,
-  "failed ? '重试更新'",
+  "'重试检查更新'",
   'manual update retry button state'
 );
 requireText(
   shared,
-  "makeInfoRow('当前脚本')",
-  'shared current script version row'
+  "makeInfoRow('脚本')",
+  'settings script version row'
 );
 requireText(
   shared,
-  "makeInfoRow('最新脚本')",
-  'shared latest script version row'
+  "makeInfoRow('容器')",
+  'settings container version row'
 );
 requireText(
   shared,
@@ -342,13 +357,13 @@ requireText(
 );
 requireText(
   shared,
-  'data-cgpt-tool-collapsed',
-  'completed tool compaction'
+  'function processToolMutationNode(node)',
+  'one-shot process node classification'
 );
 requireText(
   shared,
-  'finalizeTrackedToolGroups();',
-  'incremental tool finalization'
+  "processToolMutationNode(node);",
+  'added-node-only process handling'
 );
 requireText(
   shared,
@@ -391,6 +406,10 @@ const sharedForbidden = [
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
   [".removeAttribute('src')", 'media source unloading'],
+  ['开始性能诊断', 'manual debug UI in subtractive runtime'],
+  ['检查 IPA 更新', 'separate IPA update action'],
+  ['scheduleToolScan(', 'repeated tool rescan scheduler'],
+  ['conversationScroller(', 'dynamic scroll-container probing'],
 ];
 
 for (const [needle, description] of sharedForbidden) {
