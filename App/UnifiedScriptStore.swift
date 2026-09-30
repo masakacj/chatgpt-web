@@ -156,6 +156,8 @@ final class UnifiedScriptStore {
     ) -> String {
         var payload: [String: Any] = [
             "appVersion": appVersion,
+            "appBuild": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
+            "appUpdateEndpoint": "https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest",
             "scriptVersion": scriptVersion,
             "scriptOrigin": scriptOrigin,
             "updateStatus": updateStatus,
