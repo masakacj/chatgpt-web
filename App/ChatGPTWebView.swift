@@ -505,6 +505,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             control.onDragBegan = {
                 [weak self] in
                 self?.closeScriptPanel()
+                self?.collapseExternalBrowserMenu()
             }
 
             control.onDragChanged = {
@@ -581,6 +582,13 @@ struct ChatGPTWebView: UIViewRepresentable {
                 control,
                 in: rootView
             )
+            if browserControlsExpanded {
+                positionExternalBrowserMenu()
+                if let menu = browserMenuView {
+                    rootView.bringSubviewToFront(menu)
+                }
+            }
+
             rootView.bringSubviewToFront(
                 control
             )
@@ -1432,32 +1440,18 @@ struct ChatGPTWebView: UIViewRepresentable {
             action: Selector
         ) -> UIButton {
             let button = UIButton(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
-
             button.setImage(
                 UIImage(systemName: systemName),
                 for: .normal
             )
-
             button.tintColor = .label
             button.accessibilityLabel =
                 accessibilityLabel
-
             button.addTarget(
                 self,
                 action: action,
                 for: .touchUpInside
             )
-
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(
-                    equalToConstant: 40
-                ),
-                button.heightAnchor.constraint(
-                    equalToConstant: 40
-                )
-            ])
-
             return button
         }
 
