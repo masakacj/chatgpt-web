@@ -474,6 +474,19 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
+                let currentState =
+                    control.accessibilityValue ??
+                    ""
+
+                if [
+                    "panel-ready",
+                    "panel-open",
+                    "panel-open-not-ready"
+                ].contains(currentState) {
+                    self.closeScriptPanel()
+                    return
+                }
+
                 control.accessibilityValue =
                     "panel-requested"
 
@@ -1095,6 +1108,21 @@ struct ChatGPTWebView: UIViewRepresentable {
             switch type {
             case "check-update":
                 startHotUpdate()
+
+            case "install-app-update":
+                if
+                    let raw = body["url"] as? String,
+                    let url = URL(string: raw),
+                    url.scheme == "itms-services"
+                {
+                    DispatchQueue.main.async {
+                        UIApplication.shared.open(
+                            url,
+                            options: [:],
+                            completionHandler: nil
+                        )
+                    }
+                }
 
             case "clear-cache":
                 clearWebCacheKeepingLogin()

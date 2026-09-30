@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.1
+// @version      0.4.2
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1595,6 +1595,27 @@
     }
   }
 
+  async function checkAppUpdate() {
+    const endpoint = state.nativeStatus?.appUpdateEndpoint;
+    if (!IS_NATIVE_IOS || !endpoint) return null;
+    try {
+      const response = await fetch(endpoint, { cache: 'no-store' });
+      if (!response.ok) return null;
+      const latest = await response.json();
+      const currentBuild = Number.parseInt(state.nativeStatus?.appBuild || '0', 10) || 0;
+      const latestBuild = Number.parseInt(latest?.build || '0', 10) || 0;
+      setNativeStatus({
+        latestAppVersion: latest?.version || null,
+        latestAppBuild: String(latest?.build || ''),
+        appInstallURL: latest?.install_url || null,
+        appUpdateAvailable: latestBuild > currentBuild,
+      });
+      return latest;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function versionParts(value) {
     return String(value || '')
       .split('.')
@@ -1982,6 +2003,14 @@
     perfSwitch.checked = state.settings.enabled;
     perfRow.append(perfLabel, perfSwitch);
 
+    const appUpdateRow = document.createElement('div');
+    appUpdateRow.className = 'row';
+    const appUpdate = document.createElement('button');
+    appUpdate.type = 'button';
+    appUpdate.className = 'action';
+    appUpdate.textContent = '检查 IPA 更新';
+    appUpdateRow.appendChild(appUpdate);
+
     const updateRow = document.createElement('div');
     updateRow.className = 'row';
     const update = document.createElement('button');
@@ -2036,6 +2065,7 @@
       status,
       info,
       perfRow,
+      appUpdateRow,
       updateRow,
       reloadRow,
       restoreRow
@@ -2228,6 +2258,7 @@
           ...(window.__CHATGPT_NATIVE__ || {}),
         };
         requestNativeUpdateCheck();
+        checkAppUpdate();
         scheduleRefresh(0);
         evaluateConversationState();
         renderConversationStates();
@@ -2239,6 +2270,18 @@
       state.settings.enabled = perfSwitch.checked;
       saveSettings();
       scheduleRefresh(0);
+    });
+
+    appUpdate.addEventListener('click', async () => {
+      if (state.nativeStatus?.appUpdateAvailable && state.nativeStatus?.appInstallURL) {
+        requestNativeAction('install-app-update', { url: state.nativeStatus.appInstallURL });
+        return;
+      }
+      appUpdate.disabled = true;
+      appUpdate.textContent = '检查 IPA 更新中…';
+      await checkAppUpdate();
+      appUpdate.disabled = false;
+      updateUI(currentTurnCount());
     });
 
     update.addEventListener('click', () => {
@@ -2310,6 +2353,7 @@
       status,
       perfSwitch,
       update,
+      appUpdate,
       clearCache,
       foot,
       scriptInfo: scriptInfo.value,
@@ -2698,9 +2742,21 @@
     }
 
     if (ui.appInfo) {
-      ui.appInfo.textContent = state.nativeStatus?.appVersion
+      const current = state.nativeStatus?.appVersion
         ? 'v' + state.nativeStatus.appVersion
         : '浏览器';
+      const latest = state.nativeStatus?.latestAppVersion;
+      ui.appInfo.textContent =
+        latest && state.nativeStatus?.appUpdateAvailable
+          ? current + ' → v' + latest
+          : current;
+    }
+    if (ui.appUpdate) {
+      ui.appUpdate.style.display = IS_NATIVE_IOS ? '' : 'none';
+      ui.appUpdate.textContent =
+        state.nativeStatus?.appUpdateAvailable
+          ? '安装 IPA 更新 v' + (state.nativeStatus?.latestAppVersion || '')
+          : '检查 IPA 更新';
     }
     if (ui.updateInfo) {
       ui.updateInfo.textContent = updateStatusLabel();

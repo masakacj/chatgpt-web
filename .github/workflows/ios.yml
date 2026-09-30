@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - main
+      - "release/**"
     paths:
       - "App/**"
       - "Resources/**"
+      - "safari/**"
+      - "package.json"
       - "project.yml"
       - "UITests/**"
       - ".github/workflows/ios.yml"
@@ -69,6 +72,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
 
       - name: Verify bundled unified script
