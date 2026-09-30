@@ -889,6 +889,12 @@ struct ChatGPTWebView: UIViewRepresentable {
                     } else {
                         sender.accessibilityValue =
                             "panel-open-not-ready"
+
+                        self.pollScriptPanelReady(
+                            from: sender,
+                            retriesRemaining:
+                                retriesRemaining
+                        )
                     }
                     return
                 }
@@ -918,6 +924,92 @@ struct ChatGPTWebView: UIViewRepresentable {
                     }
 
                     self.toggleScriptPanel(
+                        from: sender,
+                        retriesRemaining:
+                            retriesRemaining - 1
+                    )
+                }
+            }
+        }
+
+        private func pollScriptPanelReady(
+            from sender: UIButton,
+            retriesRemaining: Int
+        ) {
+            guard
+                retriesRemaining > 0,
+                let webView
+            else {
+                return
+            }
+
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.20
+            ) { [weak self, weak sender] in
+                guard
+                    let self,
+                    let sender
+                else {
+                    return
+                }
+
+                let source =
+                    """
+                    (() => {
+                      const api =
+                        window.ChatGPTWeb ||
+                        window.ChatGPTSafari;
+                      return (
+                        api?.nativePanelRenderState?.() ??
+                        {
+                          ok: false,
+                          open: false,
+                          ready: false
+                        }
+                      );
+                    })()
+                    """
+
+                webView.evaluateJavaScript(
+                    source
+                ) { [weak self, weak sender] result, _ in
+                    guard
+                        let self,
+                        let sender
+                    else {
+                        return
+                    }
+
+                    if
+                        let state =
+                            result as? [String: Any],
+                        let ok =
+                            state["ok"] as? Bool,
+                        ok
+                    {
+                        let open =
+                            state["open"] as? Bool ??
+                            false
+                        let ready =
+                            state["ready"] as? Bool ??
+                            false
+
+                        if !open {
+                            sender.accessibilityValue =
+                                "panel-closed"
+                            return
+                        }
+
+                        if ready {
+                            sender.accessibilityValue =
+                                "panel-ready"
+                            return
+                        }
+                    }
+
+                    self.ensureScriptsAreRunning()
+
+                    self.pollScriptPanelReady(
                         from: sender,
                         retriesRemaining:
                             retriesRemaining - 1
