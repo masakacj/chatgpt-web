@@ -128,7 +128,6 @@
     sidebarObserver: null,
     sidebarReconcileTimer: 0,
     bottomScrollTimers: new Set(),
-    bottomScrollUntil: 0,
     lastBottomConversationId: '',
     conversationRoot: null,
     sidebarRoot: null,
@@ -2822,43 +2821,7 @@
 
   
 
-  function conversationScroller() {
-    const anchor =
-      ChatGPTDOMAdapter.activeTurn() ||
-      ChatGPTDOMAdapter.conversationRoot();
-
-    let node =
-      anchor instanceof Element
-        ? anchor.parentElement
-        : null;
-
-    while (
-      node &&
-      node !== document.body &&
-      node !== document.documentElement
-    ) {
-      const style =
-        window.getComputedStyle(node);
-      const overflowY =
-        style.overflowY || '';
-
-      if (
-        /^(?:auto|scroll|overlay)$/i
-          .test(overflowY) &&
-        node.scrollHeight >
-          node.clientHeight + 24
-      ) {
-        return node;
-      }
-
-      node = node.parentElement;
-    }
-
-    return (
-      document.scrollingElement ||
-      document.documentElement
-    );
-  }
+  
 
   function scrollConversationToBottom() {
     if (!currentConversationId()) {
@@ -2904,7 +2867,6 @@
     }
 
     state.bottomScrollTimers.clear();
-    state.bottomScrollUntil = 0;
   }
 
   function scheduleInitialBottomScroll(
@@ -2931,9 +2893,6 @@
 
     clearInitialBottomScroll();
     state.lastBottomConversationId = id;
-    state.bottomScrollUntil =
-      performance.now() + 3200;
-
     for (
       const delay of
         INITIAL_BOTTOM_SCROLL_DELAYS
