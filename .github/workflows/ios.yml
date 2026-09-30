@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "release/**"
     paths:
       - "App/**"
       - "Resources/**"\n      - "safari/**"\n      - "package.json"
