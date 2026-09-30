@@ -1,0 +1,13 @@
+{
+  "name": "chatgpt-web-telemetry",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-30",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "chatgpt-web-telemetry",
+      "database_id": "8e773bfa-13a5-4fba-82ad-82e7fce19002"
+    }
+  ]
+}

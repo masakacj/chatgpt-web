@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.2
+// @version      0.4.3
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.2';
+  const VERSION = '0.4.3';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -32,7 +32,7 @@
   const PERF_REFRESH_DELAY_MS =
     IS_NATIVE_IOS ? 180 : 100;
   const STATUS_INTERVAL_MS =
-    IS_NATIVE_IOS ? 8000 : 5000;
+    IS_NATIVE_IOS ? 12000 : 7000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
     IS_NATIVE_IOS ? 4000 : 1200;
   const ROUTE_SETTLE_DELAY_MS =
@@ -41,7 +41,7 @@
     IS_NATIVE_IOS ? 220 : 120;
   const IOS_KEEP_RECENT_TURNS = 6;
   const TURN_CACHE_MAX_AGE_MS =
-    IS_NATIVE_IOS ? 30000 : 15000;
+    IS_NATIVE_IOS ? 300000 : 120000;
   const DEFAULT_AGGRESSIVE_WINDOWING = false;
   const WINDOW_ROOT_MARGIN =
     IS_NATIVE_IOS
@@ -78,6 +78,22 @@
   const READ_DWELL_MS = 1200;
   const STATE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
+  const TELEMETRY_ENDPOINT =
+    'https://chatgpt-web-telemetry.masakacj.workers.dev/v1/telemetry';
+  const TELEMETRY_CONFIG_URL =
+    'https://chatgpt-web-telemetry.masakacj.workers.dev/v1/config';
+  const TELEMETRY_INSTALL_KEY =
+    'cgpt-telemetry-install-v1';
+  const TELEMETRY_QUEUE_MAX = 60;
+  const TELEMETRY_DEFAULTS =
+    Object.freeze({
+      sampleMs: 15000,
+      loopProbeMs: 1000,
+      flushMs: 30000,
+      maxBatch: 20,
+      debugDurationMs: 180000,
+    });
+
   const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called)/i;
   const TOOL_ACTION_RE = /(?:Ran command|Run command|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|运行命令|执行命令|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
   const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
@@ -92,6 +108,7 @@
     showControl: true,
     aggressiveWindowing:
       DEFAULT_AGGRESSIVE_WINDOWING,
+    telemetryEnabled: false,
   };
 
   const state = {
@@ -145,11 +162,1017 @@
       lastLongTaskAt: 0,
     },
     longTaskObserver: null,
+    telemetry: createTelemetryState(),
   };
 
   function clamp(value, min, max) {
     const n = Number(value);
     return Math.min(max, Math.max(min, Number.isFinite(n) ? n : min));
+  }
+
+  function randomTelemetryId(
+    prefix,
+    bytes = 8
+  ) {
+    try {
+      const data =
+        new Uint8Array(bytes);
+      crypto.getRandomValues(data);
+
+      return (
+        prefix +
+        Array.from(data)
+          .map((value) =>
+            value
+              .toString(16)
+              .padStart(2, '0')
+          )
+          .join('')
+      );
+    } catch (_) {
+      return (
+        prefix +
+        Math.random()
+          .toString(36)
+          .slice(2, 18)
+      );
+    }
+  }
+
+  function loadOrCreateTelemetryInstallId() {
+    try {
+      const existing =
+        localStorage.getItem(
+          TELEMETRY_INSTALL_KEY
+        );
+
+      if (
+        existing &&
+        /^[A-Za-z0-9_-]{8,64}$/
+          .test(existing)
+      ) {
+        return existing;
+      }
+
+      const next =
+        randomTelemetryId(
+          'i_',
+          10
+        );
+
+      localStorage.setItem(
+        TELEMETRY_INSTALL_KEY,
+        next
+      );
+
+      return next;
+    } catch (_) {
+      return randomTelemetryId(
+        'i_',
+        10
+      );
+    }
+  }
+
+  function emptyLagBucket() {
+    return {
+      count: 0,
+      sum: 0,
+      max: 0,
+      gt50: 0,
+      gt100: 0,
+      gt250: 0,
+    };
+  }
+
+  function emptyCostBucket() {
+    return {
+      conversationObserverMs: 0,
+      sidebarObserverMs: 0,
+      turnScanMs: 0,
+      toolProcessMs: 0,
+    };
+  }
+
+  function createTelemetryState() {
+    return {
+      installId:
+        loadOrCreateTelemetryInstallId(),
+      sessionId:
+        randomTelemetryId(
+          's_',
+          10
+        ),
+      config: {
+        ...TELEMETRY_DEFAULTS,
+      },
+      configStatus: 'idle',
+      status: 'off',
+      transport: 'none',
+      queue: [],
+      uploadInFlight: false,
+      activeBatch: null,
+      uploadTimer: 0,
+      sampleTimer: 0,
+      flushTimer: 0,
+      loopTimer: 0,
+      debugTimer: 0,
+      rafId: 0,
+      debugId: '',
+      debugUntil: 0,
+      lastUploadAt: 0,
+      lastError: '',
+      lastCounters: null,
+      loop: emptyLagBucket(),
+      raf: emptyLagBucket(),
+      costs: emptyCostBucket(),
+    };
+  }
+
+  function telemetryRouteKind() {
+    if (currentConversationId()) {
+      return 'conversation';
+    }
+
+    if (
+      location.pathname === '/' ||
+      location.pathname === ''
+    ) {
+      return 'home';
+    }
+
+    return 'other';
+  }
+
+  function telemetryCounters() {
+    return {
+      observerCallbacks:
+        state.metrics.observerCallbacks,
+      conversationMutations:
+        state.metrics
+          .conversationMutations,
+      sidebarMutations:
+        state.metrics.sidebarMutations,
+      turnRefreshes:
+        state.metrics.turnRefreshes,
+      toolNodesProcessed:
+        state.metrics
+          .toolNodesProcessed,
+    };
+  }
+
+  function telemetryCounterDelta(
+    current,
+    previous,
+    key
+  ) {
+    return Math.max(
+      0,
+      Number(current?.[key] || 0) -
+      Number(previous?.[key] || 0)
+    );
+  }
+
+  function recordTelemetryCost(
+    key,
+    duration
+  ) {
+    if (
+      !state.settings.telemetryEnabled ||
+      !Number.isFinite(duration) ||
+      duration < 0
+    ) {
+      return;
+    }
+
+    if (
+      Object.hasOwn(
+        state.telemetry.costs,
+        key
+      )
+    ) {
+      state.telemetry.costs[key] +=
+        duration;
+    }
+  }
+
+  async function loadTelemetryConfig() {
+    const telemetry = state.telemetry;
+
+    if (
+      telemetry.configStatus ===
+        'loading' ||
+      telemetry.configStatus ===
+        'ready'
+    ) {
+      return telemetry.config;
+    }
+
+    telemetry.configStatus = 'loading';
+    updateTelemetryUI();
+
+    try {
+      const response = await fetch(
+        TELEMETRY_CONFIG_URL,
+        {
+          cache: 'no-store',
+          credentials: 'omit',
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          'config_http_' +
+          response.status
+        );
+      }
+
+      const body = await response.json();
+      const remote =
+        body?.telemetry || {};
+
+      telemetry.config = {
+        sampleMs: clamp(
+          remote.sampleMs,
+          5000,
+          60000
+        ) ||
+          TELEMETRY_DEFAULTS.sampleMs,
+        loopProbeMs: clamp(
+          remote.loopProbeMs,
+          500,
+          5000
+        ) ||
+          TELEMETRY_DEFAULTS.loopProbeMs,
+        flushMs: clamp(
+          remote.flushMs,
+          5000,
+          120000
+        ) ||
+          TELEMETRY_DEFAULTS.flushMs,
+        maxBatch: clamp(
+          remote.maxBatch,
+          1,
+          20
+        ) ||
+          TELEMETRY_DEFAULTS.maxBatch,
+        debugDurationMs: clamp(
+          remote.debugDurationMs,
+          30000,
+          600000
+        ) ||
+          TELEMETRY_DEFAULTS
+            .debugDurationMs,
+      };
+
+      telemetry.configStatus = 'ready';
+    } catch (_) {
+      telemetry.config = {
+        ...TELEMETRY_DEFAULTS,
+      };
+      telemetry.configStatus = 'fallback';
+    }
+
+    restartTelemetryTimers();
+    updateTelemetryUI();
+
+    return telemetry.config;
+  }
+
+  function updateLagBucket(
+    bucket,
+    lag
+  ) {
+    if (
+      !bucket ||
+      !Number.isFinite(lag) ||
+      lag < 0
+    ) {
+      return;
+    }
+
+    bucket.count += 1;
+    bucket.sum += lag;
+    bucket.max = Math.max(
+      bucket.max,
+      lag
+    );
+
+    if (lag > 50) bucket.gt50 += 1;
+    if (lag > 100) bucket.gt100 += 1;
+    if (lag > 250) bucket.gt250 += 1;
+  }
+
+  function startLoopProbe() {
+    const telemetry = state.telemetry;
+
+    clearTimeout(
+      telemetry.loopTimer
+    );
+
+    let expected =
+      performance.now() +
+      telemetry.config.loopProbeMs;
+
+    const tick = () => {
+      if (
+        state.destroyed ||
+        !state.settings.telemetryEnabled
+      ) {
+        telemetry.loopTimer = 0;
+        return;
+      }
+
+      const now = performance.now();
+
+      if (!document.hidden) {
+        updateLagBucket(
+          telemetry.loop,
+          Math.max(
+            0,
+            now - expected
+          )
+        );
+      }
+
+      expected =
+        now +
+        telemetry.config.loopProbeMs;
+
+      telemetry.loopTimer =
+        window.setTimeout(
+          tick,
+          telemetry.config.loopProbeMs
+        );
+    };
+
+    telemetry.loopTimer =
+      window.setTimeout(
+        tick,
+        telemetry.config.loopProbeMs
+      );
+  }
+
+  function stopDebugRafProbe() {
+    if (state.telemetry.rafId) {
+      cancelAnimationFrame(
+        state.telemetry.rafId
+      );
+      state.telemetry.rafId = 0;
+    }
+  }
+
+  function startDebugRafProbe() {
+    stopDebugRafProbe();
+
+    let previous = 0;
+
+    const frame = (timestamp) => {
+      const telemetry = state.telemetry;
+
+      if (
+        state.destroyed ||
+        !telemetry.debugId
+      ) {
+        telemetry.rafId = 0;
+        return;
+      }
+
+      if (
+        previous > 0 &&
+        !document.hidden
+      ) {
+        updateLagBucket(
+          telemetry.raf,
+          Math.max(
+            0,
+            timestamp - previous
+          )
+        );
+      }
+
+      previous = timestamp;
+      telemetry.rafId =
+        requestAnimationFrame(frame);
+    };
+
+    state.telemetry.rafId =
+      requestAnimationFrame(frame);
+  }
+
+  function telemetrySample(
+    reason = 'interval'
+  ) {
+    const telemetry = state.telemetry;
+    const current =
+      telemetryCounters();
+    const previous =
+      telemetry.lastCounters ||
+      current;
+
+    telemetry.lastCounters = current;
+
+    const loop =
+      telemetry.loop;
+    const raf =
+      telemetry.raf;
+    const costs =
+      telemetry.costs;
+
+    const sample = {
+      mode:
+        telemetry.debugId
+          ? 'debug'
+          : 'metrics',
+      debugId:
+        telemetry.debugId || '',
+      routeKind:
+        telemetryRouteKind(),
+      reason:
+        String(reason).slice(0, 24),
+      aggressive:
+        state.settings
+          .aggressiveWindowing,
+      streaming:
+        isStreaming(),
+      phaseTwo:
+        state.phaseTwoStarted,
+      uptimeMs:
+        Math.round(
+          performance.now()
+        ),
+      mountedTurns:
+        state.turnCache.length,
+      observerCallbacks:
+        telemetryCounterDelta(
+          current,
+          previous,
+          'observerCallbacks'
+        ),
+      conversationMutations:
+        telemetryCounterDelta(
+          current,
+          previous,
+          'conversationMutations'
+        ),
+      sidebarMutations:
+        telemetryCounterDelta(
+          current,
+          previous,
+          'sidebarMutations'
+        ),
+      turnRefreshes:
+        telemetryCounterDelta(
+          current,
+          previous,
+          'turnRefreshes'
+        ),
+      toolNodesProcessed:
+        telemetryCounterDelta(
+          current,
+          previous,
+          'toolNodesProcessed'
+        ),
+      toolGroups:
+        state.toolCounts.groups,
+      toolCollapsed:
+        state.toolCounts.collapsed,
+      loopCount:
+        loop.count,
+      loopAvgMs:
+        loop.count
+          ? loop.sum / loop.count
+          : 0,
+      loopMaxMs:
+        loop.max,
+      loopGt50:
+        loop.gt50,
+      loopGt100:
+        loop.gt100,
+      loopGt250:
+        loop.gt250,
+      rafCount:
+        raf.count,
+      rafMaxMs:
+        raf.max,
+      rafGt50:
+        raf.gt50,
+      rafGt100:
+        raf.gt100,
+      rafGt250:
+        raf.gt250,
+      conversationObserverMs:
+        costs.conversationObserverMs,
+      sidebarObserverMs:
+        costs.sidebarObserverMs,
+      turnScanMs:
+        costs.turnScanMs,
+      toolProcessMs:
+        costs.toolProcessMs,
+    };
+
+    telemetry.loop =
+      emptyLagBucket();
+    telemetry.raf =
+      emptyLagBucket();
+    telemetry.costs =
+      emptyCostBucket();
+
+    return sample;
+  }
+
+  function queueTelemetrySample(
+    reason = 'interval'
+  ) {
+    if (
+      !state.settings.telemetryEnabled
+    ) {
+      return;
+    }
+
+    const telemetry = state.telemetry;
+
+    telemetry.queue.push(
+      telemetrySample(reason)
+    );
+
+    if (
+      telemetry.queue.length >
+      TELEMETRY_QUEUE_MAX
+    ) {
+      telemetry.queue.splice(
+        0,
+        telemetry.queue.length -
+        TELEMETRY_QUEUE_MAX
+      );
+    }
+
+    if (
+      telemetry.queue.length >=
+      Math.min(
+        4,
+        telemetry.config.maxBatch
+      )
+    ) {
+      flushTelemetry();
+    }
+
+    updateTelemetryUI();
+  }
+
+  function completeTelemetryUpload(
+    ok,
+    batchId,
+    detail = ''
+  ) {
+    const telemetry = state.telemetry;
+    const active =
+      telemetry.activeBatch;
+
+    if (
+      !active ||
+      active.id !== batchId
+    ) {
+      return;
+    }
+
+    clearTimeout(
+      telemetry.uploadTimer
+    );
+    telemetry.uploadTimer = 0;
+
+    if (ok) {
+      telemetry.queue.splice(
+        0,
+        active.count
+      );
+      telemetry.lastUploadAt =
+        Date.now();
+      telemetry.status =
+        telemetry.debugId
+          ? 'debug'
+          : 'metrics';
+      telemetry.lastError = '';
+    } else {
+      telemetry.status = 'error';
+      telemetry.lastError =
+        String(detail || 'upload_failed')
+          .slice(0, 64);
+    }
+
+    telemetry.activeBatch = null;
+    telemetry.uploadInFlight = false;
+    updateTelemetryUI();
+
+    if (
+      ok &&
+      telemetry.queue.length
+    ) {
+      window.setTimeout(
+        () => flushTelemetry(),
+        250
+      );
+    }
+  }
+
+  function nativeTelemetryResult(
+    result
+  ) {
+    if (
+      !result ||
+      result.type !== 'telemetry'
+    ) {
+      return false;
+    }
+
+    completeTelemetryUpload(
+      result.ok === true,
+      String(result.batchId || ''),
+      result.status || ''
+    );
+
+    return true;
+  }
+
+  async function directTelemetryUpload(
+    payload,
+    batchId
+  ) {
+    try {
+      const response = await fetch(
+        TELEMETRY_ENDPOINT,
+        {
+          method: 'POST',
+          mode: 'cors',
+          cache: 'no-store',
+          credentials: 'omit',
+          keepalive: true,
+          headers: {
+            'Content-Type':
+              'application/json',
+            'X-ChatGPT-Web-Telemetry':
+              '1',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      completeTelemetryUpload(
+        response.ok,
+        batchId,
+        'http_' + response.status
+      );
+    } catch (error) {
+      completeTelemetryUpload(
+        false,
+        batchId,
+        error?.name || 'fetch_error'
+      );
+    }
+  }
+
+  function flushTelemetry() {
+    const telemetry = state.telemetry;
+
+    if (
+      !state.settings.telemetryEnabled ||
+      telemetry.uploadInFlight ||
+      telemetry.queue.length === 0
+    ) {
+      return;
+    }
+
+    const count =
+      Math.min(
+        telemetry.queue.length,
+        telemetry.config.maxBatch
+      );
+    const batchId =
+      randomTelemetryId(
+        'b_',
+        6
+      );
+    const samples =
+      telemetry.queue
+        .slice(0, count);
+
+    const payload = {
+      schema: 1,
+      installId:
+        telemetry.installId,
+      sessionId:
+        telemetry.sessionId,
+      scriptVersion:
+        VERSION,
+      appVersion:
+        state.nativeStatus?.appVersion ||
+        '',
+      gestureVersion:
+        state.nativeStatus
+          ?.gestureVersion ||
+        '',
+      samples,
+    };
+
+    telemetry.uploadInFlight = true;
+    telemetry.activeBatch = {
+      id: batchId,
+      count,
+    };
+    telemetry.status = 'uploading';
+
+    const handler =
+      window.webkit?.messageHandlers
+        ?.chatGPTNative;
+
+    if (
+      IS_NATIVE_IOS &&
+      state.nativeStatus
+        ?.telemetryTransport === true &&
+      handler?.postMessage
+    ) {
+      telemetry.transport = 'native';
+
+      handler.postMessage({
+        type: 'telemetry',
+        batchId,
+        payload,
+      });
+
+      telemetry.uploadTimer =
+        window.setTimeout(() => {
+          completeTelemetryUpload(
+            false,
+            batchId,
+            'native_timeout'
+          );
+        }, 15000);
+
+      updateTelemetryUI();
+      return;
+    }
+
+    telemetry.transport = 'fetch';
+    updateTelemetryUI();
+
+    directTelemetryUpload(
+      payload,
+      batchId
+    );
+  }
+
+  function restartTelemetryTimers() {
+    const telemetry = state.telemetry;
+
+    clearInterval(
+      telemetry.sampleTimer
+    );
+    clearInterval(
+      telemetry.flushTimer
+    );
+
+    telemetry.sampleTimer = 0;
+    telemetry.flushTimer = 0;
+
+    if (
+      !state.settings.telemetryEnabled
+    ) {
+      return;
+    }
+
+    telemetry.sampleTimer =
+      window.setInterval(() => {
+        queueTelemetrySample(
+          'interval'
+        );
+      }, telemetry.config.sampleMs);
+
+    telemetry.flushTimer =
+      window.setInterval(() => {
+        flushTelemetry();
+      }, telemetry.config.flushMs);
+
+    startLoopProbe();
+  }
+
+  function stopTelemetryRuntime(
+    clearQueue = false
+  ) {
+    const telemetry = state.telemetry;
+
+    clearInterval(
+      telemetry.sampleTimer
+    );
+    clearInterval(
+      telemetry.flushTimer
+    );
+    clearTimeout(
+      telemetry.loopTimer
+    );
+    clearTimeout(
+      telemetry.debugTimer
+    );
+    clearTimeout(
+      telemetry.uploadTimer
+    );
+
+    telemetry.sampleTimer = 0;
+    telemetry.flushTimer = 0;
+    telemetry.loopTimer = 0;
+    telemetry.debugTimer = 0;
+    telemetry.uploadTimer = 0;
+
+    stopDebugRafProbe();
+
+    telemetry.debugId = '';
+    telemetry.debugUntil = 0;
+    telemetry.status = 'off';
+
+    if (clearQueue) {
+      telemetry.queue = [];
+      telemetry.activeBatch = null;
+      telemetry.uploadInFlight = false;
+    }
+
+    updateTelemetryUI();
+  }
+
+  function startTelemetryRuntime() {
+    if (
+      !state.settings.telemetryEnabled
+    ) {
+      return;
+    }
+
+    const telemetry = state.telemetry;
+
+    telemetry.status =
+      telemetry.debugId
+        ? 'debug'
+        : 'metrics';
+    telemetry.lastCounters =
+      telemetryCounters();
+
+    restartTelemetryTimers();
+    loadTelemetryConfig();
+    queueTelemetrySample(
+      'telemetry_on'
+    );
+    updateTelemetryUI();
+  }
+
+  function setTelemetryEnabled(
+    value
+  ) {
+    state.settings.telemetryEnabled =
+      Boolean(value);
+    saveSettings();
+
+    if (
+      state.ui?.telemetrySwitch
+    ) {
+      state.ui.telemetrySwitch.checked =
+        state.settings.telemetryEnabled;
+    }
+
+    if (
+      state.settings.telemetryEnabled
+    ) {
+      startTelemetryRuntime();
+    } else {
+      stopTelemetryRuntime(true);
+    }
+  }
+
+  function startDebugSession() {
+    if (
+      !state.settings.telemetryEnabled
+    ) {
+      setTelemetryEnabled(true);
+    }
+
+    const telemetry = state.telemetry;
+
+    if (telemetry.debugId) {
+      return telemetry.debugId;
+    }
+
+    telemetry.debugId =
+      randomTelemetryId(
+        'D_',
+        5
+      ).toUpperCase();
+    telemetry.debugUntil =
+      Date.now() +
+      telemetry.config
+        .debugDurationMs;
+    telemetry.status = 'debug';
+
+    startDebugRafProbe();
+    queueTelemetrySample(
+      'debug_start'
+    );
+
+    clearTimeout(
+      telemetry.debugTimer
+    );
+    telemetry.debugTimer =
+      window.setTimeout(() => {
+        stopDebugSession();
+      }, telemetry.config.debugDurationMs);
+
+    updateTelemetryUI();
+
+    return telemetry.debugId;
+  }
+
+  function stopDebugSession() {
+    const telemetry = state.telemetry;
+
+    if (!telemetry.debugId) {
+      return '';
+    }
+
+    const finishedId =
+      telemetry.debugId;
+
+    queueTelemetrySample(
+      'debug_end'
+    );
+    flushTelemetry();
+
+    telemetry.debugId = '';
+    telemetry.debugUntil = 0;
+    telemetry.status = 'metrics';
+
+    clearTimeout(
+      telemetry.debugTimer
+    );
+    telemetry.debugTimer = 0;
+
+    stopDebugRafProbe();
+    updateTelemetryUI();
+
+    return finishedId;
+  }
+
+  function updateTelemetryUI() {
+    const telemetry =
+      state.telemetry;
+    const ui = state.ui;
+
+    if (!ui) return;
+
+    if (ui.telemetrySwitch) {
+      ui.telemetrySwitch.checked =
+        state.settings.telemetryEnabled;
+    }
+
+    if (ui.telemetryInfo) {
+      let text = '关闭';
+
+      if (
+        state.settings.telemetryEnabled
+      ) {
+        if (telemetry.debugId) {
+          text =
+            'DEBUG ' +
+            telemetry.debugId;
+        } else if (
+          telemetry.status === 'error'
+        ) {
+          text = '上传失败';
+        } else if (
+          telemetry.status ===
+            'uploading'
+        ) {
+          text = '上传中';
+        } else {
+          text =
+            'Metrics · ' +
+            (
+              telemetry.transport ===
+                'native'
+                ? 'Native'
+                : telemetry.transport ===
+                    'fetch'
+                  ? 'Fetch'
+                  : '待连接'
+            );
+        }
+      }
+
+      ui.telemetryInfo.textContent =
+        text;
+    }
+
+    if (ui.debugAction) {
+      ui.debugAction.textContent =
+        telemetry.debugId
+          ? '结束性能诊断 · ' +
+            telemetry.debugId
+          : '开始性能诊断';
+    }
   }
 
   function loadSettings() {
@@ -174,6 +1197,8 @@
           shouldApplySafeLoadReset
             ? false
             : stored.aggressiveWindowing === true,
+        telemetryEnabled:
+          stored.telemetryEnabled === true,
       };
     } catch (_) {
       return { ...defaults };
@@ -961,6 +1986,7 @@
 
   function turnCandidates(force = false) {
     const now = performance.now();
+    const scanStarted = now;
 
     if (
       !force &&
@@ -996,6 +2022,11 @@
     state.turnCacheDirty = false;
     state.lastTurnScanAt = now;
     state.metrics.turnRefreshes += 1;
+
+    recordTelemetryCost(
+      'turnScanMs',
+      performance.now() - scanStarted
+    );
 
     return turns;
   }
@@ -1321,12 +2352,18 @@
     }
 
     state.metrics.toolNodesProcessed += 1;
+    const toolStarted =
+      performance.now();
     let changed = false;
 
     const turn =
       ChatGPTDOMAdapter.turnFromNode(node);
 
     if (!(turn instanceof HTMLElement)) {
+      recordTelemetryCost(
+        'toolProcessMs',
+        performance.now() - toolStarted
+      );
       return;
     }
 
@@ -1370,6 +2407,11 @@
     if (changed) {
       updateToolCounts();
     }
+
+    recordTelemetryCost(
+      'toolProcessMs',
+      performance.now() - toolStarted
+    );
   }
 
   function finalizeTrackedToolGroups() {
@@ -1977,6 +3019,8 @@
     const updateInfo =
       makeInfoRow('更新状态');
     const toolInfo = makeInfoRow('工具过程');
+    const telemetryInfo =
+      makeInfoRow('在线诊断');
     const gestureInfo = state.nativeStatus?.gestureVersion
       ? makeInfoRow('iOS 手势')
       : null;
@@ -1986,7 +3030,8 @@
       latestInfo.row,
       appInfo.row,
       updateInfo.row,
-      toolInfo.row
+      toolInfo.row,
+      telemetryInfo.row
     );
     if (gestureInfo) {
       info.append(gestureInfo.row);
@@ -2002,6 +3047,36 @@
     perfSwitch.type = 'checkbox';
     perfSwitch.checked = state.settings.enabled;
     perfRow.append(perfLabel, perfSwitch);
+
+    const telemetryRow =
+      document.createElement('label');
+    telemetryRow.className = 'row';
+    const telemetryLabel =
+      document.createElement('span');
+    telemetryLabel.className = 'label';
+    telemetryLabel.textContent =
+      '匿名性能诊断';
+    const telemetrySwitch =
+      document.createElement('input');
+    telemetrySwitch.className = 'switch';
+    telemetrySwitch.type = 'checkbox';
+    telemetrySwitch.checked =
+      state.settings.telemetryEnabled;
+    telemetryRow.append(
+      telemetryLabel,
+      telemetrySwitch
+    );
+
+    const debugRow =
+      document.createElement('div');
+    debugRow.className = 'row';
+    const debugAction =
+      document.createElement('button');
+    debugAction.type = 'button';
+    debugAction.className = 'action';
+    debugAction.textContent =
+      '开始性能诊断';
+    debugRow.appendChild(debugAction);
 
     const appUpdateRow = document.createElement('div');
     appUpdateRow.className = 'row';
@@ -2065,6 +3140,8 @@
       status,
       info,
       perfRow,
+      telemetryRow,
+      debugRow,
       appUpdateRow,
       updateRow,
       reloadRow,
@@ -2272,6 +3349,26 @@
       scheduleRefresh(0);
     });
 
+    telemetrySwitch.addEventListener(
+      'change',
+      () => {
+        setTelemetryEnabled(
+          telemetrySwitch.checked
+        );
+      }
+    );
+
+    debugAction.addEventListener(
+      'click',
+      () => {
+        if (state.telemetry.debugId) {
+          stopDebugSession();
+        } else {
+          startDebugSession();
+        }
+      }
+    );
+
     appUpdate.addEventListener('click', async () => {
       if (state.nativeStatus?.appUpdateAvailable && state.nativeStatus?.appInstallURL) {
         requestNativeAction('install-app-update', { url: state.nativeStatus.appInstallURL });
@@ -2352,6 +3449,8 @@
       panel,
       status,
       perfSwitch,
+      telemetrySwitch,
+      debugAction,
       update,
       appUpdate,
       clearCache,
@@ -2361,6 +3460,8 @@
       appInfo: appInfo.value,
       updateInfo: updateInfo.value,
       toolInfo: toolInfo.value,
+      telemetryInfo:
+        telemetryInfo.value,
       gestureInfo: gestureInfo?.value || null,
     };
     updateUI(currentTurnCount());
@@ -2632,6 +3733,10 @@
   }
 
   function nativeActionResult(result) {
+    if (nativeTelemetryResult(result)) {
+      return;
+    }
+
     if (
       !result ||
       typeof result !== 'object'
@@ -2808,6 +3913,7 @@
       ui.gestureInfo.textContent =
         'v' + version + ' · ' + label;
     }
+    updateTelemetryUI();
     if (ui.foot) ui.foot.textContent = versionLine();
   }
 
@@ -2914,16 +4020,27 @@
   function handleConversationMutations(
     mutations
   ) {
+    const observerStarted =
+      performance.now();
+
     state.metrics.observerCallbacks += 1;
     state.metrics.conversationMutations +=
       mutations.length;
 
     if (routeChanged()) {
+      recordTelemetryCost(
+        'conversationObserverMs',
+        performance.now() - observerStarted
+      );
       onRoute();
       return;
     }
 
     if (routeIsSettling()) {
+      recordTelemetryCost(
+        'conversationObserverMs',
+        performance.now() - observerStarted
+      );
       scheduleRouteRebind();
       return;
     }
@@ -2958,6 +4075,18 @@
         )
       ) {
         stateRelevant = true;
+      }
+
+      for (const node of mutation.removedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (
+          node.matches?.(TURN_ELEMENT_QUERY) ||
+          node.querySelector?.(TURN_ELEMENT_QUERY)
+        ) {
+          invalidateTurnCache();
+          turnStructureChanged = true;
+          break;
+        }
       }
 
       for (const node of mutation.addedNodes) {
@@ -3002,16 +4131,28 @@
     ) {
       scheduleStateEvaluation();
     }
+
+    recordTelemetryCost(
+      'conversationObserverMs',
+      performance.now() - observerStarted
+    );
   }
 
   function handleSidebarMutations(
     mutations
   ) {
+    const observerStarted =
+      performance.now();
+
     state.metrics.observerCallbacks += 1;
     state.metrics.sidebarMutations +=
       mutations.length;
 
     if (routeChanged()) {
+      recordTelemetryCost(
+        'sidebarObserverMs',
+        performance.now() - observerStarted
+      );
       onRoute();
       return;
     }
@@ -3026,6 +4167,11 @@
         renderConversationStates(node);
       }
     }
+
+    recordTelemetryCost(
+      'sidebarObserverMs',
+      performance.now() - observerStarted
+    );
   }
 
   function bindScopedObservers(
@@ -3236,10 +4382,7 @@
           return;
         }
 
-        bindScopedObservers();
-        finalizeTrackedToolGroups();
         evaluateConversationState();
-        renderConversationStates();
       }, STATUS_INTERVAL_MS);
   }
 
@@ -3261,6 +4404,10 @@
     scheduleRefresh(0);
     evaluateConversationState();
     renderConversationStates();
+
+    if (state.settings.telemetryEnabled) {
+      startTelemetryRuntime();
+    }
   }
 
   function schedulePhaseTwoRuntime() {
@@ -3335,6 +4482,10 @@
       ROUTE_SETTLE_DELAY_MS + 180
     );
     renderConversationStates();
+
+    if (state.settings.telemetryEnabled) {
+      queueTelemetrySample('route');
+    }
   }
 
   function onVisibility() {
@@ -3452,6 +4603,15 @@
         conversationLinks:
           state.conversationLinks.size,
       },
+      telemetry: {
+        enabled: state.settings.telemetryEnabled,
+        status: state.telemetry.status,
+        transport: state.telemetry.transport,
+        queue: state.telemetry.queue.length,
+        debugId: state.telemetry.debugId,
+        configStatus: state.telemetry.configStatus,
+        lastUploadAt: state.telemetry.lastUploadAt,
+      },
       streaming: isStreaming(),
       conversationId:
         currentConversationId(),
@@ -3476,6 +4636,8 @@
   function destroy() {
     if (state.destroyed) return;
     state.destroyed = true;
+
+    stopTelemetryRuntime(true);
 
     clearTimeout(state.refreshTimer);
     clearTimeout(state.stateEvalTimer);
@@ -3546,6 +4708,11 @@
     getState,
     setEnabled,
     setAggressiveWindowing,
+    setTelemetryEnabled,
+    startDebugSession,
+    stopDebugSession,
+    flushTelemetry,
+    nativeTelemetryResult,
     setNativeStatus,
     nativeActionResult,
     toggleNativePanel,
