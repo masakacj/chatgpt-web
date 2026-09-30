@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.3.36
+// @version      0.4.0
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.3.36';
+  const VERSION = '0.4.0';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -30,13 +30,17 @@
     window.__CHATGPT_NATIVE__?.hotUpdate
   );
   const PERF_REFRESH_DELAY_MS =
-    IS_NATIVE_IOS ? 420 : 120;
+    IS_NATIVE_IOS ? 180 : 100;
   const STATUS_INTERVAL_MS =
-    IS_NATIVE_IOS ? 1500 : 600;
+    IS_NATIVE_IOS ? 8000 : 5000;
+  const PHASE_TWO_IDLE_TIMEOUT_MS =
+    IS_NATIVE_IOS ? 1200 : 700;
+  const STATE_EVAL_DEBOUNCE_MS =
+    IS_NATIVE_IOS ? 220 : 120;
   const IOS_KEEP_RECENT_TURNS = 6;
-  const IOS_TOOL_SWEEP_MS = 6500;
   const TURN_CACHE_MAX_AGE_MS =
-    IS_NATIVE_IOS ? 5000 : 3000;
+    IS_NATIVE_IOS ? 30000 : 15000;
+  const DEFAULT_AGGRESSIVE_WINDOWING = false;
   const WINDOW_ROOT_MARGIN =
     IS_NATIVE_IOS
       ? '220% 0px 260% 0px'
@@ -50,6 +54,11 @@
   ];
   const TURN_SELECTOR_QUERY =
     TURN_SELECTORS.join(',');
+  const TURN_ELEMENT_QUERY = [
+    '[data-testid^="conversation-turn-"]',
+    'article[data-scroll-anchor]',
+    '[data-message-author-role]',
+  ].join(',');
 
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
@@ -78,13 +87,22 @@
   const defaults = {
     enabled: true,
     showControl: true,
+    aggressiveWindowing:
+      DEFAULT_AGGRESSIVE_WINDOWING,
   };
 
   const state = {
     settings: loadSettings(),
     destroyed: false,
     observer: null,
+    conversationObserver: null,
+    sidebarObserver: null,
+    conversationRoot: null,
+    sidebarRoot: null,
     refreshTimer: 0,
+    stateEvalTimer: 0,
+    phaseTwoTimer: 0,
+    phaseTwoStarted: false,
     statusTimer: 0,
     updateWatchdogTimer: 0,
     optimizedTurns: new Set(),
@@ -97,8 +115,9 @@
     windowObserver: null,
     toolGroups: new Set(),
     toolRecords: new WeakMap(),
+    processedToolHeadings: new WeakSet(),
     toolCounts: { groups: 0, collapsed: 0 },
-    lastToolSweepAt: 0,
+    conversationLinks: new Map(),
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
     activeRouteSince: Date.now(),
@@ -109,6 +128,18 @@
     ui: null,
     controlResizeHandler: null,
     controlRecoveryTimer: 0,
+    metrics: {
+      phaseTwoStartedAt: 0,
+      observerCallbacks: 0,
+      conversationMutations: 0,
+      sidebarMutations: 0,
+      turnRefreshes: 0,
+      toolNodesProcessed: 0,
+      routeChanges: 0,
+      longTasks: 0,
+      lastLongTaskAt: 0,
+    },
+    longTaskObserver: null,
   };
 
   function clamp(value, min, max) {
@@ -125,7 +156,12 @@
       }
       return {
         enabled: stored.enabled !== false,
-        showControl: shouldRestoreControl ? true : stored.showControl !== false,
+        showControl:
+          shouldRestoreControl
+            ? true
+            : stored.showControl !== false,
+        aggressiveWindowing:
+          stored.aggressiveWindowing === true,
       };
     } catch (_) {
       return { ...defaults };
@@ -286,7 +322,7 @@
 
     state.conversationStates[id] = next;
     persistConversationStates();
-    renderConversationStates();
+    renderConversationStateForId(id);
 
     try {
       state.channel?.postMessage({ type: 'conversation-state', id, record: next });
@@ -330,23 +366,100 @@
 
     state.conversationStates[id] = record;
     persistConversationStates();
-    renderConversationStates();
+    renderConversationStateForId(id);
     updateUI(currentTurnCount());
   }
 
-  function renderConversationStates() {
-    const anchors = document.querySelectorAll('a[href*="/c/"]');
+  function registerConversationLinks(
+    scope = document
+  ) {
+    for (
+      const item of
+        ChatGPTDOMAdapter
+          .conversationItems(scope)
+    ) {
+      const id =
+        ChatGPTDOMAdapter
+          .conversationIdForItem(item);
 
-    for (const anchor of anchors) {
-      if (!(anchor instanceof HTMLAnchorElement)) continue;
-      const id = conversationIdFromHref(anchor.href);
-      const status = id ? state.conversationStates[id]?.status : null;
+      if (!id) continue;
 
-      if (shouldRenderConversationState(id, status)) {
-        anchor.setAttribute('data-cgpt-safari-chat-state', status);
-      } else {
-        anchor.removeAttribute('data-cgpt-safari-chat-state');
+      let links =
+        state.conversationLinks.get(id);
+
+      if (!links) {
+        links = new Set();
+        state.conversationLinks.set(
+          id,
+          links
+        );
       }
+
+      links.add(item);
+    }
+  }
+
+  function renderConversationStateForId(id) {
+    if (!id) return;
+
+    const links =
+      state.conversationLinks.get(id);
+
+    if (!links) return;
+
+    const status =
+      state.conversationStates[id]?.status;
+
+    for (const item of Array.from(links)) {
+      if (
+        !(item instanceof Element) ||
+        !item.isConnected
+      ) {
+        links.delete(item);
+        continue;
+      }
+
+      if (
+        shouldRenderConversationState(
+          id,
+          status
+        )
+      ) {
+        item.setAttribute(
+          'data-cgpt-safari-chat-state',
+          status
+        );
+      } else {
+        item.removeAttribute(
+          'data-cgpt-safari-chat-state'
+        );
+      }
+    }
+
+    if (!links.size) {
+      state.conversationLinks.delete(id);
+    }
+  }
+
+  function renderConversationStates(
+    scope = null
+  ) {
+    if (scope) {
+      registerConversationLinks(scope);
+    } else if (
+      state.conversationLinks.size === 0
+    ) {
+      registerConversationLinks(
+        ChatGPTDOMAdapter.sidebarRoot() ||
+        document
+      );
+    }
+
+    for (
+      const id of
+        state.conversationLinks.keys()
+    ) {
+      renderConversationStateForId(id);
     }
   }
 
@@ -404,6 +517,10 @@
 
     const waiting = hasWaitingUserSignal();
     const running = hasToolOrStreamingSignal();
+
+    if (!waiting && !running) {
+      finalizeTrackedToolGroups();
+    }
 
     if (waiting) {
       state.settlingSince = 0;
@@ -497,6 +614,165 @@
     }
   }
 
+  const ChatGPTDOMAdapter =
+    Object.freeze({
+      conversationRoot() {
+        return (
+          document.querySelector('main') ||
+          document.querySelector(
+            '[role="main"]'
+          )
+        );
+      },
+
+      sidebarRoot() {
+        return (
+          document.querySelector('aside') ||
+          document.querySelector(
+            'nav[aria-label]'
+          ) ||
+          document.querySelector('nav')
+        );
+      },
+
+      mountedTurns() {
+        const root =
+          this.conversationRoot() ||
+          document;
+
+        for (const selector of TURN_SELECTORS) {
+          const localSelector =
+            selector.startsWith('main ')
+              ? selector.slice(5)
+              : selector;
+
+          const nodes =
+            Array.from(
+              root.querySelectorAll(
+                localSelector
+              )
+            ).filter(
+              (node) =>
+                node instanceof HTMLElement &&
+                node.isConnected
+            );
+
+          if (nodes.length) {
+            return nodes;
+          }
+        }
+
+        return [];
+      },
+
+      turnFromNode(node) {
+        if (!(node instanceof Element)) {
+          return null;
+        }
+
+        const primarySelector = [
+          '[data-testid^="conversation-turn-"]',
+          'article[data-scroll-anchor]',
+        ].join(',');
+
+        if (node.matches(primarySelector)) {
+          return node;
+        }
+
+        const primary =
+          node.closest(primarySelector);
+
+        if (primary) return primary;
+
+        if (
+          node.matches(
+            '[data-message-author-role]'
+          )
+        ) {
+          return node;
+        }
+
+        return node.closest(
+          '[data-message-author-role]'
+        );
+      },
+
+      activeTurn() {
+        const turns = turnCandidates();
+        return turns.length
+          ? turns[turns.length - 1]
+          : null;
+      },
+
+      conversationItems(scope) {
+        const root =
+          scope instanceof Element ||
+          scope instanceof Document
+            ? scope
+            : document;
+
+        const result = [];
+
+        if (
+          root instanceof Element &&
+          root.matches(
+            'a[href*="/c/"],' +
+            '[data-conversation-id]'
+          )
+        ) {
+          result.push(root);
+        }
+
+        result.push(
+          ...root.querySelectorAll(
+            'a[href*="/c/"],' +
+            '[data-conversation-id]'
+          )
+        );
+
+        return result;
+      },
+
+      conversationIdForItem(node) {
+        if (!(node instanceof Element)) {
+          return null;
+        }
+
+        const explicit =
+          node.getAttribute(
+            'data-conversation-id'
+          );
+
+        if (explicit) return explicit;
+
+        const href =
+          node instanceof HTMLAnchorElement
+            ? node.href
+            : node.getAttribute('href');
+
+        return href
+          ? conversationIdFromHref(href)
+          : null;
+      },
+
+      streamingSignal() {
+        const root =
+          this.conversationRoot() ||
+          document;
+
+        return Boolean(
+          root.querySelector([
+            '[data-testid="stop-button"]',
+            'button[data-testid*="stop"]',
+            'button[aria-label*="Stop"]',
+            'button[aria-label*="停止"]',
+            'button[aria-label*="Cancel"]',
+            'button[aria-label*="取消"]',
+          ].join(','))
+        );
+      },
+    });
+
   function installStyle() {
     if (document.getElementById(STYLE_ID)) return;
 
@@ -548,12 +824,12 @@
       '  animation: none !important;',
       '  transition: none !important;',
       '}',
-      'a[data-cgpt-safari-chat-state] { position: relative !important; }',
-      'a[data-cgpt-safari-chat-state]::after { content: ""; position: absolute; right: 30px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: none; }',
-      'a[data-cgpt-safari-chat-state="running"]::after { background: #34c759; animation: cgpt-safari-pulse 1.15s ease-in-out infinite; }',
-      'a[data-cgpt-safari-chat-state="waiting_user"]::after { background: #ff9f0a; }',
-      'a[data-cgpt-safari-chat-state="settling"]::after { background: #8e8e93; animation: cgpt-safari-pulse .9s ease-in-out infinite; }',
-      'a[data-cgpt-safari-chat-state="completed_unread"]::after { background: #0a84ff; }',
+      '[data-cgpt-safari-chat-state] { position: relative !important; }',
+      '[data-cgpt-safari-chat-state]::after { content: ""; position: absolute; right: 30px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: none; }',
+      '[data-cgpt-safari-chat-state="running"]::after { background: #34c759; animation: cgpt-safari-pulse 1.15s ease-in-out infinite; }',
+      '[data-cgpt-safari-chat-state="waiting_user"]::after { background: #ff9f0a; }',
+      '[data-cgpt-safari-chat-state="settling"]::after { background: #8e8e93; animation: cgpt-safari-pulse .9s ease-in-out infinite; }',
+      '[data-cgpt-safari-chat-state="completed_unread"]::after { background: #0a84ff; }',
       '@keyframes cgpt-safari-pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
       '@media print {',
       '  #' + HOST_ID + ' { display: none !important; }',
@@ -564,22 +840,8 @@
   }
 
   function collectTurnCandidates() {
-    for (const selector of TURN_SELECTORS) {
-      const nodes =
-        Array.from(
-          document.querySelectorAll(selector)
-        ).filter(
-          (node) =>
-            node instanceof HTMLElement &&
-            node.isConnected
-        );
-
-      if (nodes.length) {
-        return nodes;
-      }
-    }
-
-    return [];
+    return ChatGPTDOMAdapter
+      .mountedTurns();
   }
 
   function turnIdentity(turn) {
@@ -634,6 +896,7 @@
 
             if (
               state.settings.enabled &&
+              state.settings.aggressiveWindowing &&
               canWindowTurn(
                 turn,
                 protectedTurns,
@@ -674,8 +937,13 @@
 
     if (!state.turnSet.has(turn)) {
       state.turnSet.add(turn);
-      ensureWindowObserver();
-      state.windowObserver?.observe(turn);
+
+      if (
+        state.settings.aggressiveWindowing
+      ) {
+        ensureWindowObserver();
+        state.windowObserver?.observe(turn);
+      }
     }
   }
 
@@ -715,6 +983,7 @@
     state.turnCache = turns;
     state.turnCacheDirty = false;
     state.lastTurnScanAt = now;
+    state.metrics.turnRefreshes += 1;
 
     return turns;
   }
@@ -882,40 +1151,6 @@
     return null;
   }
 
-  function findToolGroups(turn) {
-    const headings = Array.from(
-      turn.querySelectorAll(
-        'button,[role="button"],summary,[aria-expanded]'
-      )
-    ).filter((node) => TOOL_GROUP_RE.test(nodeLabel(node)));
-
-    const groups = [];
-
-    for (const heading of headings) {
-      const group = findToolGroupContainer(heading, turn);
-      if (!(group instanceof HTMLElement)) continue;
-      if (
-        groups.some(
-          (existing) =>
-            existing === group ||
-            existing.contains(group)
-        )
-      ) {
-        continue;
-      }
-
-      for (let index = groups.length - 1; index >= 0; index -= 1) {
-        if (group.contains(groups[index])) {
-          groups.splice(index, 1);
-        }
-      }
-
-      groups.push(group);
-    }
-
-    return groups;
-  }
-
   function toolGroupNeedsAttention(group) {
     const nodes = Array.from(
       group.querySelectorAll(
@@ -958,68 +1193,246 @@
     return record.summary;
   }
 
-  function optimizeToolGroups(turns, liveTurn) {
+  function updateToolCounts() {
     let groups = 0;
     let collapsed = 0;
-    const seen = new Set();
 
-    for (const turn of turns) {
-      if (!(turn instanceof HTMLElement)) continue;
-
-      for (const group of findToolGroups(turn)) {
-        if (seen.has(group)) continue;
-        seen.add(group);
-        state.toolGroups.add(group);
-        groups += 1;
-
-        const active =
-          turn === liveTurn ||
-          toolGroupNeedsAttention(group) ||
-          group.matches(':focus-within');
-
-        group.setAttribute('data-cgpt-tool-group', '1');
-
-        if (active) {
-          group.removeAttribute('data-cgpt-tool-collapsed');
-          group.removeAttribute('data-cgpt-tool-summary');
-        } else {
-          group.setAttribute('data-cgpt-tool-collapsed', '1');
-          group.setAttribute(
-            'data-cgpt-tool-summary',
-            toolSummary(group)
-          );
-          collapsed += 1;
-        }
-      }
-    }
-
-    for (const group of Array.from(state.toolGroups)) {
-      if (!group.isConnected) {
+    for (
+      const group of
+        Array.from(state.toolGroups)
+    ) {
+      if (
+        !(group instanceof HTMLElement) ||
+        !group.isConnected
+      ) {
         state.toolGroups.delete(group);
         continue;
       }
 
-      if (!seen.has(group)) {
-        group.removeAttribute('data-cgpt-tool-group');
-        group.removeAttribute('data-cgpt-tool-collapsed');
-        group.removeAttribute('data-cgpt-tool-summary');
-        state.toolGroups.delete(group);
+      groups += 1;
+
+      if (
+        group.hasAttribute(
+          'data-cgpt-tool-collapsed'
+        )
+      ) {
+        collapsed += 1;
       }
     }
 
-    state.toolCounts = { groups, collapsed };
+    state.toolCounts = {
+      groups,
+      collapsed,
+    };
+  }
+
+  function registerToolGroup(
+    group,
+    turn,
+    liveTurn = null
+  ) {
+    if (!(group instanceof HTMLElement)) {
+      return;
+    }
+
+    state.toolGroups.add(group);
+    group.setAttribute(
+      'data-cgpt-tool-group',
+      '1'
+    );
+
+    const active =
+      turn === liveTurn ||
+      toolGroupNeedsAttention(group) ||
+      group.matches(':focus-within');
+
+    if (active) {
+      group.removeAttribute(
+        'data-cgpt-tool-collapsed'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-summary'
+      );
+    } else {
+      group.setAttribute(
+        'data-cgpt-tool-collapsed',
+        '1'
+      );
+      group.setAttribute(
+        'data-cgpt-tool-summary',
+        toolSummary(group)
+      );
+    }
+  }
+
+  function toolHeadingsInScope(scope) {
+    if (!(scope instanceof Element)) {
+      return [];
+    }
+
+    const selector =
+      'button,[role="button"],' +
+      'summary,[aria-expanded]';
+    const result = [];
+
+    if (
+      scope.matches(selector) &&
+      TOOL_GROUP_RE.test(
+        nodeLabel(scope)
+      )
+    ) {
+      result.push(scope);
+    }
+
+    for (
+      const node of
+        scope.querySelectorAll(selector)
+    ) {
+      if (
+        TOOL_GROUP_RE.test(
+          nodeLabel(node)
+        )
+      ) {
+        result.push(node);
+      }
+    }
+
+    return result;
+  }
+
+  function processToolMutationNode(node) {
+    if (
+      !state.settings.enabled ||
+      !(node instanceof Element)
+    ) {
+      return;
+    }
+
+    state.metrics.toolNodesProcessed += 1;
+    let changed = false;
+
+    const turn =
+      ChatGPTDOMAdapter.turnFromNode(node);
+
+    if (!(turn instanceof HTMLElement)) {
+      return;
+    }
+
+    const liveTurn =
+      isStreaming()
+        ? ChatGPTDOMAdapter.activeTurn()
+        : null;
+
+    for (
+      const heading of
+        toolHeadingsInScope(node)
+    ) {
+      if (
+        state.processedToolHeadings
+          .has(heading)
+      ) {
+        continue;
+      }
+
+      const group =
+        findToolGroupContainer(
+          heading,
+          turn
+        );
+
+      if (!(group instanceof HTMLElement)) {
+        continue;
+      }
+
+      state.processedToolHeadings
+        .add(heading);
+
+      registerToolGroup(
+        group,
+        turn,
+        liveTurn
+      );
+      changed = true;
+    }
+
+    if (changed) {
+      updateToolCounts();
+    }
+  }
+
+  function finalizeTrackedToolGroups() {
+    if (!state.settings.enabled) {
+      return;
+    }
+
+    const activeTurn =
+      ChatGPTDOMAdapter.activeTurn();
+
+    if (!(activeTurn instanceof HTMLElement)) {
+      return;
+    }
+
+    const liveTurn =
+      isStreaming()
+        ? activeTurn
+        : null;
+    let changed = false;
+
+    for (
+      const group of
+        Array.from(state.toolGroups)
+    ) {
+      if (
+        !(group instanceof HTMLElement) ||
+        !group.isConnected
+      ) {
+        state.toolGroups.delete(group);
+        changed = true;
+        continue;
+      }
+
+      if (!activeTurn.contains(group)) {
+        continue;
+      }
+
+      registerToolGroup(
+        group,
+        activeTurn,
+        liveTurn
+      );
+      changed = true;
+    }
+
+    if (changed) {
+      updateToolCounts();
+    }
   }
 
   function restoreToolGroups() {
-    for (const group of Array.from(state.toolGroups)) {
-      if (!(group instanceof HTMLElement)) continue;
-      group.removeAttribute('data-cgpt-tool-group');
-      group.removeAttribute('data-cgpt-tool-collapsed');
-      group.removeAttribute('data-cgpt-tool-summary');
+    for (
+      const group of
+        Array.from(state.toolGroups)
+    ) {
+      if (!(group instanceof HTMLElement)) {
+        continue;
+      }
+
+      group.removeAttribute(
+        'data-cgpt-tool-group'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-collapsed'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-summary'
+      );
     }
 
     state.toolGroups.clear();
-    state.toolCounts = { groups: 0, collapsed: 0 };
+    state.toolCounts = {
+      groups: 0,
+      collapsed: 0,
+    };
   }
 
   function restoreOptimizedTurns() {
@@ -1029,26 +1442,15 @@
     ) {
       restoreWindowedTurn(turn);
     }
+
     state.optimizedTurns.clear();
   }
 
-  function applyPerformanceHints() {
-    const turns = turnCandidates();
-
-    if (!state.settings.enabled) {
-      restoreOptimizedTurns();
-      restoreToolGroups();
-      updateUI(turns.length);
-      return;
-    }
-
+  function applyAggressiveWindowing(
+    turns,
+    liveTurn
+  ) {
     ensureWindowObserver();
-
-    const streaming = isStreaming();
-    const liveTurn =
-      streaming && turns.length
-        ? turns[turns.length - 1]
-        : null;
 
     const protectedTurns =
       turns.slice(
@@ -1063,51 +1465,67 @@
       restoreWindowedTurn(liveTurn);
     }
 
-    const activeTurnSet =
-      new Set([
-        ...state.nearTurns,
-        ...protectedTurns,
-      ]);
+    for (const turn of turns) {
+      if (
+        !(turn instanceof HTMLElement) ||
+        protectedTurns.includes(turn) ||
+        turn === liveTurn ||
+        state.nearTurns.has(turn)
+      ) {
+        continue;
+      }
 
-    if (liveTurn) {
-      activeTurnSet.add(liveTurn);
+      const protectedSet =
+        new Set(protectedTurns);
+
+      if (
+        canWindowTurn(
+          turn,
+          protectedSet,
+          liveTurn
+        )
+      ) {
+        windowTurn(turn);
+      }
+    }
+  }
+
+  function applyPerformanceHints() {
+    const turns = turnCandidates();
+
+    if (!state.settings.enabled) {
+      restoreOptimizedTurns();
+      restoreToolGroups();
+      updateUI(turns.length);
+      return;
     }
 
-    const activeTurns =
-      Array.from(activeTurnSet)
-        .filter(
-          (turn) =>
-            turn instanceof HTMLElement &&
-            turn.isConnected &&
-            !turn.hasAttribute(
-              'data-cgpt-windowed'
-            )
-        );
+    const streaming = isStreaming();
+    const liveTurn =
+      streaming && turns.length
+        ? turns[turns.length - 1]
+        : null;
 
-    const now = performance.now();
     if (
-      now - state.lastToolSweepAt >=
-        IOS_TOOL_SWEEP_MS
+      state.settings.aggressiveWindowing
     ) {
-      optimizeToolGroups(
-        activeTurns,
+      applyAggressiveWindowing(
+        turns,
         liveTurn
       );
-      state.lastToolSweepAt = now;
+    } else if (
+      state.optimizedTurns.size > 0
+    ) {
+      restoreOptimizedTurns();
     }
 
+    updateToolCounts();
     updateUI(turns.length);
   }
 
   function isStreaming() {
-    return Boolean(document.querySelector([
-      '[data-testid="stop-button"]',
-      'button[data-testid*="stop"]',
-      'button[aria-label*="Stop"]',
-      'button[aria-label*="停止"]',
-      'button[aria-label*="Cancel"]',
-      'button[aria-label*="取消"]',
-    ].join(',')));
+    return ChatGPTDOMAdapter
+      .streamingSignal();
   }
 
   function scheduleRefresh(
@@ -1117,15 +1535,14 @@
     clearTimeout(state.refreshTimer);
     state.refreshTimer = window.setTimeout(() => {
       if (state.destroyed) return;
-      const route = location.pathname + location.search;
-      if (route !== state.lastRoute) {
-        state.lastRoute = route;
-        restoreOptimizedTurns();
-        restoreToolGroups();
-        state.nearTurns.clear();
-        invalidateTurnCache();
+      if (routeChanged()) {
+        onRoute();
+        return;
       }
-      window.requestAnimationFrame(applyPerformanceHints);
+
+      window.requestAnimationFrame(
+        applyPerformanceHints
+      );
     }, delay);
   }
 
@@ -1546,7 +1963,7 @@
     perfRow.className = 'row';
     const perfLabel = document.createElement('span');
     perfLabel.className = 'label';
-    perfLabel.textContent = '常驻平衡优化';
+    perfLabel.textContent = '低干扰增量优化';
     const perfSwitch = document.createElement('input');
     perfSwitch.className = 'switch';
     perfSwitch.type = 'checkbox';
@@ -1581,986 +1998,5 @@
       document.createElement('div');
     cacheRow.className = 'row';
     const clearCache =
-      document.createElement('button');
-    clearCache.type = 'button';
-    clearCache.className = 'action';
-    clearCache.textContent =
-      '清除网页缓存（保留登录）';
-    cacheRow.appendChild(clearCache);
 
-    const hideRow =
-      document.createElement('div');
-    hideRow.className = 'row';
-    const hide =
-      document.createElement('button');
-    hide.type = 'button';
-    hide.className = 'action';
-    hide.textContent = '隐藏悬浮按钮';
-    hideRow.appendChild(hide);
-
-    const foot = document.createElement('div');
-    foot.className = 'foot';
-    foot.textContent = versionLine();
-
-    panel.append(
-      title,
-      status,
-      info,
-      perfRow,
-      updateRow,
-      reloadRow,
-      restoreRow
-    );
-
-    if (IS_NATIVE_IOS) {
-      panel.append(cacheRow);
-    } else {
-      panel.append(hideRow);
-    }
-
-    panel.append(foot);
-
-    if (usingNativeAnchor) {
-      shadow.append(style, panel);
-    } else {
-      wrap.append(button, panel);
-      shadow.append(style, wrap);
-
-      window.requestAnimationFrame(() => {
-        restoreControlPosition(host);
-
-        const rect =
-          host.getBoundingClientRect();
-
-        host.dataset.panelSide =
-          rect.left + rect.width / 2 <
-          window.innerWidth / 2
-            ? 'left'
-            : 'right';
-
-        host.dataset.panelVertical =
-          rect.top + rect.height / 2 >
-          window.innerHeight / 2
-            ? 'up'
-            : 'down';
-      });
-
-      const onControlResize = () => {
-        const rect =
-          host.getBoundingClientRect();
-
-        positionControlHost(
-          host,
-          rect.left,
-          rect.top
-        );
-      };
-
-      state.controlResizeHandler =
-        onControlResize;
-
-      window.addEventListener(
-        'resize',
-        onControlResize,
-        { passive: true }
-      );
-    }
-
-    document.body.appendChild(host);
-
-    const drag = {
-      active: false,
-      moved: false,
-      pointerId: null,
-      startX: 0,
-      startY: 0,
-      startLeft: 0,
-      startTop: 0,
-      suppressClickUntil: 0,
-    };
-
-    button.addEventListener(
-      'pointerdown',
-      (event) => {
-        if (
-          event.button !== undefined &&
-          event.button !== 0
-        ) {
-          return;
-        }
-
-        const rect =
-          host.getBoundingClientRect();
-
-        drag.active = true;
-        drag.moved = false;
-        drag.pointerId = event.pointerId;
-        drag.startX = event.clientX;
-        drag.startY = event.clientY;
-        drag.startLeft = rect.left;
-        drag.startTop = rect.top;
-
-        try {
-          button.setPointerCapture?.(
-            event.pointerId
-          );
-        } catch (_) {}
-      }
-    );
-
-    button.addEventListener(
-      'pointermove',
-      (event) => {
-        if (
-          !drag.active ||
-          event.pointerId !==
-            drag.pointerId
-        ) {
-          return;
-        }
-
-        const dx =
-          event.clientX - drag.startX;
-        const dy =
-          event.clientY - drag.startY;
-
-        if (
-          !drag.moved &&
-          Math.hypot(dx, dy) < 6
-        ) {
-          return;
-        }
-
-        drag.moved = true;
-        panel.classList.remove('open');
-
-        positionControlHost(
-          host,
-          drag.startLeft + dx,
-          drag.startTop + dy
-        );
-
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    );
-
-    function finishControlDrag(event) {
-      if (
-        !drag.active ||
-        (
-          event?.pointerId !== undefined &&
-          event.pointerId !==
-            drag.pointerId
-        )
-      ) {
-        return;
-      }
-
-      if (drag.moved) {
-        saveControlPosition(host);
-        drag.suppressClickUntil =
-          performance.now() + 350;
-      }
-
-      try {
-        button.releasePointerCapture?.(
-          drag.pointerId
-        );
-      } catch (_) {}
-
-      drag.active = false;
-      drag.pointerId = null;
-    }
-
-    button.addEventListener(
-      'pointerup',
-      finishControlDrag
-    );
-    button.addEventListener(
-      'pointercancel',
-      finishControlDrag
-    );
-
-    button.addEventListener('click', () => {
-      if (
-        performance.now() <
-        drag.suppressClickUntil
-      ) {
-        return;
-      }
-
-      const opening = !panel.classList.contains('open');
-      panel.classList.toggle('open');
-
-      if (opening) {
-        state.nativeStatus = {
-          ...state.nativeStatus,
-          ...(window.__CHATGPT_NATIVE__ || {}),
-        };
-        requestNativeUpdateCheck();
-        scheduleRefresh(0);
-        evaluateConversationState();
-        renderConversationStates();
-        updateUI(currentTurnCount());
-      }
-    });
-
-    perfSwitch.addEventListener('change', () => {
-      state.settings.enabled = perfSwitch.checked;
-      saveSettings();
-      scheduleRefresh(0);
-    });
-
-    update.addEventListener('click', () => {
-      requestNativeUpdateCheck();
-      updateUI(currentTurnCount());
-    });
-
-    reload.addEventListener(
-      'click',
-      () => location.reload()
-    );
-
-    clearCache.addEventListener(
-      'click',
-      () => {
-        clearCache.disabled = true;
-        clearCache.style.opacity = '.55';
-        clearCache.textContent =
-          '清理中…';
-
-        if (
-          !requestNativeAction(
-            'clear-cache'
-          )
-        ) {
-          clearCache.disabled = false;
-          clearCache.style.opacity = '1';
-          clearCache.textContent =
-            '清除失败 · 重试';
-        }
-      }
-    );
-
-    restore.addEventListener('click', () => {
-      state.settings.enabled = false;
-      perfSwitch.checked = false;
-      saveSettings();
-      restoreOptimizedTurns();
-      updateUI(currentTurnCount());
-      panel.classList.remove('open');
-      panel.setAttribute(
-        'aria-hidden',
-        'true'
-      );
-    });
-
-    hide.addEventListener('click', () => {
-      if (IS_NATIVE_IOS) return;
-
-      state.settings.showControl = false;
-      saveSettings();
-
-      if (state.controlResizeHandler) {
-        window.removeEventListener(
-          'resize',
-          state.controlResizeHandler
-        );
-        state.controlResizeHandler = null;
-      }
-
-      host.remove();
-      state.ui = null;
-    });
-
-    state.ui = {
-      host,
-      button,
-      panel,
-      status,
-      perfSwitch,
-      update,
-      clearCache,
-      foot,
-      scriptInfo: scriptInfo.value,
-      latestInfo: latestInfo.value,
-      appInfo: appInfo.value,
-      updateInfo: updateInfo.value,
-      toolInfo: toolInfo.value,
-      gestureInfo: gestureInfo?.value || null,
-    };
-    updateUI(currentTurnCount());
-  }
-
-  function positionNativePanel(
-    anchor
-  ) {
-    const panel = state.ui?.panel;
-
-    if (
-      !(panel instanceof HTMLElement) ||
-      !anchor
-    ) {
-      return;
-    }
-
-    const padding = 8;
-    const gap = 8;
-    const viewportWidth =
-      Math.max(window.innerWidth, 1);
-    const viewportHeight =
-      Math.max(window.innerHeight, 1);
-
-    panel.style.position = 'fixed';
-    panel.style.right = 'auto';
-    panel.style.bottom = 'auto';
-    panel.style.visibility = 'hidden';
-
-    const rect =
-      panel.getBoundingClientRect();
-
-    const anchorLeft =
-      Number(anchor.left) || 0;
-    const anchorTop =
-      Number(anchor.top) || 0;
-    const anchorRight =
-      Number(anchor.right) ||
-      anchorLeft +
-        (Number(anchor.width) || 44);
-    const anchorBottom =
-      Number(anchor.bottom) ||
-      anchorTop +
-        (Number(anchor.height) || 44);
-
-    const preferRight =
-      anchorLeft +
-        (anchorRight - anchorLeft) / 2 <
-      viewportWidth / 2;
-
-    let left =
-      preferRight
-        ? anchorRight + gap
-        : anchorLeft -
-          rect.width -
-          gap;
-
-    left = clamp(
-      left,
-      padding,
-      Math.max(
-        padding,
-        viewportWidth -
-          rect.width -
-          padding
-      )
-    );
-
-    let top = anchorTop;
-
-    if (
-      top + rect.height >
-      viewportHeight - padding
-    ) {
-      top =
-        anchorBottom -
-        rect.height;
-    }
-
-    top = clamp(
-      top,
-      padding,
-      Math.max(
-        padding,
-        viewportHeight -
-          rect.height -
-          padding
-      )
-    );
-
-    panel.style.left = left + 'px';
-    panel.style.top = top + 'px';
-    panel.style.visibility = 'visible';
-  }
-
-  function nativePanelRenderState() {
-    const panel = state.ui?.panel;
-
-    if (!(panel instanceof HTMLElement)) {
-      return {
-        ok: false,
-        open: false,
-        ready: false,
-      };
-    }
-
-    const open =
-      panel.classList.contains('open');
-    const style =
-      window.getComputedStyle(panel);
-    const rect =
-      panel.getBoundingClientRect();
-
-    const visible =
-      open &&
-      style.display !== 'none' &&
-      style.visibility !== 'hidden' &&
-      Number.parseFloat(
-        style.opacity || '1'
-      ) > 0 &&
-      rect.width > 120 &&
-      rect.height > 80 &&
-      rect.right > 0 &&
-      rect.bottom > 0 &&
-      rect.left < window.innerWidth &&
-      rect.top < window.innerHeight;
-
-    const interactive =
-      style.pointerEvents !== 'none';
-
-    const hasCurrent =
-      Boolean(
-        state.ui?.scriptInfo?.isConnected
-      );
-    const hasLatest =
-      Boolean(
-        state.ui?.latestInfo?.isConnected
-      );
-    const hasCache =
-      Boolean(
-        state.ui?.clearCache?.isConnected
-      );
-
-    return {
-      ok: true,
-      open,
-      ready:
-        visible &&
-        interactive &&
-        hasCurrent &&
-        hasLatest &&
-        hasCache,
-      visible,
-      interactive,
-      hasCurrent,
-      hasLatest,
-      hasCache,
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-    };
-  }
-
-  function toggleNativePanel(anchor) {
-    if (!nativeAnchorSupported()) {
-      return {
-        ok: false,
-        open: false,
-        ready: false,
-      };
-    }
-
-    ensureControlMounted();
-
-    const panel = state.ui?.panel;
-
-    if (!(panel instanceof HTMLElement)) {
-      return {
-        ok: false,
-        open: false,
-        ready: false,
-      };
-    }
-
-    const opening =
-      !panel.classList.contains('open');
-
-    if (!opening) {
-      panel.classList.remove('open');
-      panel.setAttribute(
-        'aria-hidden',
-        'true'
-      );
-
-      return {
-        ok: true,
-        open: false,
-        ready: true,
-      };
-    }
-
-    panel.classList.add('open');
-    panel.setAttribute(
-      'aria-hidden',
-      'false'
-    );
-
-    positionNativePanel(anchor);
-
-    state.nativeStatus = {
-      ...state.nativeStatus,
-      ...(window.__CHATGPT_NATIVE__ || {}),
-    };
-
-    updateUI(currentTurnCount());
-    requestNativeUpdateCheck();
-    scheduleRefresh(0);
-    evaluateConversationState();
-    renderConversationStates();
-
-    return nativePanelRenderState();
-  }
-
-  function closeNativePanel() {
-    const panel = state.ui?.panel;
-    panel?.classList.remove('open');
-    panel?.setAttribute(
-      'aria-hidden',
-      'true'
-    );
-    return true;
-  }
-
-  function makeInfoRow(label) {
-    const row = document.createElement('div');
-    row.className = 'info-row';
-
-    const key = document.createElement('span');
-    key.className = 'info-key';
-    key.textContent = label;
-
-    const value = document.createElement('span');
-    value.className = 'info-value';
-
-    row.append(key, value);
-    return { row, value };
-  }
-
-  function updateStatusLabel() {
-    const status = String(state.nativeStatus?.updateStatus || '');
-    switch (status) {
-      case 'checking': return '检查更新中';
-      case 'latest': return '已是最新';
-      case 'updated': return '已热更';
-      case 'cached': return '缓存版';
-      case 'bundled': return '内置版';
-      case 'offline': return '离线 · 使用本地版';
-      case 'error': return '更新检查失败';
-      case 'timeout': return '检查超时 · 使用当前版本';
-      default: return state.nativeStatus?.hotUpdate ? '热更已启用' : '自动更新';
-    }
-  }
-
-  function versionLine() {
-    const appVersion = state.nativeStatus?.appVersion;
-    if (appVersion) {
-      return '脚本 v' + VERSION + ' · IPA ' + appVersion + ' · ' + updateStatusLabel();
-    }
-    return '脚本 v' + VERSION + ' · PC / iOS 同一脚本';
-  }
-
-  function nativeActionResult(result) {
-    if (
-      !result ||
-      typeof result !== 'object'
-    ) {
-      return;
-    }
-
-    if (
-      result.type === 'clear-cache' &&
-      state.ui?.clearCache
-    ) {
-      const button =
-        state.ui.clearCache;
-
-      button.disabled = false;
-      button.style.opacity = '1';
-      button.textContent =
-        result.ok
-          ? '缓存已清除'
-          : '清除失败 · 重试';
-
-      window.setTimeout(() => {
-        if (
-          !state.destroyed &&
-          button.isConnected
-        ) {
-          button.textContent =
-            '清除网页缓存（保留登录）';
-        }
-      }, 1800);
-    }
-  }
-
-  function setNativeStatus(next) {
-    if (!next || typeof next !== 'object') return;
-    state.nativeStatus = { ...state.nativeStatus, ...next };
-    window.__CHATGPT_NATIVE__ = { ...(window.__CHATGPT_NATIVE__ || {}), ...next };
-    if (state.ui?.foot) {
-      state.ui.foot.textContent =
-        versionLine();
-    }
-
-    if (
-      IS_NATIVE_IOS &&
-      !document.getElementById(HOST_ID)
-    ) {
-      scheduleControlRecovery(0);
-    }
-
-    updateUI(currentTurnCount());
-  }
-
-  function updateUI(turnCount) {
-    const ui = state.ui;
-    if (!ui) return;
-
-    const id = currentConversationId();
-    const chatStatus = id ? state.conversationStates[id]?.status : null;
-    const mode = state.settings.enabled ? '常驻优化' : '官方原生';
-
-    if (chatStatus && chatStatus !== 'completed_read') {
-      ui.button.dataset.chatState = chatStatus;
-    } else {
-      delete ui.button.dataset.chatState;
-    }
-
-    ui.status.textContent =
-      mode + ' · ' +
-      turnCount + ' 轮 · 已优化 ' +
-      state.optimizedTurns.size + ' 轮 · ' +
-      statusLabel(chatStatus) +
-      (state.toolCounts.collapsed > 0
-        ? ' · 工具折叠 ' + state.toolCounts.collapsed
-        : '');
-
-    if (ui.scriptInfo) {
-      ui.scriptInfo.textContent =
-        'v' + VERSION;
-    }
-
-    if (ui.latestInfo) {
-      const checking =
-        String(
-          state.nativeStatus?.updateStatus ||
-          ''
-        ) === 'checking';
-
-      const latest =
-        state.nativeStatus
-          ?.latestScriptVersion ||
-        state.nativeStatus
-          ?.scriptVersion ||
-        VERSION;
-
-      ui.latestInfo.textContent =
-        checking
-          ? '检查中…'
-          : 'v' + latest;
-    }
-
-    if (ui.appInfo) {
-      ui.appInfo.textContent = state.nativeStatus?.appVersion
-        ? 'v' + state.nativeStatus.appVersion
-        : '浏览器';
-    }
-    if (ui.updateInfo) {
-      ui.updateInfo.textContent = updateStatusLabel();
-    }
-
-    if (ui.update) {
-      const updateStatus = String(
-        state.nativeStatus?.updateStatus || ''
-      );
-
-      const failed = [
-        'offline',
-        'timeout',
-        'error',
-      ].includes(updateStatus);
-
-      const checking = updateStatus === 'checking';
-
-      ui.update.disabled = checking;
-      ui.update.style.opacity = checking ? '.5' : '1';
-      ui.update.textContent =
-        checking ? '检查更新中…' :
-        failed ? '重试更新' :
-        ['latest', 'updated'].includes(updateStatus)
-          ? '再次检查更新'
-          : '检查更新';
-    }
-    if (ui.toolInfo) {
-      ui.toolInfo.textContent =
-        state.toolCounts.groups > 0
-          ? state.toolCounts.collapsed + ' / ' +
-            state.toolCounts.groups + ' 已折叠'
-          : '无';
-    }
-    if (ui.gestureInfo) {
-      const version = state.nativeStatus?.gestureVersion || '未知';
-      const status = String(
-        state.nativeStatus?.gestureUpdateStatus || ''
-      );
-      const label =
-        status === 'checking' ? '检查中' :
-        status === 'updated' ? '已热更' :
-        status === 'latest' ? '已是最新' :
-        status === 'offline' ? '离线' :
-        status === 'timeout' ? '检查超时' :
-        status === 'cached' ? '缓存版' :
-        status === 'bundled' ? '内置版' :
-        '已启用';
-      ui.gestureInfo.textContent =
-        'v' + version + ' · ' + label;
-    }
-    if (ui.foot) ui.foot.textContent = versionLine();
-  }
-
-  function setupObservers() {
-    state.observer = new MutationObserver(
-      (mutations) => {
-        if (
-          IS_NATIVE_IOS &&
-          !document.getElementById(HOST_ID)
-        ) {
-          scheduleControlRecovery(40);
-        }
-
-        let relevant = !IS_NATIVE_IOS;
-        let turnStructureChanged = false;
-
-        for (const mutation of mutations) {
-          for (const node of mutation.addedNodes) {
-            if (!(node instanceof Element)) {
-              continue;
-            }
-
-            if (
-              node.matches?.(
-                TURN_SELECTOR_QUERY
-              ) ||
-              node.querySelector?.(
-                TURN_SELECTOR_QUERY
-              )
-            ) {
-              turnStructureChanged = true;
-              relevant = true;
-              break;
-            }
-          }
-
-          if (turnStructureChanged) {
-            break;
-          }
-
-          if (IS_NATIVE_IOS) {
-            const target =
-              mutation.target instanceof Element
-                ? mutation.target
-                : mutation.target?.parentElement;
-
-            if (
-              target?.closest?.(
-                'main,aside,nav,' +
-                TURN_SELECTOR_QUERY
-              )
-            ) {
-              relevant = true;
-            }
-          }
-        }
-
-        if (!relevant) return;
-
-        if (turnStructureChanged) {
-          invalidateTurnCache();
-        }
-
-        scheduleRefresh(
-          turnStructureChanged
-            ? 120
-            : (IS_NATIVE_IOS ? 520 : 220)
-        );
-
-        if (!IS_NATIVE_IOS) {
-          evaluateConversationState();
-          renderConversationStates();
-        }
-      }
-    );
-
-    state.observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
-
-    window.addEventListener('popstate', onRoute, { passive: true });
-    window.addEventListener('hashchange', onRoute, { passive: true });
-    document.addEventListener('visibilitychange', onVisibility, { passive: true });
-
-    state.statusTimer = window.setInterval(() => {
-      if (!state.destroyed) {
-        if (
-          IS_NATIVE_IOS &&
-          !document.getElementById(HOST_ID)
-        ) {
-          scheduleControlRecovery(0);
-        }
-
-        evaluateConversationState();
-        renderConversationStates();
-      }
-    }, STATUS_INTERVAL_MS);
-  }
-
-  function onRoute() {
-    state.activeConversationId = null;
-    state.activeRouteSince = Date.now();
-    state.settlingSince = 0;
-    restoreOptimizedTurns();
-    restoreToolGroups();
-    state.nearTurns.clear();
-    invalidateTurnCache();
-    scheduleRefresh(0);
-    evaluateConversationState();
-    renderConversationStates();
-  }
-
-  function onVisibility() {
-    if (!document.hidden) {
-      if (
-        IS_NATIVE_IOS &&
-        !document.getElementById(HOST_ID)
-      ) {
-        scheduleControlRecovery(0);
-      }
-
-      scheduleRefresh(0);
-      evaluateConversationState();
-      renderConversationStates();
-    }
-  }
-
-  function showControl() {
-    state.settings.showControl = true;
-    saveSettings();
-    createControl();
-  }
-
-  function setEnabled(value) {
-    state.settings.enabled = Boolean(value);
-    saveSettings();
-    if (state.ui) state.ui.perfSwitch.checked = state.settings.enabled;
-    scheduleRefresh(0);
-  }
-
-  function getState() {
-    const turns = turnCandidates();
-    return {
-      version: VERSION,
-      enabled: state.settings.enabled,
-      turns: turns.length,
-      optimizedTurns: state.optimizedTurns.size,
-      windowing: {
-        cachedTurns: state.turnCache.length,
-        nearTurns: state.nearTurns.size,
-        windowedTurns:
-          state.optimizedTurns.size,
-        observer:
-          Boolean(state.windowObserver),
-      },
-      toolGroups: { ...state.toolCounts },
-      streaming: isStreaming(),
-      conversationId: currentConversationId(),
-      conversationStatus: currentConversationId()
-        ? state.conversationStates[currentConversationId()]?.status || null
-        : null,
-      conversationStates: { ...state.conversationStates },
-      nativeStatus: { ...state.nativeStatus },
-      route: location.pathname + location.search,
-    };
-  }
-
-  function destroy() {
-    if (state.destroyed) return;
-    state.destroyed = true;
-
-    clearTimeout(state.refreshTimer);
-    clearTimeout(state.updateWatchdogTimer);
-    clearTimeout(state.controlRecoveryTimer);
-    clearInterval(state.statusTimer);
-    state.observer?.disconnect();
-    state.windowObserver?.disconnect();
-    state.windowObserver = null;
-
-    if (state.controlResizeHandler) {
-      window.removeEventListener(
-        'resize',
-        state.controlResizeHandler
-      );
-      state.controlResizeHandler = null;
-    }
-
-    window.removeEventListener('popstate', onRoute);
-    window.removeEventListener('hashchange', onRoute);
-    document.removeEventListener('visibilitychange', onVisibility);
-    window.removeEventListener('storage', onStorageSync);
-    try { state.channel?.close?.(); } catch (_) {}
-
-    restoreOptimizedTurns();
-    restoreToolGroups();
-    state.nearTurns.clear();
-    state.turnSet.clear();
-    state.turnCache = [];
-    for (const anchor of document.querySelectorAll('[data-cgpt-safari-chat-state]')) {
-      anchor.removeAttribute('data-cgpt-safari-chat-state');
-    }
-    document.getElementById(STYLE_ID)?.remove();
-    document.getElementById(HOST_ID)?.remove();
-    state.ui = null;
-
-    try {
-      delete window[GLOBAL_KEY];
-      delete window[LEGACY_GLOBAL_KEY];
-    } catch (_) {
-      window[GLOBAL_KEY] = undefined;
-      window[LEGACY_GLOBAL_KEY] = undefined;
-    }
-  }
-
-  const api = {
-    version: VERSION,
-    getState,
-    setEnabled,
-    setNativeStatus,
-    nativeActionResult,
-    toggleNativePanel,
-    closeNativePanel,
-    requestNativeUpdateCheck,
-    showControl,
-    refresh: () => scheduleRefresh(0),
-    destroy,
-  };
-
-  window[GLOBAL_KEY] = api;
-  window[LEGACY_GLOBAL_KEY] = api;
-
-  installStyle();
-  setupConversationStateSync();
-  setupObservers();
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      createControl();
-      scheduleRefresh(0);
-      evaluateConversationState();
-      renderConversationStates();
-    }, { once: true });
-  } else {
-    createControl();
-    scheduleRefresh(0);
-    evaluateConversationState();
-    renderConversationStates();
-  }
-})();
+[Showing lines 1-2000 of 3444. Use offset=2001 to continue.]

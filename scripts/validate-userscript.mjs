@@ -82,18 +82,28 @@ requireText(
 );
 requireText(
   shared,
+  'const ChatGPTDOMAdapter =',
+  'central ChatGPT DOM adapter'
+);
+requireText(
+  shared,
+  'DEFAULT_AGGRESSIVE_WINDOWING = false',
+  'safe default with second virtualization disabled'
+);
+requireText(
+  shared,
+  'function applyAggressiveWindowing(',
+  'optional aggressive windowing fallback'
+);
+requireText(
+  shared,
   'new IntersectionObserver(',
-  'viewport-driven long-chat windowing'
+  'experimental aggressive windowing observer'
 );
 requireText(
   shared,
   'data-cgpt-windowed',
-  'windowed historical turn marker'
-);
-requireText(
-  shared,
-  '--cgpt-window-height',
-  'preserved historical turn geometry'
+  'experimental windowed turn marker'
 );
 requireText(
   shared,
@@ -112,8 +122,43 @@ requireText(
 );
 requireText(
   shared,
-  "perfLabel.textContent = '常驻平衡优化';",
-  'always-on control label'
+  "perfLabel.textContent = '低干扰增量优化';",
+  'low-interference optimization label'
+);
+requireText(
+  shared,
+  'function bindScopedObservers(',
+  'scoped conversation/sidebar observers'
+);
+requireText(
+  shared,
+  'state.conversationObserver.observe(',
+  'conversation-root observer'
+);
+requireText(
+  shared,
+  'state.sidebarObserver.observe(',
+  'sidebar-root observer'
+);
+requireText(
+  shared,
+  'function processToolMutationNode(node)',
+  'incremental tool processing'
+);
+requireText(
+  shared,
+  'function scheduleStateEvaluation(',
+  'debounced event-driven state evaluation'
+);
+requireText(
+  shared,
+  'function schedulePhaseTwoRuntime()',
+  'two-phase startup'
+);
+requireText(
+  shared,
+  'window.requestIdleCallback',
+  'idle-delayed heavy runtime startup'
 );
 requireText(
   shared,
@@ -302,8 +347,18 @@ requireText(
 );
 requireText(
   shared,
-  'optimizeToolGroups(\n        activeTurns,\n        liveTurn\n      )',
-  'viewport-scoped tool compaction'
+  'finalizeTrackedToolGroups();',
+  'incremental tool finalization'
+);
+requireText(
+  shared,
+  'conversationLinks: new Map()',
+  'indexed sidebar conversation links'
+);
+requireText(
+  shared,
+  'diagnostics: {',
+  'runtime diagnostic state'
 );
 
 for (const status of [
@@ -331,6 +386,8 @@ const sharedForbidden = [
   ['minTurns', 'length-gated optimization'],
   ['keepRecent', 'legacy recent-turn threshold'],
   ['nodes.some((other, otherIndex)', 'quadratic turn containment scan'],
+  ['state.observer.observe(document.documentElement', 'global documentElement subtree observer'],
+  ['IOS_TOOL_SWEEP_MS', 'periodic whole-thread tool sweep'],
   ['replaceChildren(', 'DOM replacement'],
   ['.innerHTML =', 'innerHTML replacement'],
   [".removeAttribute('src')", 'media source unloading'],
