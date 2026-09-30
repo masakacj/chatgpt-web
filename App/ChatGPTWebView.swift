@@ -1096,6 +1096,21 @@ struct ChatGPTWebView: UIViewRepresentable {
             case "check-update":
                 startHotUpdate()
 
+            case "install-app-update":
+                if
+                    let raw = body["url"] as? String,
+                    let url = URL(string: raw),
+                    url.scheme == "itms-services"
+                {
+                    DispatchQueue.main.async {
+                        UIApplication.shared.open(
+                            url,
+                            options: [:],
+                            completionHandler: nil
+                        )
+                    }
+                }
+
             case "clear-cache":
                 clearWebCacheKeepingLogin()
 
