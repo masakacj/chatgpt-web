@@ -1998,5 +1998,1446 @@
       document.createElement('div');
     cacheRow.className = 'row';
     const clearCache =
+      document.createElement('button');
+    clearCache.type = 'button';
+    clearCache.className = 'action';
+    clearCache.textContent =
+      '清除网页缓存（保留登录）';
+    cacheRow.appendChild(clearCache);
 
-[Showing lines 1-2000 of 3444. Use offset=2001 to continue.]
+    const hideRow =
+      document.createElement('div');
+    hideRow.className = 'row';
+    const hide =
+      document.createElement('button');
+    hide.type = 'button';
+    hide.className = 'action';
+    hide.textContent = '隐藏悬浮按钮';
+    hideRow.appendChild(hide);
+
+    const foot = document.createElement('div');
+    foot.className = 'foot';
+    foot.textContent = versionLine();
+
+    panel.append(
+      title,
+      status,
+      info,
+      perfRow,
+      updateRow,
+      reloadRow,
+      restoreRow
+    );
+
+    if (IS_NATIVE_IOS) {
+      panel.append(cacheRow);
+    } else {
+      panel.append(hideRow);
+    }
+
+    panel.append(foot);
+
+    if (usingNativeAnchor) {
+      shadow.append(style, panel);
+    } else {
+      wrap.append(button, panel);
+      shadow.append(style, wrap);
+
+      window.requestAnimationFrame(() => {
+        restoreControlPosition(host);
+
+        const rect =
+          host.getBoundingClientRect();
+
+        host.dataset.panelSide =
+          rect.left + rect.width / 2 <
+          window.innerWidth / 2
+            ? 'left'
+            : 'right';
+
+        host.dataset.panelVertical =
+          rect.top + rect.height / 2 >
+          window.innerHeight / 2
+            ? 'up'
+            : 'down';
+      });
+
+      const onControlResize = () => {
+        const rect =
+          host.getBoundingClientRect();
+
+        positionControlHost(
+          host,
+          rect.left,
+          rect.top
+        );
+      };
+
+      state.controlResizeHandler =
+        onControlResize;
+
+      window.addEventListener(
+        'resize',
+        onControlResize,
+        { passive: true }
+      );
+    }
+
+    document.body.appendChild(host);
+
+    const drag = {
+      active: false,
+      moved: false,
+      pointerId: null,
+      startX: 0,
+      startY: 0,
+      startLeft: 0,
+      startTop: 0,
+      suppressClickUntil: 0,
+    };
+
+    button.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (
+          event.button !== undefined &&
+          event.button !== 0
+        ) {
+          return;
+        }
+
+        const rect =
+          host.getBoundingClientRect();
+
+        drag.active = true;
+        drag.moved = false;
+        drag.pointerId = event.pointerId;
+        drag.startX = event.clientX;
+        drag.startY = event.clientY;
+        drag.startLeft = rect.left;
+        drag.startTop = rect.top;
+
+        try {
+          button.setPointerCapture?.(
+            event.pointerId
+          );
+        } catch (_) {}
+      }
+    );
+
+    button.addEventListener(
+      'pointermove',
+      (event) => {
+        if (
+          !drag.active ||
+          event.pointerId !==
+            drag.pointerId
+        ) {
+          return;
+        }
+
+        const dx =
+          event.clientX - drag.startX;
+        const dy =
+          event.clientY - drag.startY;
+
+        if (
+          !drag.moved &&
+          Math.hypot(dx, dy) < 6
+        ) {
+          return;
+        }
+
+        drag.moved = true;
+        panel.classList.remove('open');
+
+        positionControlHost(
+          host,
+          drag.startLeft + dx,
+          drag.startTop + dy
+        );
+
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    );
+
+    function finishControlDrag(event) {
+      if (
+        !drag.active ||
+        (
+          event?.pointerId !== undefined &&
+          event.pointerId !==
+            drag.pointerId
+        )
+      ) {
+        return;
+      }
+
+      if (drag.moved) {
+        saveControlPosition(host);
+        drag.suppressClickUntil =
+          performance.now() + 350;
+      }
+
+      try {
+        button.releasePointerCapture?.(
+          drag.pointerId
+        );
+      } catch (_) {}
+
+      drag.active = false;
+      drag.pointerId = null;
+    }
+
+    button.addEventListener(
+      'pointerup',
+      finishControlDrag
+    );
+    button.addEventListener(
+      'pointercancel',
+      finishControlDrag
+    );
+
+    button.addEventListener('click', () => {
+      if (
+        performance.now() <
+        drag.suppressClickUntil
+      ) {
+        return;
+      }
+
+      const opening = !panel.classList.contains('open');
+      panel.classList.toggle('open');
+
+      if (opening) {
+        state.nativeStatus = {
+          ...state.nativeStatus,
+          ...(window.__CHATGPT_NATIVE__ || {}),
+        };
+        requestNativeUpdateCheck();
+        scheduleRefresh(0);
+        evaluateConversationState();
+        renderConversationStates();
+        updateUI(currentTurnCount());
+      }
+    });
+
+    perfSwitch.addEventListener('change', () => {
+      state.settings.enabled = perfSwitch.checked;
+      saveSettings();
+      scheduleRefresh(0);
+    });
+
+    update.addEventListener('click', () => {
+      requestNativeUpdateCheck();
+      updateUI(currentTurnCount());
+    });
+
+    reload.addEventListener(
+      'click',
+      () => location.reload()
+    );
+
+    clearCache.addEventListener(
+      'click',
+      () => {
+        clearCache.disabled = true;
+        clearCache.style.opacity = '.55';
+        clearCache.textContent =
+          '清理中…';
+
+        if (
+          !requestNativeAction(
+            'clear-cache'
+          )
+        ) {
+          clearCache.disabled = false;
+          clearCache.style.opacity = '1';
+          clearCache.textContent =
+            '清除失败 · 重试';
+        }
+      }
+    );
+
+    restore.addEventListener('click', () => {
+      state.settings.enabled = false;
+      perfSwitch.checked = false;
+      saveSettings();
+      restoreOptimizedTurns();
+      updateUI(currentTurnCount());
+      panel.classList.remove('open');
+      panel.setAttribute(
+        'aria-hidden',
+        'true'
+      );
+    });
+
+    hide.addEventListener('click', () => {
+      if (IS_NATIVE_IOS) return;
+
+      state.settings.showControl = false;
+      saveSettings();
+
+      if (state.controlResizeHandler) {
+        window.removeEventListener(
+          'resize',
+          state.controlResizeHandler
+        );
+        state.controlResizeHandler = null;
+      }
+
+      host.remove();
+      state.ui = null;
+    });
+
+    state.ui = {
+      host,
+      button,
+      panel,
+      status,
+      perfSwitch,
+      update,
+      clearCache,
+      foot,
+      scriptInfo: scriptInfo.value,
+      latestInfo: latestInfo.value,
+      appInfo: appInfo.value,
+      updateInfo: updateInfo.value,
+      toolInfo: toolInfo.value,
+      gestureInfo: gestureInfo?.value || null,
+    };
+    updateUI(currentTurnCount());
+  }
+
+  function positionNativePanel(
+    anchor
+  ) {
+    const panel = state.ui?.panel;
+
+    if (
+      !(panel instanceof HTMLElement) ||
+      !anchor
+    ) {
+      return;
+    }
+
+    const padding = 8;
+    const gap = 8;
+    const viewportWidth =
+      Math.max(window.innerWidth, 1);
+    const viewportHeight =
+      Math.max(window.innerHeight, 1);
+
+    panel.style.position = 'fixed';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel.style.visibility = 'hidden';
+
+    const rect =
+      panel.getBoundingClientRect();
+
+    const anchorLeft =
+      Number(anchor.left) || 0;
+    const anchorTop =
+      Number(anchor.top) || 0;
+    const anchorRight =
+      Number(anchor.right) ||
+      anchorLeft +
+        (Number(anchor.width) || 44);
+    const anchorBottom =
+      Number(anchor.bottom) ||
+      anchorTop +
+        (Number(anchor.height) || 44);
+
+    const preferRight =
+      anchorLeft +
+        (anchorRight - anchorLeft) / 2 <
+      viewportWidth / 2;
+
+    let left =
+      preferRight
+        ? anchorRight + gap
+        : anchorLeft -
+          rect.width -
+          gap;
+
+    left = clamp(
+      left,
+      padding,
+      Math.max(
+        padding,
+        viewportWidth -
+          rect.width -
+          padding
+      )
+    );
+
+    let top = anchorTop;
+
+    if (
+      top + rect.height >
+      viewportHeight - padding
+    ) {
+      top =
+        anchorBottom -
+        rect.height;
+    }
+
+    top = clamp(
+      top,
+      padding,
+      Math.max(
+        padding,
+        viewportHeight -
+          rect.height -
+          padding
+      )
+    );
+
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+    panel.style.visibility = 'visible';
+  }
+
+  function nativePanelRenderState() {
+    const panel = state.ui?.panel;
+
+    if (!(panel instanceof HTMLElement)) {
+      return {
+        ok: false,
+        open: false,
+        ready: false,
+      };
+    }
+
+    const open =
+      panel.classList.contains('open');
+    const style =
+      window.getComputedStyle(panel);
+    const rect =
+      panel.getBoundingClientRect();
+
+    const visible =
+      open &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      Number.parseFloat(
+        style.opacity || '1'
+      ) > 0 &&
+      rect.width > 120 &&
+      rect.height > 80 &&
+      rect.right > 0 &&
+      rect.bottom > 0 &&
+      rect.left < window.innerWidth &&
+      rect.top < window.innerHeight;
+
+    const interactive =
+      style.pointerEvents !== 'none';
+
+    const hasCurrent =
+      Boolean(
+        state.ui?.scriptInfo?.isConnected
+      );
+    const hasLatest =
+      Boolean(
+        state.ui?.latestInfo?.isConnected
+      );
+    const hasCache =
+      Boolean(
+        state.ui?.clearCache?.isConnected
+      );
+
+    return {
+      ok: true,
+      open,
+      ready:
+        visible &&
+        interactive &&
+        hasCurrent &&
+        hasLatest &&
+        hasCache,
+      visible,
+      interactive,
+      hasCurrent,
+      hasLatest,
+      hasCache,
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  }
+
+  function toggleNativePanel(anchor) {
+    if (!nativeAnchorSupported()) {
+      return {
+        ok: false,
+        open: false,
+        ready: false,
+      };
+    }
+
+    ensureControlMounted();
+
+    const panel = state.ui?.panel;
+
+    if (!(panel instanceof HTMLElement)) {
+      return {
+        ok: false,
+        open: false,
+        ready: false,
+      };
+    }
+
+    const opening =
+      !panel.classList.contains('open');
+
+    if (!opening) {
+      panel.classList.remove('open');
+      panel.setAttribute(
+        'aria-hidden',
+        'true'
+      );
+
+      return {
+        ok: true,
+        open: false,
+        ready: true,
+      };
+    }
+
+    panel.classList.add('open');
+    panel.setAttribute(
+      'aria-hidden',
+      'false'
+    );
+
+    positionNativePanel(anchor);
+
+    state.nativeStatus = {
+      ...state.nativeStatus,
+      ...(window.__CHATGPT_NATIVE__ || {}),
+    };
+
+    updateUI(currentTurnCount());
+    requestNativeUpdateCheck();
+    scheduleRefresh(0);
+    evaluateConversationState();
+    renderConversationStates();
+
+    return nativePanelRenderState();
+  }
+
+  function closeNativePanel() {
+    const panel = state.ui?.panel;
+    panel?.classList.remove('open');
+    panel?.setAttribute(
+      'aria-hidden',
+      'true'
+    );
+    return true;
+  }
+
+  function makeInfoRow(label) {
+    const row = document.createElement('div');
+    row.className = 'info-row';
+
+    const key = document.createElement('span');
+    key.className = 'info-key';
+    key.textContent = label;
+
+    const value = document.createElement('span');
+    value.className = 'info-value';
+
+    row.append(key, value);
+    return { row, value };
+  }
+
+  function updateStatusLabel() {
+    const status = String(state.nativeStatus?.updateStatus || '');
+    switch (status) {
+      case 'checking': return '检查更新中';
+      case 'latest': return '已是最新';
+      case 'updated': return '已热更';
+      case 'cached': return '缓存版';
+      case 'bundled': return '内置版';
+      case 'offline': return '离线 · 使用本地版';
+      case 'error': return '更新检查失败';
+      case 'timeout': return '检查超时 · 使用当前版本';
+      default: return state.nativeStatus?.hotUpdate ? '热更已启用' : '自动更新';
+    }
+  }
+
+  function versionLine() {
+    const appVersion = state.nativeStatus?.appVersion;
+    if (appVersion) {
+      return '脚本 v' + VERSION + ' · IPA ' + appVersion + ' · ' + updateStatusLabel();
+    }
+    return '脚本 v' + VERSION + ' · PC / iOS 同一脚本';
+  }
+
+  function nativeActionResult(result) {
+    if (
+      !result ||
+      typeof result !== 'object'
+    ) {
+      return;
+    }
+
+    if (
+      result.type === 'clear-cache' &&
+      state.ui?.clearCache
+    ) {
+      const button =
+        state.ui.clearCache;
+
+      button.disabled = false;
+      button.style.opacity = '1';
+      button.textContent =
+        result.ok
+          ? '缓存已清除'
+          : '清除失败 · 重试';
+
+      window.setTimeout(() => {
+        if (
+          !state.destroyed &&
+          button.isConnected
+        ) {
+          button.textContent =
+            '清除网页缓存（保留登录）';
+        }
+      }, 1800);
+    }
+  }
+
+  function setNativeStatus(next) {
+    if (!next || typeof next !== 'object') return;
+    state.nativeStatus = { ...state.nativeStatus, ...next };
+    window.__CHATGPT_NATIVE__ = { ...(window.__CHATGPT_NATIVE__ || {}), ...next };
+    if (state.ui?.foot) {
+      state.ui.foot.textContent =
+        versionLine();
+    }
+
+    if (
+      IS_NATIVE_IOS &&
+      !document.getElementById(HOST_ID)
+    ) {
+      scheduleControlRecovery(0);
+    }
+
+    updateUI(currentTurnCount());
+  }
+
+  function updateUI(turnCount) {
+    const ui = state.ui;
+    if (!ui) return;
+
+    const id = currentConversationId();
+    const chatStatus = id ? state.conversationStates[id]?.status : null;
+    const mode =
+      !state.settings.enabled
+        ? '官方原生'
+        : state.settings.aggressiveWindowing
+          ? '激进窗口'
+          : '增量低干扰';
+
+    if (chatStatus && chatStatus !== 'completed_read') {
+      ui.button.dataset.chatState = chatStatus;
+    } else {
+      delete ui.button.dataset.chatState;
+    }
+
+    ui.status.textContent =
+      mode + ' · ' +
+      turnCount + ' 轮 · ' +
+      statusLabel(chatStatus) +
+      (state.toolCounts.collapsed > 0
+        ? ' · 工具折叠 ' +
+          state.toolCounts.collapsed
+        : '') +
+      (state.settings.aggressiveWindowing
+        ? ' · 窗口 ' +
+          state.optimizedTurns.size
+        : '');
+
+    if (ui.scriptInfo) {
+      ui.scriptInfo.textContent =
+        'v' + VERSION;
+    }
+
+    if (ui.latestInfo) {
+      const checking =
+        String(
+          state.nativeStatus?.updateStatus ||
+          ''
+        ) === 'checking';
+
+      const latest =
+        state.nativeStatus
+          ?.latestScriptVersion ||
+        state.nativeStatus
+          ?.scriptVersion ||
+        VERSION;
+
+      ui.latestInfo.textContent =
+        checking
+          ? '检查中…'
+          : 'v' + latest;
+    }
+
+    if (ui.appInfo) {
+      ui.appInfo.textContent = state.nativeStatus?.appVersion
+        ? 'v' + state.nativeStatus.appVersion
+        : '浏览器';
+    }
+    if (ui.updateInfo) {
+      ui.updateInfo.textContent = updateStatusLabel();
+    }
+
+    if (ui.update) {
+      const updateStatus = String(
+        state.nativeStatus?.updateStatus || ''
+      );
+
+      const failed = [
+        'offline',
+        'timeout',
+        'error',
+      ].includes(updateStatus);
+
+      const checking = updateStatus === 'checking';
+
+      ui.update.disabled = checking;
+      ui.update.style.opacity = checking ? '.5' : '1';
+      ui.update.textContent =
+        checking ? '检查更新中…' :
+        failed ? '重试更新' :
+        ['latest', 'updated'].includes(updateStatus)
+          ? '再次检查更新'
+          : '检查更新';
+    }
+    if (ui.toolInfo) {
+      ui.toolInfo.textContent =
+        state.toolCounts.groups > 0
+          ? state.toolCounts.collapsed + ' / ' +
+            state.toolCounts.groups + ' 已折叠'
+          : '无';
+    }
+    if (ui.gestureInfo) {
+      const version = state.nativeStatus?.gestureVersion || '未知';
+      const status = String(
+        state.nativeStatus?.gestureUpdateStatus || ''
+      );
+      const label =
+        status === 'checking' ? '检查中' :
+        status === 'updated' ? '已热更' :
+        status === 'latest' ? '已是最新' :
+        status === 'offline' ? '离线' :
+        status === 'timeout' ? '检查超时' :
+        status === 'cached' ? '缓存版' :
+        status === 'bundled' ? '内置版' :
+        '已启用';
+      ui.gestureInfo.textContent =
+        'v' + version + ' · ' + label;
+    }
+    if (ui.foot) ui.foot.textContent = versionLine();
+  }
+
+  function scheduleStateEvaluation(
+    delay = STATE_EVAL_DEBOUNCE_MS
+  ) {
+    if (state.destroyed) return;
+
+    clearTimeout(state.stateEvalTimer);
+
+    state.stateEvalTimer =
+      window.setTimeout(() => {
+        state.stateEvalTimer = 0;
+
+        if (!state.destroyed) {
+          evaluateConversationState();
+        }
+      }, delay);
+  }
+
+  function registerTurnsFromScope(scope) {
+    if (!(scope instanceof Element)) {
+      return false;
+    }
+
+    const turns = [];
+
+    if (scope.matches(TURN_ELEMENT_QUERY)) {
+      turns.push(scope);
+    }
+
+    turns.push(
+      ...scope.querySelectorAll(
+        TURN_ELEMENT_QUERY
+      )
+    );
+
+    let found = false;
+
+    for (const turn of turns) {
+      if (!(turn instanceof HTMLElement)) {
+        continue;
+      }
+
+      registerTurn(turn);
+      processToolMutationNode(turn);
+      found = true;
+    }
+
+    if (found) {
+      invalidateTurnCache();
+    }
+
+    return found;
+  }
+
+  function routeChanged() {
+    return (
+      location.pathname +
+      location.search
+    ) !== state.lastRoute;
+  }
+
+  function handleConversationMutations(
+    mutations
+  ) {
+    state.metrics.observerCallbacks += 1;
+    state.metrics.conversationMutations +=
+      mutations.length;
+
+    if (routeChanged()) {
+      onRoute();
+      return;
+    }
+
+    let turnStructureChanged = false;
+
+    const activeRecord =
+      state.activeConversationId
+        ? state.conversationStates[
+            state.activeConversationId
+          ]
+        : null;
+
+    let stateRelevant = Boolean(
+      activeRecord &&
+      (
+        activeRecord.status === 'running' ||
+        activeRecord.status === 'waiting_user' ||
+        activeRecord.status === 'settling'
+      )
+    );
+
+    for (const mutation of mutations) {
+      const target =
+        mutation.target instanceof Element
+          ? mutation.target
+          : mutation.target?.parentElement;
+
+      if (
+        target?.closest?.(
+          TURN_ELEMENT_QUERY
+        )
+      ) {
+        stateRelevant = true;
+      }
+
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) {
+          continue;
+        }
+
+        if (
+          registerTurnsFromScope(node)
+        ) {
+          turnStructureChanged = true;
+        }
+
+        processToolMutationNode(node);
+
+        if (
+          node.matches?.(
+            '[aria-busy="true"],' +
+            '[role="progressbar"],' +
+            '[data-state="loading"],' +
+            '[data-loading="true"],' +
+            '[data-testid="stop-button"]'
+          ) ||
+          node.querySelector?.(
+            '[aria-busy="true"],' +
+            '[role="progressbar"],' +
+            '[data-state="loading"],' +
+            '[data-loading="true"],' +
+            '[data-testid="stop-button"]'
+          )
+        ) {
+          stateRelevant = true;
+        }
+      }
+    }
+
+    if (turnStructureChanged) {
+      scheduleRefresh(80);
+    }
+
+    if (
+      stateRelevant ||
+      turnStructureChanged
+    ) {
+      scheduleStateEvaluation();
+    }
+  }
+
+  function handleSidebarMutations(
+    mutations
+  ) {
+    state.metrics.observerCallbacks += 1;
+    state.metrics.sidebarMutations +=
+      mutations.length;
+
+    if (routeChanged()) {
+      onRoute();
+      return;
+    }
+
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) {
+          continue;
+        }
+
+        registerConversationLinks(node);
+        renderConversationStates(node);
+      }
+    }
+  }
+
+  function bindScopedObservers(
+    force = false
+  ) {
+    const conversationRoot =
+      ChatGPTDOMAdapter.conversationRoot();
+
+    if (
+      force ||
+      conversationRoot !==
+        state.conversationRoot
+    ) {
+      state.conversationObserver
+        ?.disconnect();
+
+      state.conversationRoot =
+        conversationRoot;
+      state.conversationObserver = null;
+
+      if (conversationRoot) {
+        state.conversationObserver =
+          new MutationObserver(
+            handleConversationMutations
+          );
+
+        state.conversationObserver.observe(
+          conversationRoot,
+          {
+            childList: true,
+            subtree: true,
+          }
+        );
+
+        invalidateTurnCache();
+        turnCandidates(true);
+
+        const activeTurn =
+          ChatGPTDOMAdapter.activeTurn();
+
+        if (activeTurn) {
+          processToolMutationNode(
+            activeTurn
+          );
+        }
+      }
+    }
+
+    const sidebarRoot =
+      ChatGPTDOMAdapter.sidebarRoot();
+
+    if (
+      force ||
+      sidebarRoot !==
+        state.sidebarRoot
+    ) {
+      state.sidebarObserver?.disconnect();
+
+      state.sidebarRoot = sidebarRoot;
+      state.sidebarObserver = null;
+      state.conversationLinks.clear();
+
+      if (sidebarRoot) {
+        state.sidebarObserver =
+          new MutationObserver(
+            handleSidebarMutations
+          );
+
+        state.sidebarObserver.observe(
+          sidebarRoot,
+          {
+            childList: true,
+            subtree: true,
+          }
+        );
+
+        registerConversationLinks(
+          sidebarRoot
+        );
+        renderConversationStates();
+      }
+    }
+  }
+
+  function setupPerformanceDiagnostics() {
+    if (
+      typeof PerformanceObserver !==
+        'function'
+    ) {
+      return;
+    }
+
+    try {
+      const supported =
+        PerformanceObserver
+          .supportedEntryTypes || [];
+
+      if (!supported.includes('longtask')) {
+        return;
+      }
+
+      state.longTaskObserver =
+        new PerformanceObserver(
+          (list) => {
+            const entries =
+              list.getEntries();
+
+            state.metrics.longTasks +=
+              entries.length;
+
+            if (entries.length) {
+              state.metrics.lastLongTaskAt =
+                Date.now();
+            }
+          }
+        );
+
+      state.longTaskObserver.observe({
+        type: 'longtask',
+        buffered: true,
+      });
+    } catch (_) {
+      state.longTaskObserver = null;
+    }
+  }
+
+  function setupObservers() {
+    bindScopedObservers(true);
+    setupPerformanceDiagnostics();
+
+    const root =
+      document.body ||
+      document.documentElement;
+
+    state.observer =
+      new MutationObserver(() => {
+        state.metrics.observerCallbacks += 1;
+
+        if (
+          IS_NATIVE_IOS &&
+          !document.getElementById(HOST_ID)
+        ) {
+          scheduleControlRecovery(40);
+        }
+
+        if (
+          routeChanged() ||
+          ChatGPTDOMAdapter
+            .conversationRoot() !==
+            state.conversationRoot ||
+          ChatGPTDOMAdapter.sidebarRoot() !==
+            state.sidebarRoot
+        ) {
+          bindScopedObservers();
+        }
+      });
+
+    state.observer.observe(root, {
+      childList: true,
+      subtree: false,
+    });
+
+    window.addEventListener(
+      'popstate',
+      onRoute,
+      { passive: true }
+    );
+    window.addEventListener(
+      'hashchange',
+      onRoute,
+      { passive: true }
+    );
+    document.addEventListener(
+      'visibilitychange',
+      onVisibility,
+      { passive: true }
+    );
+
+    if (
+      IS_NATIVE_IOS &&
+      !document.getElementById(HOST_ID)
+    ) {
+      scheduleControlRecovery(0);
+    }
+
+    state.statusTimer =
+      window.setInterval(() => {
+        if (state.destroyed) return;
+
+        if (
+          IS_NATIVE_IOS &&
+          !document.getElementById(HOST_ID)
+        ) {
+          scheduleControlRecovery(0);
+        }
+
+        if (routeChanged()) {
+          onRoute();
+          return;
+        }
+
+        bindScopedObservers();
+        finalizeTrackedToolGroups();
+        evaluateConversationState();
+        renderConversationStates();
+      }, STATUS_INTERVAL_MS);
+  }
+
+  function startPhaseTwoRuntime() {
+    if (
+      state.destroyed ||
+      state.phaseTwoStarted
+    ) {
+      return;
+    }
+
+    state.phaseTwoStarted = true;
+    state.metrics.phaseTwoStartedAt =
+      Date.now();
+
+    setupObservers();
+    invalidateTurnCache();
+    turnCandidates(true);
+    scheduleRefresh(0);
+    evaluateConversationState();
+    renderConversationStates();
+  }
+
+  function schedulePhaseTwoRuntime() {
+    if (
+      state.destroyed ||
+      state.phaseTwoStarted
+    ) {
+      return;
+    }
+
+    const start = () => {
+      if (!state.destroyed) {
+        startPhaseTwoRuntime();
+      }
+    };
+
+    if (
+      typeof window.requestIdleCallback ===
+        'function'
+    ) {
+      window.requestIdleCallback(
+        start,
+        {
+          timeout:
+            PHASE_TWO_IDLE_TIMEOUT_MS,
+        }
+      );
+      return;
+    }
+
+    clearTimeout(state.phaseTwoTimer);
+    state.phaseTwoTimer =
+      window.setTimeout(
+        start,
+        IS_NATIVE_IOS ? 420 : 220
+      );
+  }
+
+  function onRoute() {
+    state.metrics.routeChanges += 1;
+    state.lastRoute =
+      location.pathname +
+      location.search;
+    state.activeConversationId = null;
+    state.activeRouteSince = Date.now();
+    state.settlingSince = 0;
+
+    restoreOptimizedTurns();
+    restoreToolGroups();
+    state.nearTurns.clear();
+    state.conversationLinks.clear();
+    invalidateTurnCache();
+
+    if (state.phaseTwoStarted) {
+      bindScopedObservers(true);
+    }
+
+    scheduleRefresh(0);
+    scheduleStateEvaluation(0);
+    renderConversationStates();
+  }
+
+  function onVisibility() {
+    if (!document.hidden) {
+      if (
+        IS_NATIVE_IOS &&
+        !document.getElementById(HOST_ID)
+      ) {
+        scheduleControlRecovery(0);
+      }
+
+      if (state.phaseTwoStarted) {
+        bindScopedObservers();
+      }
+
+      scheduleRefresh(0);
+      scheduleStateEvaluation(0);
+      renderConversationStates();
+    }
+  }
+
+  function showControl() {
+    state.settings.showControl = true;
+    saveSettings();
+    createControl();
+  }
+
+  function setEnabled(value) {
+    state.settings.enabled =
+      Boolean(value);
+    saveSettings();
+
+    if (state.ui) {
+      state.ui.perfSwitch.checked =
+        state.settings.enabled;
+    }
+
+    if (!state.settings.enabled) {
+      restoreOptimizedTurns();
+      restoreToolGroups();
+    }
+
+    scheduleRefresh(0);
+  }
+
+  function setAggressiveWindowing(
+    value
+  ) {
+    state.settings.aggressiveWindowing =
+      Boolean(value);
+    saveSettings();
+
+    if (
+      !state.settings.aggressiveWindowing
+    ) {
+      restoreOptimizedTurns();
+      state.windowObserver?.disconnect();
+      state.windowObserver = null;
+      state.nearTurns.clear();
+    } else {
+      invalidateTurnCache();
+      ensureWindowObserver();
+
+      for (
+        const turn of
+          turnCandidates(true)
+      ) {
+        state.windowObserver?.observe(
+          turn
+        );
+      }
+    }
+
+    scheduleRefresh(0);
+  }
+
+  function getState() {
+    const turns = turnCandidates();
+    return {
+      version: VERSION,
+      enabled: state.settings.enabled,
+      turns: turns.length,
+      mountedTurns: turns.length,
+      adapter: {
+        conversationRoot:
+          Boolean(
+            ChatGPTDOMAdapter
+              .conversationRoot()
+          ),
+        sidebarRoot:
+          Boolean(
+            ChatGPTDOMAdapter.sidebarRoot()
+          ),
+      },
+      windowing: {
+        aggressive:
+          state.settings
+            .aggressiveWindowing,
+        cachedTurns:
+          state.turnCache.length,
+        nearTurns:
+          state.nearTurns.size,
+        windowedTurns:
+          state.optimizedTurns.size,
+        observer:
+          Boolean(state.windowObserver),
+      },
+      toolGroups: {
+        ...state.toolCounts,
+      },
+      diagnostics: {
+        ...state.metrics,
+        phaseTwoStarted:
+          state.phaseTwoStarted,
+        conversationLinks:
+          state.conversationLinks.size,
+      },
+      streaming: isStreaming(),
+      conversationId:
+        currentConversationId(),
+      conversationStatus:
+        currentConversationId()
+          ? state.conversationStates[
+              currentConversationId()
+            ]?.status || null
+          : null,
+      conversationStates: {
+        ...state.conversationStates,
+      },
+      nativeStatus: {
+        ...state.nativeStatus,
+      },
+      route:
+        location.pathname +
+        location.search,
+    };
+  }
+
+  function destroy() {
+    if (state.destroyed) return;
+    state.destroyed = true;
+
+    clearTimeout(state.refreshTimer);
+    clearTimeout(state.stateEvalTimer);
+    clearTimeout(state.phaseTwoTimer);
+    clearTimeout(state.updateWatchdogTimer);
+    clearTimeout(state.controlRecoveryTimer);
+    clearInterval(state.statusTimer);
+
+    state.observer?.disconnect();
+    state.conversationObserver?.disconnect();
+    state.sidebarObserver?.disconnect();
+    state.windowObserver?.disconnect();
+    state.longTaskObserver?.disconnect();
+
+    state.observer = null;
+    state.conversationObserver = null;
+    state.sidebarObserver = null;
+    state.windowObserver = null;
+    state.longTaskObserver = null;
+
+    if (state.controlResizeHandler) {
+      window.removeEventListener(
+        'resize',
+        state.controlResizeHandler
+      );
+      state.controlResizeHandler = null;
+    }
+
+    window.removeEventListener('popstate', onRoute);
+    window.removeEventListener('hashchange', onRoute);
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('storage', onStorageSync);
+    try { state.channel?.close?.(); } catch (_) {}
+
+    restoreOptimizedTurns();
+    restoreToolGroups();
+    state.nearTurns.clear();
+    state.turnSet.clear();
+    state.turnCache = [];
+    state.conversationLinks.clear();
+
+    for (
+      const item of
+        document.querySelectorAll(
+          '[data-cgpt-safari-chat-state]'
+        )
+    ) {
+      item.removeAttribute(
+        'data-cgpt-safari-chat-state'
+      );
+    }
+    document.getElementById(STYLE_ID)?.remove();
+    document.getElementById(HOST_ID)?.remove();
+    state.ui = null;
+
+    try {
+      delete window[GLOBAL_KEY];
+      delete window[LEGACY_GLOBAL_KEY];
+    } catch (_) {
+      window[GLOBAL_KEY] = undefined;
+      window[LEGACY_GLOBAL_KEY] = undefined;
+    }
+  }
+
+  const api = {
+    version: VERSION,
+    getState,
+    setEnabled,
+    setAggressiveWindowing,
+    setNativeStatus,
+    nativeActionResult,
+    toggleNativePanel,
+    closeNativePanel,
+    requestNativeUpdateCheck,
+    showControl,
+    refresh: () => scheduleRefresh(0),
+    destroy,
+  };
+
+  window[GLOBAL_KEY] = api;
+  window[LEGACY_GLOBAL_KEY] = api;
+
+  installStyle();
+  setupConversationStateSync();
+
+  if (document.readyState === 'loading') {
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        createControl();
+        schedulePhaseTwoRuntime();
+      },
+      { once: true }
+    );
+  } else {
+    createControl();
+    schedulePhaseTwoRuntime();
+  }
+})();
