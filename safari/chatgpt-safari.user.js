@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.4
+// @version      0.4.5
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.4';
+  const VERSION = '0.4.5';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1009,7 +1009,7 @@
     telemetry.status =
       telemetry.debugId
         ? 'debug'
-        : 'metrics';
+        : 'connecting';
     telemetry.lastCounters =
       telemetryCounters();
 
@@ -1018,6 +1018,7 @@
     queueTelemetrySample(
       'telemetry_on'
     );
+    flushTelemetry();
     updateTelemetryUI();
   }
 
@@ -1147,18 +1148,13 @@
             'uploading'
         ) {
           text = '上传中';
+        } else if (
+          telemetry.status ===
+            'connecting'
+        ) {
+          text = '连接中';
         } else {
-          text =
-            'Metrics · ' +
-            (
-              telemetry.transport ===
-                'native'
-                ? 'Native'
-                : telemetry.transport ===
-                    'fetch'
-                  ? 'Fetch'
-                  : '待连接'
-            );
+          text = '采集中';
         }
       }
 
