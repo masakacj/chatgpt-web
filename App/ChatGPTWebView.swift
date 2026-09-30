@@ -474,6 +474,12 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
+                if self.externalWebView != nil {
+                    self.closeScriptPanel()
+                    self.toggleExternalBrowserMenu()
+                    return
+                }
+
                 let currentState =
                     control.accessibilityValue ??
                     ""
@@ -1829,7 +1835,160 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
         }
 
-        private func collapseExternalBrowserMenu() {
+        
+        private func ensureExternalBrowserMenu() {
+            guard
+                browserMenuView == nil,
+                let rootView
+            else {
+                return
+            }
+
+            let blur =
+                UIBlurEffect(
+                    style: .systemMaterialDark
+                )
+            let menu =
+                UIVisualEffectView(
+                    effect: blur
+                )
+
+            menu.frame = CGRect(
+                x: 0,
+                y: 0,
+                width: 196,
+                height: 50
+            )
+            menu.layer.cornerRadius = 14
+            menu.clipsToBounds = true
+            menu.isHidden = true
+
+            let stack = UIStackView()
+            stack.axis = .horizontal
+            stack.alignment = .fill
+            stack.distribution = .fillEqually
+            stack.spacing = 0
+            stack.frame = menu.bounds
+            stack.autoresizingMask = [
+                .flexibleWidth,
+                .flexibleHeight
+            ]
+
+            let back =
+                makeBrowserActionButton(
+                    systemName:
+                        "chevron.backward",
+                    accessibilityLabel:
+                        "后退",
+                    action:
+                        #selector(browserBack)
+                )
+
+            let forward =
+                makeBrowserActionButton(
+                    systemName:
+                        "chevron.forward",
+                    accessibilityLabel:
+                        "前进",
+                    action:
+                        #selector(browserForward)
+                )
+
+            let reload =
+                makeBrowserActionButton(
+                    systemName:
+                        "arrow.clockwise",
+                    accessibilityLabel:
+                        "刷新",
+                    action:
+                        #selector(browserReload)
+                )
+
+            let close =
+                makeBrowserActionButton(
+                    systemName: "xmark",
+                    accessibilityLabel:
+                        "关闭",
+                    action:
+                        #selector(browserClose)
+                )
+
+            stack.addArrangedSubview(back)
+            stack.addArrangedSubview(forward)
+            stack.addArrangedSubview(reload)
+            stack.addArrangedSubview(close)
+
+            menu.contentView.addSubview(stack)
+            rootView.addSubview(menu)
+
+            browserMenuView = menu
+            browserBackButton = back
+            browserForwardButton = forward
+
+            positionExternalBrowserMenu()
+        }
+
+        private func positionExternalBrowserMenu() {
+            guard
+                let menu = browserMenuView,
+                let rootView,
+                let anchor = mainAnchorButton
+            else {
+                return
+            }
+
+            rootView.layoutIfNeeded()
+
+            let anchorFrame =
+                anchor.convert(
+                    anchor.bounds,
+                    to: rootView
+                )
+
+            let safe =
+                rootView.safeAreaLayoutGuide
+                    .layoutFrame
+
+            let width: CGFloat = 196
+            let height: CGFloat = 50
+            let gap: CGFloat = 8
+
+            let x =
+                min(
+                    max(
+                        safe.minX + 6,
+                        anchorFrame.maxX -
+                            width
+                    ),
+                    safe.maxX -
+                        width -
+                        6
+                )
+
+            let below =
+                anchorFrame.maxY +
+                gap
+
+            let y =
+                below + height <=
+                    safe.maxY - 6
+                ? below
+                : max(
+                    safe.minY + 6,
+                    anchorFrame.minY -
+                        gap -
+                        height
+                )
+
+            menu.frame = CGRect(
+                x: x,
+                y: y,
+                width: width,
+                height: height
+            )
+        }
+
+private func collapseExternalBrowserMenu() {
             browserControlsExpanded = false
             browserMenuView?.isHidden = true
         }
@@ -1839,34 +1998,48 @@ struct ChatGPTWebView: UIViewRepresentable {
                 let externalWebView,
                 externalWebView.superview != nil
             else {
+                collapseExternalBrowserMenu()
                 return
             }
 
-            browserControlButton?.isHidden = false
-
             browserBackButton?.isEnabled =
                 externalWebView.canGoBack
-
             browserBackButton?.alpha =
-                externalWebView.canGoBack ? 1.0 : 0.35
+                externalWebView.canGoBack
+                ? 1.0
+                : 0.35
 
             browserForwardButton?.isEnabled =
                 externalWebView.canGoForward
-
             browserForwardButton?.alpha =
-                externalWebView.canGoForward ? 1.0 : 0.35
+                externalWebView.canGoForward
+                ? 1.0
+                : 0.35
 
-            if let button = browserControlButton {
-                button.menu = makeBrowserControlMenu()
-                externalWebView.bringSubviewToFront(button)
-                clampBrowserControl(
-                    button,
-                    in: externalWebView
-                )
+            positionExternalBrowserMenu()
+
+            if
+                let rootView,
+                let menu = browserMenuView
+            {
+                rootView.bringSubviewToFront(menu)
+            }
+
+            if
+                let rootView,
+                let anchor = mainAnchorButton
+            {
+                rootView.bringSubviewToFront(anchor)
             }
         }
 
         @objc private func toggleExternalBrowserMenu() {
+            guard externalWebView != nil else {
+                return
+            }
+
+            ensureExternalBrowserMenu()
+
             browserControlsExpanded.toggle()
             browserMenuView?.isHidden =
                 !browserControlsExpanded
@@ -1882,8 +2055,13 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return
             }
 
-            collapseExternalBrowserMenu()
             externalWebView.goBack()
+
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.15
+            ) { [weak self] in
+                self?.updateExternalBrowserControls()
+            }
         }
 
         @objc private func browserForward() {
@@ -1894,12 +2072,16 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return
             }
 
-            collapseExternalBrowserMenu()
             externalWebView.goForward()
+
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 0.15
+            ) { [weak self] in
+                self?.updateExternalBrowserControls()
+            }
         }
 
         @objc private func browserReload() {
-            collapseExternalBrowserMenu()
             externalWebView?.reload()
         }
 
@@ -1908,7 +2090,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                 return
             }
 
-            browserControlsExpanded = false
+            collapseExternalBrowserMenu()
+            browserMenuView?.removeFromSuperview()
+
             externalWebView.stopLoading()
             externalWebView.navigationDelegate = nil
             externalWebView.uiDelegate = nil
@@ -1919,6 +2103,13 @@ struct ChatGPTWebView: UIViewRepresentable {
             browserMenuView = nil
             browserBackButton = nil
             browserForwardButton = nil
+
+            if
+                let rootView,
+                let anchor = mainAnchorButton
+            {
+                rootView.bringSubviewToFront(anchor)
+            }
         }
 
         private func presentExternalWebView(
@@ -1964,6 +2155,14 @@ struct ChatGPTWebView: UIViewRepresentable {
             ])
 
             self.externalWebView = external
+            closeScriptPanel()
+
+            if
+                let rootView,
+                let anchor = mainAnchorButton
+            {
+                rootView.bringSubviewToFront(anchor)
+            }
 
             return external
         }
@@ -2185,7 +2384,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 navigation: WKNavigation!
         ) {
             if webView === externalWebView {
-                collapseExternalBrowserMenu()
+                updateExternalBrowserControls()
             }
         }
 
@@ -2204,7 +2403,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             didFinish navigation: WKNavigation!
         ) {
             if webView === externalWebView {
-                    return
+                updateExternalBrowserControls()
+                return
             }
 
             ensureScriptsAreRunning()
