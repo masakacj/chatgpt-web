@@ -2285,6 +2285,10 @@
         continue;
       }
 
+      if (node.parentElement === turn) {
+        break;
+      }
+
       fallback ||= node;
 
       if (node.children.length >= 2) {
