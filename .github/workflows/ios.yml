@@ -62,6 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf DerivedData dist
+          VERSION="$(node -p "require('./package.json').version")"
           xcodebuild \
             -project ChatGPTWeb.xcodeproj \
             -scheme ChatGPTWeb \
@@ -72,6 +73,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
 
@@ -87,6 +89,8 @@ jobs:
             exit 1
           fi
           VERSION="$(node -p "require('./package.json').version")"
+          APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
+          test "$APP_VERSION" = "$VERSION"
           grep -q "ChatGPT Web Unified" "$SCRIPT"
           grep -q "@version      $VERSION" "$SCRIPT"
 
