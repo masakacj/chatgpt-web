@@ -7,7 +7,9 @@ on:
       - "release/**"
     paths:
       - "App/**"
-      - "Resources/**"\n      - "safari/**"\n      - "package.json"
+      - "Resources/**"
+      - "safari/**"
+      - "package.json"
       - "project.yml"
       - "UITests/**"
       - ".github/workflows/ios.yml"
