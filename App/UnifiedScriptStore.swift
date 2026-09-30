@@ -161,7 +161,8 @@ final class UnifiedScriptStore {
             "scriptVersion": scriptVersion,
             "scriptOrigin": scriptOrigin,
             "updateStatus": updateStatus,
-            "hotUpdate": true
+            "hotUpdate": true,
+            "telemetryTransport": true
         ]
 
         if let latestScriptVersion {
