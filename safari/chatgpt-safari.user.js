@@ -2848,8 +2848,8 @@
 
   function scheduleToolScan(
     delay = EXTREME_NATIVE_MODE
-      ? 80
-      : 160
+      ? 120
+      : 180
   ) {
     if (
       state.destroyed ||
@@ -4471,6 +4471,7 @@
     }
 
     let turnStructureChanged = false;
+    let toolMutationRelevant = false;
 
     const activeRecord =
       state.activeConversationId
@@ -4502,6 +4503,14 @@
         stateRelevant = true;
       }
 
+      if (
+        target?.closest?.(
+          '[data-cgpt-tool-group="1"]'
+        )
+      ) {
+        toolMutationRelevant = true;
+      }
+
       for (const node of mutation.removedNodes) {
         if (!(node instanceof Element)) continue;
 
@@ -4524,6 +4533,17 @@
           registerTurnsFromScope(node)
         ) {
           turnStructureChanged = true;
+        }
+
+        if (
+          node.matches?.(
+            'button,[role="button"],summary,[aria-expanded]'
+          ) ||
+          node.querySelector?.(
+            'button,[role="button"],summary,[aria-expanded]'
+          )
+        ) {
+          toolMutationRelevant = true;
         }
 
         if (
@@ -4566,6 +4586,9 @@
       turnStructureChanged
     ) {
       scheduleStateEvaluation();
+    }
+
+    if (toolMutationRelevant) {
       scheduleToolScan();
     }
 
