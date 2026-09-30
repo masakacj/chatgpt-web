@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.8
+// @version      0.4.9
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.8';
+  const VERSION = '0.4.9';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -34,11 +34,7 @@
   const NATIVE_PASSIVE_RECENT_TURNS = 4;
   const INITIAL_BOTTOM_SCROLL_DELAYS = [
     0,
-    120,
-    360,
-    900,
-    1600,
-    2400,
+    700,
   ];
   const PERF_REFRESH_DELAY_MS =
     IS_NATIVE_IOS ? 180 : 100;
@@ -131,9 +127,7 @@
     conversationObserver: null,
     sidebarObserver: null,
     sidebarReconcileTimer: 0,
-    toolScanTimer: 0,
     bottomScrollTimers: new Set(),
-    bottomScrollUntil: 0,
     lastBottomConversationId: '',
     conversationRoot: null,
     sidebarRoot: null,
@@ -1180,13 +1174,6 @@
         text;
     }
 
-    if (ui.debugAction) {
-      ui.debugAction.textContent =
-        telemetry.debugId
-          ? '结束性能诊断 · ' +
-            telemetry.debugId
-          : '开始性能诊断';
-    }
   }
 
   function loadSettings() {
@@ -2520,85 +2507,101 @@
       return;
     }
 
-    state.metrics.toolNodesProcessed += 1;
     const toolStarted =
       performance.now();
-    let changed = false;
 
     const turn =
       ChatGPTDOMAdapter.turnFromNode(node);
 
     if (!(turn instanceof HTMLElement)) {
-      recordTelemetryCost(
-        'toolProcessMs',
-        performance.now() - toolStarted
-      );
       return;
     }
 
-    const liveTurn =
-      EXTREME_NATIVE_MODE
-        ? null
-        : (
-            isStreaming()
-              ? ChatGPTDOMAdapter.activeTurn()
-              : null
-          );
+    const selector =
+      'button,[role="button"],' +
+      'summary,[aria-expanded]';
 
-    for (
-      const heading of
-        toolHeadingsInScope(node)
-    ) {
+    const candidates = [];
+
+    if (node.matches?.(selector)) {
+      candidates.push(node);
+    }
+
+    if (candidates.length < 12) {
+      for (
+        const candidate of
+          node.querySelectorAll?.(
+            selector
+          ) || []
+      ) {
+        candidates.push(candidate);
+        if (candidates.length >= 12) {
+          break;
+        }
+      }
+    }
+
+    for (const candidate of candidates) {
+      const label =
+        nodeLabel(candidate);
+
+      const existing =
+        candidate.closest?.(
+          '[data-cgpt-tool-group="1"]'
+        );
+
       if (
-        state.processedToolHeadings
-          .has(heading)
+        existing &&
+        TOOL_USER_ACTION_RE.test(label)
+      ) {
+        existing.removeAttribute(
+          'data-cgpt-tool-hidden'
+        );
+        continue;
+      }
+
+      if (
+        !TOOL_GROUP_RE.test(label) &&
+        !TOOL_ACTION_RE.test(label) &&
+        !PROCESS_GROUP_RE.test(label)
       ) {
         continue;
       }
 
       const group =
         findToolGroupContainer(
-          heading,
+          candidate,
           turn
         );
 
-      if (!(group instanceof HTMLElement)) {
+      if (
+        !(group instanceof HTMLElement) ||
+        group === turn
+      ) {
         continue;
       }
 
-      state.processedToolHeadings
-        .add(heading);
-
-      registerToolGroup(
-        group,
-        turn,
-        liveTurn
+      group.setAttribute(
+        'data-cgpt-tool-group',
+        '1'
       );
-      changed = true;
-    }
 
-    if (EXTREME_NATIVE_MODE) {
-      for (
-        const group of
-          Array.from(state.toolGroups)
+      if (
+        TOOL_USER_ACTION_RE.test(label)
       ) {
-        if (
-          group instanceof HTMLElement &&
-          group.isConnected &&
-          turn.contains(group)
-        ) {
-          registerToolGroup(
-            group,
-            turn,
-            null
-          );
-        }
+        group.removeAttribute(
+          'data-cgpt-tool-hidden'
+        );
+      } else {
+        group.setAttribute(
+          'data-cgpt-tool-hidden',
+          '1'
+        );
       }
     }
 
-    if (changed || EXTREME_NATIVE_MODE) {
-      updateToolCounts();
-    }
+    state.metrics.toolNodesProcessed +=
+      candidates.length;
 
     recordTelemetryCost(
       'toolProcessMs',
@@ -2607,7 +2610,10 @@
   }
 
   function finalizeTrackedToolGroups() {
-    if (!state.settings.enabled) {
+    if (
+      EXTREME_NATIVE_MODE ||
+      !state.settings.enabled
+    ) {
       return;
     }
 
@@ -2615,46 +2621,6 @@
       ChatGPTDOMAdapter.activeTurn();
 
     if (!(activeTurn instanceof HTMLElement)) {
-      return;
-    }
-
-    if (EXTREME_NATIVE_MODE) {
-      let changed = false;
-
-      for (
-        const group of
-          Array.from(state.toolGroups)
-      ) {
-        if (
-          !(group instanceof HTMLElement) ||
-          !group.isConnected
-        ) {
-          state.toolGroups.delete(group);
-          changed = true;
-          continue;
-        }
-
-        if (
-          activeTurn.contains(group) &&
-          !group.matches(':focus-within')
-        ) {
-          group.setAttribute(
-            'data-cgpt-tool-hidden',
-            '1'
-          );
-          group.removeAttribute(
-            'data-cgpt-tool-collapsed'
-          );
-          group.removeAttribute(
-            'data-cgpt-tool-summary'
-          );
-          changed = true;
-        }
-      }
-
-      if (changed) {
-        updateToolCounts();
-      }
       return;
     }
 
@@ -2697,7 +2663,11 @@
   function restoreToolGroups() {
     for (
       const group of
-        Array.from(state.toolGroups)
+        document.querySelectorAll(
+          '[data-cgpt-tool-group="1"],' +
+          '[data-cgpt-tool-hidden="1"],' +
+          '[data-cgpt-tool-collapsed="1"]'
+        )
     ) {
       if (!(group instanceof HTMLElement)) {
         continue;
@@ -2800,15 +2770,15 @@
       return;
     }
 
-    const streaming = isStreaming();
-    const liveTurn =
-      streaming && turns.length
-        ? turns[turns.length - 1]
-        : null;
-
     if (
       state.settings.aggressiveWindowing
     ) {
+      const streaming = isStreaming();
+      const liveTurn =
+        streaming && turns.length
+          ? turns[turns.length - 1]
+          : null;
+
       applyAggressiveWindowing(
         turns,
         liveTurn
@@ -2819,7 +2789,10 @@
       restoreOptimizedTurns();
     }
 
-    updateToolCounts();
+    if (!EXTREME_NATIVE_MODE) {
+      updateToolCounts();
+    }
+
     updateUI(turns.length);
   }
 
@@ -2846,113 +2819,39 @@
     }, delay);
   }
 
-  function scheduleToolScan(
-    delay = EXTREME_NATIVE_MODE
-      ? 120
-      : 180
-  ) {
-    if (
-      state.destroyed ||
-      !state.settings.enabled ||
-      state.toolScanTimer
-    ) {
-      return;
-    }
+  
 
-    state.toolScanTimer =
-      window.setTimeout(() => {
-        state.toolScanTimer = 0;
-
-        if (
-          state.destroyed ||
-          routeIsSettling()
-        ) {
-          return;
-        }
-
-        const activeTurn =
-          ChatGPTDOMAdapter.activeTurn();
-
-        if (activeTurn) {
-          processToolMutationNode(
-            activeTurn
-          );
-        }
-      }, delay);
-  }
-
-  function conversationScroller() {
-    const anchor =
-      ChatGPTDOMAdapter.activeTurn() ||
-      ChatGPTDOMAdapter.conversationRoot();
-
-    let node =
-      anchor instanceof Element
-        ? anchor.parentElement
-        : null;
-
-    while (
-      node &&
-      node !== document.body &&
-      node !== document.documentElement
-    ) {
-      const style =
-        window.getComputedStyle(node);
-      const overflowY =
-        style.overflowY || '';
-
-      if (
-        /^(?:auto|scroll|overlay)$/i
-          .test(overflowY) &&
-        node.scrollHeight >
-          node.clientHeight + 24
-      ) {
-        return node;
-      }
-
-      node = node.parentElement;
-    }
-
-    return (
-      document.scrollingElement ||
-      document.documentElement
-    );
-  }
+  
 
   function scrollConversationToBottom() {
     if (!currentConversationId()) {
       return false;
     }
 
-    const scroller =
-      conversationScroller();
-
-    if (!scroller) {
-      return false;
-    }
+    const target =
+      ChatGPTDOMAdapter.activeTurn() ||
+      lastConversationTurn();
 
     try {
       if (
-        scroller ===
-          document.scrollingElement ||
-        scroller ===
-          document.documentElement ||
-        scroller ===
-          document.body
+        target instanceof HTMLElement
       ) {
-        window.scrollTo(
-          0,
-          Math.max(
-            document.body?.scrollHeight || 0,
-            document.documentElement
-              ?.scrollHeight || 0
-          )
-        );
-      } else {
-        scroller.scrollTop =
-          scroller.scrollHeight;
+        target.scrollIntoView({
+          block: 'end',
+          inline: 'nearest',
+          behavior: 'auto',
+        });
+        return true;
       }
 
+      window.scrollTo(
+        0,
+        Math.max(
+          document.body?.scrollHeight || 0,
+          document.documentElement
+            ?.scrollHeight || 0
+        )
+      );
       return true;
     } catch (_) {
       return false;
@@ -2968,7 +2867,6 @@
     }
 
     state.bottomScrollTimers.clear();
-    state.bottomScrollUntil = 0;
   }
 
   function scheduleInitialBottomScroll(
@@ -2995,9 +2893,6 @@
 
     clearInitialBottomScroll();
     state.lastBottomConversationId = id;
-    state.bottomScrollUntil =
-      performance.now() + 3200;
-
     for (
       const delay of
         INITIAL_BOTTOM_SCROLL_DELAYS
@@ -3343,18 +3238,23 @@
     const usingNativeAnchor =
       nativeAnchorSupported();
 
-    const host = document.createElement('div');
+    const host =
+      document.createElement('div');
     host.id = HOST_ID;
     host.style.position = 'fixed';
-    host.style.top = 'max(8px, env(safe-area-inset-top))';
+    host.style.top =
+      'max(8px, env(safe-area-inset-top))';
     host.style.right = '10px';
     host.style.zIndex = '2147483646';
     host.style.pointerEvents = 'auto';
 
-    const shadow = host.attachShadow({ mode: 'open' });
-    const wrap = document.createElement('div');
+    const shadow =
+      host.attachShadow({ mode: 'open' });
+    const wrap =
+      document.createElement('div');
 
-    const style = document.createElement('style');
+    const style =
+      document.createElement('style');
     style.textContent = [
       ':host { all: initial; }',
       '* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }',
@@ -3366,30 +3266,33 @@
       '.fab[data-chat-state="settling"]::after { background: #8e8e93; animation: pulse .9s ease-in-out infinite; }',
       '.fab[data-chat-state="completed_unread"]::after { background: #0a84ff; }',
       '@keyframes pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
-      '.panel { position: absolute; top: 42px; right: 0; width: 226px; padding: 8px; border-radius: 13px; background: rgba(28,28,30,.94); color: white; box-shadow: 0 12px 34px rgba(0,0,0,.28); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: none; }',
+      '.panel { position: absolute; top: 42px; right: 0; width: 232px; padding: 8px; border-radius: 13px; background: rgba(28,28,30,.94); color: white; box-shadow: 0 12px 34px rgba(0,0,0,.28); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: none; }',
       ':host([data-panel-side="left"]) .panel { left: 0; right: auto; }',
       ':host([data-panel-side="right"]) .panel { left: auto; right: 0; }',
       ':host([data-panel-vertical="up"]) .panel { top: auto; bottom: 42px; }',
       ':host([data-panel-vertical="down"]) .panel { top: 42px; bottom: auto; }',
       '.panel.open { display: block; }',
-      '.title { font-size: 12px; font-weight: 700; margin: 1px 2px 6px; }',
-      '.status { font-size: 10px; opacity: .70; margin: 0 2px 7px; line-height: 1.3; }',
+      '.view[hidden] { display: none !important; }',
+      '.title-row { display: flex; align-items: center; gap: 8px; min-height: 28px; }',
+      '.title { flex: 1; font-size: 12px; font-weight: 700; }',
+      '.status { font-size: 10.5px; opacity: .72; margin: 2px 2px 6px; line-height: 1.35; }',
       '.info { margin: 0 0 6px; padding: 6px 8px; border-radius: 9px; background: rgba(255,255,255,.07); }',
       '.info-row { min-height: 19px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 10.5px; }',
       '.info-key { opacity: .58; }',
       '.info-value { opacity: .92; text-align: right; font-variant-numeric: tabular-nums; }',
-      '.row { width: 100%; min-height: 33px; display: flex; align-items: center; justify-content: space-between; gap: 9px; border-top: 1px solid rgba(255,255,255,.11); }',
-      '.row:first-of-type { border-top: 0; }',
+      '.row { width: 100%; min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 9px; border-top: 1px solid rgba(255,255,255,.11); }',
       '.label { font-size: 12px; }',
-      'button.action { width: 100%; border: 0; background: transparent; color: white; text-align: left; padding: 7px 2px; font-size: 12px; }',
+      'button.action { width: 100%; border: 0; background: transparent; color: white; text-align: left; padding: 8px 2px; font-size: 12px; }',
+      'button.compact { width: auto; min-width: 44px; border: 0; border-radius: 8px; padding: 5px 8px; background: rgba(255,255,255,.09); color: white; font-size: 11px; }',
       '.switch { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.20); position: relative; transition: .15s ease; margin: 0; }',
       '.switch::after { content: ""; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: white; top: 2px; left: 2px; transition: .15s ease; }',
       '.switch:checked { background: #34c759; }',
       '.switch:checked::after { transform: translateX(18px); }',
-      '.foot { font-size: 10px; opacity: .5; margin: 8px 2px 1px; }',
+      '.foot { font-size: 10px; opacity: .48; margin: 8px 2px 1px; }',
     ].join('\n');
 
-    const button = document.createElement('button');
+    const button =
+      document.createElement('button');
     button.className = 'fab';
     button.type = 'button';
     button.textContent = 'S';
@@ -3398,7 +3301,8 @@
       'ChatGPT Web 控制'
     );
 
-    const panel = document.createElement('div');
+    const panel =
+      document.createElement('div');
     panel.className = 'panel';
     panel.setAttribute('role', 'dialog');
     panel.setAttribute(
@@ -3423,53 +3327,128 @@
       panel.style.pointerEvents = 'auto';
     }
 
-    const title = document.createElement('div');
-    title.className = 'title';
-    title.textContent = 'ChatGPT Web Unified';
+    const mainView =
+      document.createElement('div');
+    mainView.className = 'view';
 
-    const status = document.createElement('div');
+    const settingsView =
+      document.createElement('div');
+    settingsView.className = 'view';
+    settingsView.hidden = true;
+
+    const title =
+      document.createElement('div');
+    title.className = 'title';
+    title.textContent = 'ChatGPT Web';
+
+    const status =
+      document.createElement('div');
     status.className = 'status';
 
-    const info = document.createElement('div');
+    const updateRow =
+      document.createElement('div');
+    updateRow.className = 'row';
+    const update =
+      document.createElement('button');
+    update.type = 'button';
+    update.className = 'action';
+    update.textContent = '检查更新';
+    updateRow.appendChild(update);
+
+    const reloadRow =
+      document.createElement('div');
+    reloadRow.className = 'row';
+    const reload =
+      document.createElement('button');
+    reload.type = 'button';
+    reload.className = 'action';
+    reload.textContent = '重新加载 ChatGPT';
+    reloadRow.appendChild(reload);
+
+    const settingsRow =
+      document.createElement('div');
+    settingsRow.className = 'row';
+    const settings =
+      document.createElement('button');
+    settings.type = 'button';
+    settings.className = 'action';
+    settings.textContent = '设置';
+    settingsRow.appendChild(settings);
+
+    mainView.append(
+      title,
+      status,
+      updateRow,
+      reloadRow,
+      settingsRow
+    );
+
+    const settingsTitleRow =
+      document.createElement('div');
+    settingsTitleRow.className =
+      'title-row';
+
+    const settingsTitle =
+      document.createElement('div');
+    settingsTitle.className = 'title';
+    settingsTitle.textContent = '设置';
+
+    const settingsBack =
+      document.createElement('button');
+    settingsBack.type = 'button';
+    settingsBack.className =
+      'compact';
+    settingsBack.textContent = '返回';
+
+    settingsTitleRow.append(
+      settingsBack,
+      settingsTitle
+    );
+
+    const info =
+      document.createElement('div');
     info.className = 'info';
 
     const scriptInfo =
-      makeInfoRow('当前脚本');
-    const latestInfo =
-      makeInfoRow('最新脚本');
+      makeInfoRow('脚本');
     const appInfo =
       makeInfoRow('容器');
     const updateInfo =
-      makeInfoRow('更新状态');
-    const toolInfo = makeInfoRow('工具过程');
+      makeInfoRow('更新');
     const telemetryInfo =
       makeInfoRow('在线诊断');
-    const gestureInfo = state.nativeStatus?.gestureVersion
-      ? makeInfoRow('iOS 手势')
-      : null;
+    const gestureInfo =
+      state.nativeStatus?.gestureVersion
+        ? makeInfoRow('iOS 手势')
+        : null;
 
     info.append(
       scriptInfo.row,
-      latestInfo.row,
       appInfo.row,
       updateInfo.row,
-      toolInfo.row,
       telemetryInfo.row
     );
     if (gestureInfo) {
       info.append(gestureInfo.row);
     }
 
-    const perfRow = document.createElement('label');
+    const perfRow =
+      document.createElement('label');
     perfRow.className = 'row';
-    const perfLabel = document.createElement('span');
+    const perfLabel =
+      document.createElement('span');
     perfLabel.className = 'label';
-    perfLabel.textContent = '低干扰增量优化';
-    const perfSwitch = document.createElement('input');
+    perfLabel.textContent = '极速模式';
+    const perfSwitch =
+      document.createElement('input');
     perfSwitch.className = 'switch';
     perfSwitch.type = 'checkbox';
-    perfSwitch.checked = state.settings.enabled;
-    perfRow.append(perfLabel, perfSwitch);
+    perfSwitch.checked =
+      state.settings.enabled;
+    perfRow.append(
+      perfLabel,
+      perfSwitch
+    );
 
     const telemetryRow =
       document.createElement('label');
@@ -3490,49 +3469,6 @@
       telemetrySwitch
     );
 
-    const debugRow =
-      document.createElement('div');
-    debugRow.className = 'row';
-    const debugAction =
-      document.createElement('button');
-    debugAction.type = 'button';
-    debugAction.className = 'action';
-    debugAction.textContent =
-      '开始性能诊断';
-    debugRow.appendChild(debugAction);
-
-    const appUpdateRow = document.createElement('div');
-    appUpdateRow.className = 'row';
-    const appUpdate = document.createElement('button');
-    appUpdate.type = 'button';
-    appUpdate.className = 'action';
-    appUpdate.textContent = '检查 IPA 更新';
-    appUpdateRow.appendChild(appUpdate);
-
-    const updateRow = document.createElement('div');
-    updateRow.className = 'row';
-    const update = document.createElement('button');
-    update.type = 'button';
-    update.className = 'action';
-    update.textContent = '检查更新';
-    updateRow.appendChild(update);
-
-    const reloadRow = document.createElement('div');
-    reloadRow.className = 'row';
-    const reload = document.createElement('button');
-    reload.type = 'button';
-    reload.className = 'action';
-    reload.textContent = '重新加载 ChatGPT';
-    reloadRow.appendChild(reload);
-
-    const restoreRow = document.createElement('div');
-    restoreRow.className = 'row';
-    const restore = document.createElement('button');
-    restore.type = 'button';
-    restore.className = 'action';
-    restore.textContent = '恢复官方页面显示';
-    restoreRow.appendChild(restore);
-
     const cacheRow =
       document.createElement('div');
     cacheRow.className = 'row';
@@ -3544,6 +3480,17 @@
       '清除网页缓存（保留登录）';
     cacheRow.appendChild(clearCache);
 
+    const restoreRow =
+      document.createElement('div');
+    restoreRow.className = 'row';
+    const restore =
+      document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'action';
+    restore.textContent =
+      '恢复官方页面显示';
+    restoreRow.appendChild(restore);
+
     const hideRow =
       document.createElement('div');
     hideRow.className = 'row';
@@ -3554,30 +3501,31 @@
     hide.textContent = '隐藏悬浮按钮';
     hideRow.appendChild(hide);
 
-    const foot = document.createElement('div');
+    settingsView.append(
+      settingsTitleRow,
+      info,
+      perfRow,
+      telemetryRow
+    );
+
+    if (IS_NATIVE_IOS) {
+      settingsView.append(cacheRow);
+    } else {
+      settingsView.append(hideRow);
+    }
+
+    settingsView.append(restoreRow);
+
+    const foot =
+      document.createElement('div');
     foot.className = 'foot';
     foot.textContent = versionLine();
 
     panel.append(
-      title,
-      status,
-      info,
-      perfRow,
-      telemetryRow,
-      debugRow,
-      appUpdateRow,
-      updateRow,
-      reloadRow,
-      restoreRow
+      mainView,
+      settingsView,
+      foot
     );
-
-    if (IS_NATIVE_IOS) {
-      panel.append(cacheRow);
-    } else {
-      panel.append(hideRow);
-    }
-
-    panel.append(foot);
 
     if (usingNativeAnchor) {
       shadow.append(style, panel);
@@ -3644,9 +3592,7 @@
         if (
           event.button !== undefined &&
           event.button !== 0
-        ) {
-          return;
-        }
+        ) return;
 
         const rect =
           host.getBoundingClientRect();
@@ -3674,9 +3620,7 @@
           !drag.active ||
           event.pointerId !==
             drag.pointerId
-        ) {
-          return;
-        }
+        ) return;
 
         const dx =
           event.clientX - drag.startX;
@@ -3686,9 +3630,7 @@
         if (
           !drag.moved &&
           Math.hypot(dx, dy) < 6
-        ) {
-          return;
-        }
+        ) return;
 
         drag.moved = true;
         panel.classList.remove('open');
@@ -3712,9 +3654,7 @@
           event.pointerId !==
             drag.pointerId
         )
-      ) {
-        return;
-      }
+      ) return;
 
       if (drag.moved) {
         saveControlPosition(host);
@@ -3741,36 +3681,56 @@
       finishControlDrag
     );
 
-    button.addEventListener('click', () => {
-      if (
-        performance.now() <
-        drag.suppressClickUntil
-      ) {
-        return;
+    button.addEventListener(
+      'click',
+      () => {
+        if (
+          performance.now() <
+          drag.suppressClickUntil
+        ) return;
+
+        const opening =
+          !panel.classList.contains(
+            'open'
+          );
+
+        panel.classList.toggle('open');
+        panel.setAttribute(
+          'aria-hidden',
+          opening ? 'false' : 'true'
+        );
+
+        if (opening) {
+          mainView.hidden = false;
+          settingsView.hidden = true;
+          updateUI(currentTurnCount());
+        }
       }
+    );
 
-      const opening = !panel.classList.contains('open');
-      panel.classList.toggle('open');
-
-      if (opening) {
-        state.nativeStatus = {
-          ...state.nativeStatus,
-          ...(window.__CHATGPT_NATIVE__ || {}),
-        };
-        requestNativeUpdateCheck();
-        checkAppUpdate();
-        scheduleRefresh(0);
-        evaluateConversationState();
-        renderConversationStates();
+    settings.addEventListener(
+      'click',
+      () => {
+        mainView.hidden = true;
+        settingsView.hidden = false;
         updateUI(currentTurnCount());
       }
-    });
+    );
 
-    perfSwitch.addEventListener('change', () => {
-      state.settings.enabled = perfSwitch.checked;
-      saveSettings();
-      scheduleRefresh(0);
-    });
+    settingsBack.addEventListener(
+      'click',
+      () => {
+        settingsView.hidden = true;
+        mainView.hidden = false;
+      }
+    );
+
+    perfSwitch.addEventListener(
+      'change',
+      () => {
+        setEnabled(perfSwitch.checked);
+      }
+    );
 
     telemetrySwitch.addEventListener(
       'change',
@@ -3781,33 +3741,39 @@
       }
     );
 
-    debugAction.addEventListener(
+    update.addEventListener(
       'click',
-      () => {
-        if (state.telemetry.debugId) {
-          stopDebugSession();
-        } else {
-          startDebugSession();
+      async () => {
+        if (
+          state.nativeStatus
+            ?.appUpdateAvailable &&
+          state.nativeStatus
+            ?.appInstallURL
+        ) {
+          requestNativeAction(
+            'install-app-update',
+            {
+              url:
+                state.nativeStatus
+                  .appInstallURL,
+            }
+          );
+          return;
         }
+
+        update.disabled = true;
+        update.textContent = '检查中…';
+
+        requestNativeUpdateCheck();
+
+        if (IS_NATIVE_IOS) {
+          await checkAppUpdate();
+        }
+
+        update.disabled = false;
+        updateUI(currentTurnCount());
       }
     );
-
-    appUpdate.addEventListener('click', async () => {
-      if (state.nativeStatus?.appUpdateAvailable && state.nativeStatus?.appInstallURL) {
-        requestNativeAction('install-app-update', { url: state.nativeStatus.appInstallURL });
-        return;
-      }
-      appUpdate.disabled = true;
-      appUpdate.textContent = '检查 IPA 更新中…';
-      await checkAppUpdate();
-      appUpdate.disabled = false;
-      updateUI(currentTurnCount());
-    });
-
-    update.addEventListener('click', () => {
-      requestNativeUpdateCheck();
-      updateUI(currentTurnCount());
-    });
 
     reload.addEventListener(
       'click',
@@ -3819,8 +3785,7 @@
       () => {
         clearCache.disabled = true;
         clearCache.style.opacity = '.55';
-        clearCache.textContent =
-          '清理中…';
+        clearCache.textContent = '清理中…';
 
         if (
           !requestNativeAction(
@@ -3835,58 +3800,61 @@
       }
     );
 
-    restore.addEventListener('click', () => {
-      state.settings.enabled = false;
-      perfSwitch.checked = false;
-      saveSettings();
-      restoreOptimizedTurns();
-      updateUI(currentTurnCount());
-      panel.classList.remove('open');
-      panel.setAttribute(
-        'aria-hidden',
-        'true'
-      );
-    });
-
-    hide.addEventListener('click', () => {
-      if (IS_NATIVE_IOS) return;
-
-      state.settings.showControl = false;
-      saveSettings();
-
-      if (state.controlResizeHandler) {
-        window.removeEventListener(
-          'resize',
-          state.controlResizeHandler
+    restore.addEventListener(
+      'click',
+      () => {
+        setEnabled(false);
+        perfSwitch.checked = false;
+        panel.classList.remove('open');
+        panel.setAttribute(
+          'aria-hidden',
+          'true'
         );
-        state.controlResizeHandler = null;
       }
+    );
 
-      host.remove();
-      state.ui = null;
-    });
+    hide.addEventListener(
+      'click',
+      () => {
+        if (IS_NATIVE_IOS) return;
+
+        state.settings.showControl = false;
+        saveSettings();
+
+        if (state.controlResizeHandler) {
+          window.removeEventListener(
+            'resize',
+            state.controlResizeHandler
+          );
+          state.controlResizeHandler = null;
+        }
+
+        host.remove();
+        state.ui = null;
+      }
+    );
 
     state.ui = {
       host,
       button,
       panel,
+      mainView,
+      settingsView,
       status,
       perfSwitch,
       telemetrySwitch,
-      debugAction,
       update,
-      appUpdate,
       clearCache,
       foot,
       scriptInfo: scriptInfo.value,
-      latestInfo: latestInfo.value,
       appInfo: appInfo.value,
       updateInfo: updateInfo.value,
-      toolInfo: toolInfo.value,
       telemetryInfo:
         telemetryInfo.value,
-      gestureInfo: gestureInfo?.value || null,
+      gestureInfo:
+        gestureInfo?.value || null,
     };
+
     updateUI(currentTurnCount());
   }
 
@@ -3993,57 +3961,20 @@
 
     const open =
       panel.classList.contains('open');
-    const style =
-      window.getComputedStyle(panel);
-    const rect =
-      panel.getBoundingClientRect();
-
-    const visible =
-      open &&
-      style.display !== 'none' &&
-      style.visibility !== 'hidden' &&
-      Number.parseFloat(
-        style.opacity || '1'
-      ) > 0 &&
-      rect.width > 120 &&
-      rect.height > 80 &&
-      rect.right > 0 &&
-      rect.bottom > 0 &&
-      rect.left < window.innerWidth &&
-      rect.top < window.innerHeight;
-
-    const interactive =
-      style.pointerEvents !== 'none';
-
-    const hasCurrent =
-      Boolean(
-        state.ui?.scriptInfo?.isConnected
-      );
-    const hasLatest =
-      Boolean(
-        state.ui?.latestInfo?.isConnected
-      );
-    const hasCache =
-      Boolean(
-        state.ui?.clearCache?.isConnected
-      );
 
     return {
       ok: true,
       open,
       ready:
         open &&
-        interactive &&
-        hasCurrent &&
-        hasLatest &&
-        hasCache,
-      visible,
-      interactive,
-      hasCurrent,
-      hasLatest,
-      hasCache,
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
+        Boolean(
+          state.ui?.update
+            ?.isConnected
+        ) &&
+        Boolean(
+          state.ui?.clearCache
+            ?.isConnected
+        ),
     };
   }
 
@@ -4091,6 +4022,13 @@
       'false'
     );
 
+    if (state.ui?.mainView) {
+      state.ui.mainView.hidden = false;
+    }
+    if (state.ui?.settingsView) {
+      state.ui.settingsView.hidden = true;
+    }
+
     positionNativePanel(anchor);
 
     state.nativeStatus = {
@@ -4098,11 +4036,9 @@
       ...(window.__CHATGPT_NATIVE__ || {}),
     };
 
-    updateUI(currentTurnCount());
-    requestNativeUpdateCheck();
-    scheduleRefresh(0);
-    evaluateConversationState();
-    renderConversationStates();
+    updateUI(
+      state.turnCache.length
+    );
 
     return nativePanelRenderState();
   }
@@ -4217,127 +4153,108 @@
     if (!ui) return;
 
     const id = currentConversationId();
-    const chatStatus = id ? state.conversationStates[id]?.status : null;
-    const mode =
-      !state.settings.enabled
-        ? '官方原生'
-        : state.settings.aggressiveWindowing
-          ? '激进窗口'
-          : '增量低干扰';
+    const chatStatus =
+      id
+        ? state.conversationStates[id]
+            ?.status
+        : null;
 
-    if (chatStatus && chatStatus !== 'completed_read') {
-      ui.button.dataset.chatState = chatStatus;
+    if (
+      chatStatus &&
+      chatStatus !== 'completed_read'
+    ) {
+      ui.button.dataset.chatState =
+        chatStatus;
     } else {
       delete ui.button.dataset.chatState;
     }
 
-    ui.status.textContent =
-      mode + ' · ' +
-      turnCount + ' 轮 · ' +
-      statusLabel(chatStatus) +
-      (state.toolCounts.collapsed > 0
-        ? ' · 工具折叠 ' +
-          state.toolCounts.collapsed
-        : '') +
-      (state.settings.aggressiveWindowing
-        ? ' · 窗口 ' +
-          state.optimizedTurns.size
-        : '');
+    if (ui.status) {
+      ui.status.textContent =
+        'v' + VERSION +
+        ' · ' +
+        statusLabel(chatStatus);
+    }
 
     if (ui.scriptInfo) {
       ui.scriptInfo.textContent =
         'v' + VERSION;
     }
 
-    if (ui.latestInfo) {
-      const checking =
-        String(
-          state.nativeStatus?.updateStatus ||
-          ''
-        ) === 'checking';
+    if (ui.appInfo) {
+      const current =
+        state.nativeStatus?.appVersion
+          ? 'v' +
+            state.nativeStatus.appVersion
+          : '浏览器';
 
       const latest =
         state.nativeStatus
-          ?.latestScriptVersion ||
-        state.nativeStatus
-          ?.scriptVersion ||
-        VERSION;
+          ?.latestAppVersion;
 
-      ui.latestInfo.textContent =
-        checking
-          ? '检查中…'
-          : 'v' + latest;
-    }
-
-    if (ui.appInfo) {
-      const current = state.nativeStatus?.appVersion
-        ? 'v' + state.nativeStatus.appVersion
-        : '浏览器';
-      const latest = state.nativeStatus?.latestAppVersion;
       ui.appInfo.textContent =
-        latest && state.nativeStatus?.appUpdateAvailable
+        latest &&
+        state.nativeStatus
+          ?.appUpdateAvailable
           ? current + ' → v' + latest
           : current;
     }
-    if (ui.appUpdate) {
-      ui.appUpdate.style.display = IS_NATIVE_IOS ? '' : 'none';
-      ui.appUpdate.textContent =
-        state.nativeStatus?.appUpdateAvailable
-          ? '安装 IPA 更新 v' + (state.nativeStatus?.latestAppVersion || '')
-          : '检查 IPA 更新';
-    }
+
     if (ui.updateInfo) {
-      ui.updateInfo.textContent = updateStatusLabel();
+      ui.updateInfo.textContent =
+        updateStatusLabel();
     }
 
     if (ui.update) {
-      const updateStatus = String(
-        state.nativeStatus?.updateStatus || ''
-      );
+      const scriptStatus =
+        String(
+          state.nativeStatus
+            ?.updateStatus || ''
+        );
+
+      const checking =
+        scriptStatus === 'checking';
 
       const failed = [
         'offline',
         'timeout',
         'error',
-      ].includes(updateStatus);
-
-      const checking = updateStatus === 'checking';
+      ].includes(scriptStatus);
 
       ui.update.disabled = checking;
-      ui.update.style.opacity = checking ? '.5' : '1';
+      ui.update.style.opacity =
+        checking ? '.5' : '1';
+
       ui.update.textContent =
-        checking ? '检查更新中…' :
-        failed ? '重试更新' :
-        ['latest', 'updated'].includes(updateStatus)
-          ? '再次检查更新'
-          : '检查更新';
+        state.nativeStatus
+          ?.appUpdateAvailable
+          ? '安装更新 v' +
+            (
+              state.nativeStatus
+                ?.latestAppVersion || ''
+            )
+          : checking
+            ? '检查更新中…'
+            : failed
+              ? '重试检查更新'
+              : '检查更新';
     }
-    if (ui.toolInfo) {
-      ui.toolInfo.textContent =
-        state.toolCounts.groups > 0
-          ? state.toolCounts.collapsed + ' / ' +
-            state.toolCounts.groups + ' 已折叠'
-          : '无';
-    }
+
     if (ui.gestureInfo) {
-      const version = state.nativeStatus?.gestureVersion || '未知';
-      const status = String(
-        state.nativeStatus?.gestureUpdateStatus || ''
-      );
-      const label =
-        status === 'checking' ? '检查中' :
-        status === 'updated' ? '已热更' :
-        status === 'latest' ? '已是最新' :
-        status === 'offline' ? '离线' :
-        status === 'timeout' ? '检查超时' :
-        status === 'cached' ? '缓存版' :
-        status === 'bundled' ? '内置版' :
-        '已启用';
+      const version =
+        state.nativeStatus
+          ?.gestureVersion || '未知';
+
       ui.gestureInfo.textContent =
-        'v' + version + ' · ' + label;
+        'v' + version;
     }
+
     updateTelemetryUI();
-    if (ui.foot) ui.foot.textContent = versionLine();
+
+    if (ui.foot) {
+      ui.foot.textContent =
+        versionLine();
+    }
   }
 
   function scheduleStateEvaluation(
@@ -4435,7 +4352,6 @@
         bindScopedObservers(true);
         invalidateTurnCache();
         turnCandidates(true);
-        scheduleToolScan(30);
         scheduleInitialBottomScroll(true);
         scheduleRefresh(120);
         scheduleStateEvaluation(180);
@@ -4471,23 +4387,7 @@
     }
 
     let turnStructureChanged = false;
-    let toolMutationRelevant = false;
-
-    const activeRecord =
-      state.activeConversationId
-        ? state.conversationStates[
-            state.activeConversationId
-          ]
-        : null;
-
-    let stateRelevant = Boolean(
-      activeRecord &&
-      (
-        activeRecord.status === 'running' ||
-        activeRecord.status === 'waiting_user' ||
-        activeRecord.status === 'settling'
-      )
-    );
+    let stateRelevant = false;
 
     for (const mutation of mutations) {
       const target =
@@ -4503,20 +4403,16 @@
         stateRelevant = true;
       }
 
-      if (
-        target?.closest?.(
-          '[data-cgpt-tool-group="1"]'
-        )
-      ) {
-        toolMutationRelevant = true;
-      }
-
       for (const node of mutation.removedNodes) {
-        if (!(node instanceof Element)) continue;
+        if (!(node instanceof Element)) {
+          continue;
+        }
 
         if (
           node.matches?.(TURN_ELEMENT_QUERY) ||
-          node.querySelector?.(TURN_ELEMENT_QUERY)
+          node.querySelector?.(
+            TURN_ELEMENT_QUERY
+          )
         ) {
           invalidateTurnCache();
           turnStructureChanged = true;
@@ -4535,26 +4431,12 @@
           turnStructureChanged = true;
         }
 
-        if (
-          node.matches?.(
-            'button,[role="button"],summary,[aria-expanded]'
-          ) ||
-          node.querySelector?.(
-            'button,[role="button"],summary,[aria-expanded]'
-          )
-        ) {
-          toolMutationRelevant = true;
+        if (EXTREME_NATIVE_MODE) {
+          processToolMutationNode(node);
         }
 
         if (
           node.matches?.(
-            '[aria-busy="true"],' +
-            '[role="progressbar"],' +
-            '[data-state="loading"],' +
-            '[data-loading="true"],' +
-            '[data-testid="stop-button"]'
-          ) ||
-          node.querySelector?.(
             '[aria-busy="true"],' +
             '[role="progressbar"],' +
             '[data-state="loading"],' +
@@ -4569,16 +4451,6 @@
 
     if (turnStructureChanged) {
       scheduleRefresh(80);
-
-      if (
-        EXTREME_NATIVE_MODE &&
-        performance.now() <
-          state.bottomScrollUntil
-      ) {
-        window.requestAnimationFrame(
-          scrollConversationToBottom
-        );
-      }
     }
 
     if (
@@ -4586,10 +4458,6 @@
       turnStructureChanged
     ) {
       scheduleStateEvaluation();
-    }
-
-    if (toolMutationRelevant) {
-      scheduleToolScan();
     }
 
     recordTelemetryCost(
@@ -4690,7 +4558,10 @@
         const activeTurn =
           ChatGPTDOMAdapter.activeTurn();
 
-        if (activeTurn) {
+        if (
+          EXTREME_NATIVE_MODE &&
+          activeTurn
+        ) {
           processToolMutationNode(
             activeTurn
           );
@@ -4882,7 +4753,6 @@
     setupObservers();
     invalidateTurnCache();
     turnCandidates(true);
-    scheduleToolScan(20);
     scheduleInitialBottomScroll(true);
     scheduleRefresh(0);
     evaluateConversationState();
@@ -5133,7 +5003,6 @@
     clearTimeout(state.updateWatchdogTimer);
     clearTimeout(state.controlRecoveryTimer);
     clearTimeout(state.sidebarReconcileTimer);
-    clearTimeout(state.toolScanTimer);
     clearInitialBottomScroll();
     clearInterval(state.statusTimer);
 
