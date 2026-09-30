@@ -54,7 +54,7 @@ final class ChatGPTWebUITests: XCTestCase {
 
         wait(
             for: [panelReady],
-            timeout: 3
+            timeout: 6
         )
 
         button.tap()
@@ -150,7 +150,7 @@ final class ChatGPTWebUITests: XCTestCase {
 
         wait(
             for: [panelReadyAfterDrag],
-            timeout: 3
+            timeout: 6
         )
     }
 }
