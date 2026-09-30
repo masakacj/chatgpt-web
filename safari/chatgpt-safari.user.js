@@ -127,7 +127,6 @@
     conversationObserver: null,
     sidebarObserver: null,
     sidebarReconcileTimer: 0,
-    toolScanTimer: 0,
     bottomScrollTimers: new Set(),
     bottomScrollUntil: 0,
     lastBottomConversationId: '',
@@ -1176,13 +1175,6 @@
         text;
     }
 
-    if (ui.debugAction) {
-      ui.debugAction.textContent =
-        telemetry.debugId
-          ? '结束性能诊断 · ' +
-            telemetry.debugId
-          : '开始性能诊断';
-    }
   }
 
   function loadSettings() {
@@ -2828,40 +2820,7 @@
     }, delay);
   }
 
-  function scheduleToolScan(
-    delay = EXTREME_NATIVE_MODE
-      ? 120
-      : 180
-  ) {
-    if (
-      state.destroyed ||
-      !state.settings.enabled ||
-      state.toolScanTimer
-    ) {
-      return;
-    }
-
-    state.toolScanTimer =
-      window.setTimeout(() => {
-        state.toolScanTimer = 0;
-
-        if (
-          state.destroyed ||
-          routeIsSettling()
-        ) {
-          return;
-        }
-
-        const activeTurn =
-          ChatGPTDOMAdapter.activeTurn();
-
-        if (activeTurn) {
-          processToolMutationNode(
-            activeTurn
-          );
-        }
-      }, delay);
-  }
+  
 
   function conversationScroller() {
     const anchor =
@@ -4104,6 +4063,13 @@
       'false'
     );
 
+    if (state.ui?.mainView) {
+      state.ui.mainView.hidden = false;
+    }
+    if (state.ui?.settingsView) {
+      state.ui.settingsView.hidden = true;
+    }
+
     positionNativePanel(anchor);
 
     state.nativeStatus = {
@@ -4111,11 +4077,9 @@
       ...(window.__CHATGPT_NATIVE__ || {}),
     };
 
-    updateUI(currentTurnCount());
-    requestNativeUpdateCheck();
-    scheduleRefresh(0);
-    evaluateConversationState();
-    renderConversationStates();
+    updateUI(
+      state.turnCache.length
+    );
 
     return nativePanelRenderState();
   }
