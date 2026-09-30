@@ -492,7 +492,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                 self.toggleScriptPanel(
                     from: control,
-                    retry: true
+                    retriesRemaining: 12
                 )
             }
 
@@ -803,7 +803,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private func toggleScriptPanel(
             from sender: UIButton,
-            retry: Bool
+            retriesRemaining: Int
         ) {
             guard let webView else {
                 return
@@ -899,7 +899,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
-                guard retry else {
+                guard retriesRemaining > 0 else {
                     sender.accessibilityValue =
                         "panel-unavailable"
                     return
@@ -908,7 +908,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self.ensureScriptsAreRunning()
 
                 DispatchQueue.main.asyncAfter(
-                    deadline: .now() + 0.18
+                    deadline: .now() + 0.20
                 ) { [weak self, weak sender] in
                     guard
                         let self,
@@ -919,7 +919,8 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                     self.toggleScriptPanel(
                         from: sender,
-                        retry: false
+                        retriesRemaining:
+                            retriesRemaining - 1
                     )
                 }
             }
