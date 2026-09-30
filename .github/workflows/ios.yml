@@ -6,7 +6,7 @@ on:
       - main
     paths:
       - "App/**"
-      - "Resources/**"
+      - "Resources/**"\n      - "safari/**"\n      - "package.json"
       - "project.yml"
       - "UITests/**"
       - ".github/workflows/ios.yml"
