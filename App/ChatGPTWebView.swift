@@ -474,6 +474,19 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
+                let currentState =
+                    control.accessibilityValue ??
+                    ""
+
+                if [
+                    "panel-ready",
+                    "panel-open",
+                    "panel-open-not-ready"
+                ].contains(currentState) {
+                    self.closeScriptPanel()
+                    return
+                }
+
                 control.accessibilityValue =
                     "panel-requested"
 
