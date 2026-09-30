@@ -2508,7 +2508,7 @@
       ok: true,
       open,
       ready:
-        visible &&
+        open &&
         interactive &&
         hasCurrent &&
         hasLatest &&
