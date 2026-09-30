@@ -17,7 +17,7 @@ on:
 
 permissions:
   contents: write
-  id-token: write
+  actions: read
 
 jobs:
   build-ipa:
@@ -149,10 +149,12 @@ jobs:
             echo "No provisioning profile currently authorizes com.masakacj.chatgptweb; keeping unsigned build only."
             exit 0
           fi
-          OIDC_TOKEN="$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=ipa-signer" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
           curl --fail-with-body --retry 3 --retry-all-errors \
             -X POST \
-            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
+            -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" \
+            -H "X-GitHub-Sha: $GITHUB_SHA" \
             -H "X-App-Key: chatgpt-web" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @"$PWD/dist/$IPA" \
