@@ -46,16 +46,18 @@ Changing only the iOS gesture script does not require bumping the shared script 
 The shared optimization layer starts from the first conversation turn:
 
 - always-on `content-visibility: auto` for eligible turns;
-- current streaming turn remains fully live;
+- current streaming final answer remains fully live;
 - focused / interactive content remains fully live;
-- completed MCP / DevSpace / tool-call process blocks collapse to a lightweight one-line summary;
-- running or approval-waiting tool blocks remain live;
+- iOS native / Safari-container runtime uses **Result Only mode**: normal MCP, tool, reasoning, and process blocks are hidden instead of rendered as summaries;
+- tool blocks that require explicit user approval / confirmation remain visible and interactive;
+- the Result Only status keeps a lightweight per-request elapsed-time and tool-call summary in the control panel;
+- desktop userscript runtime keeps the lightweight one-line tool summary behavior;
 - final assistant answers remain intact;
 - no `innerHTML` snapshots;
 - no `replaceChildren`;
 - no media source unloading.
 
-The shared script is the same on PC and iOS.
+The shared script is the same on PC and iOS, with Result Only presentation enabled only for the native/Safari-container runtime.
 
 ## Shared conversation-state model
 
