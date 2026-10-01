@@ -491,6 +491,16 @@ requireText(
 );
 requireText(
   gesture,
+  'triggerPx: 8',
+  'fast edge swipe trigger'
+);
+requireText(
+  gesture,
+  'axisRatio: 0.72',
+  'responsive horizontal intent threshold'
+);
+requireText(
+  gesture,
   'twoFingerTriggerPx: 6',
   'two-finger global scroll threshold'
 );
@@ -586,6 +596,11 @@ requireText(
 );
 requireText(
   gesture,
+  "function openSidebar() {\n    return clickFirst([",
+  'direct sidebar open fast path'
+);
+requireText(
+  gesture,
   'function closeSidebar()',
   'sidebar closer'
 );
@@ -626,6 +641,7 @@ requireText(
 );
 
 const gestureForbidden = [
+  ['if (isSidebarOpen()) return true;', 'eager sidebar-open layout check'],
   ["open: isSidebarOpen()", 'eager sidebar layout query on edge touchstart'],
   ["window.addEventListener('touchstart', start, {\n      passive: false,", 'blocking touchstart listener'],
   ['content-visibility', 'performance logic in gesture script'],
