@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.11
+// @version      0.4.12
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.11';
+  const VERSION = '0.4.12';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -31,7 +31,6 @@
   );
   const EXTREME_NATIVE_MODE =
     IS_NATIVE_IOS;
-  const NATIVE_PASSIVE_RECENT_TURNS = 4;
   const INITIAL_BOTTOM_SCROLL_DELAYS = [
     0,
     700,
@@ -1887,10 +1886,6 @@
       '[data-cgpt-windowed="1"] > * {',
       '  display: none !important;',
       '}',
-      '[data-cgpt-passive-turn="1"] {',
-      '  content-visibility: auto !important;',
-      '  contain-intrinsic-size: auto 320px !important;',
-      '}',
       '[data-cgpt-tool-group="1"] {',
       '  content-visibility: auto !important;',
       '  contain: layout style paint !important;',
@@ -2099,41 +2094,6 @@
     }
 
     state.turnCache = turns;
-
-    if (
-      EXTREME_NATIVE_MODE &&
-      state.settings.enabled
-    ) {
-      const passiveBefore =
-        Math.max(
-          0,
-          turns.length -
-            NATIVE_PASSIVE_RECENT_TURNS
-        );
-
-      for (
-        let index = 0;
-        index < turns.length;
-        index += 1
-      ) {
-        const turn = turns[index];
-
-        if (!(turn instanceof HTMLElement)) {
-          continue;
-        }
-
-        if (index < passiveBefore) {
-          turn.setAttribute(
-            'data-cgpt-passive-turn',
-            '1'
-          );
-        } else {
-          turn.removeAttribute(
-            'data-cgpt-passive-turn'
-          );
-        }
-      }
-    }
 
     state.turnCacheDirty = false;
     state.lastTurnScanAt = now;
@@ -2729,17 +2689,6 @@
         Array.from(state.optimizedTurns)
     ) {
       restoreWindowedTurn(turn);
-    }
-
-    for (
-      const turn of
-        Array.from(state.turnSet)
-    ) {
-      if (turn instanceof HTMLElement) {
-        turn.removeAttribute(
-          'data-cgpt-passive-turn'
-        );
-      }
     }
 
     state.optimizedTurns.clear();
