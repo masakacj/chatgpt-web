@@ -162,7 +162,8 @@ final class UnifiedScriptStore {
             "scriptOrigin": scriptOrigin,
             "updateStatus": updateStatus,
             "hotUpdate": true,
-            "telemetryTransport": true
+            "telemetryTransport": true,
+            "nativeGestures": true
         ]
 
         if let latestScriptVersion {
