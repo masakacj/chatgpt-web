@@ -1,6 +1,6 @@
 # ChatGPT Web
 
-## Current iOS runtime (0.4.32)
+## Current iOS runtime (0.4.33)
 
 The default iOS app runtime is again the developer-first WKWebView shell:
 
@@ -11,6 +11,7 @@ The default iOS app runtime is again the developer-first WKWebView shell:
 - latest userscript is injected into the current page immediately;
 - returning the app to foreground triggers a throttled hot-update check;
 - Result Only mode hides normal reasoning/tool process UI while keeping explicit approval interactions;
+- completed historical reasoning/tool DOM is destructively pruned in small idle chunks to reduce WebKit memory pressure;
 - separate popup WKWebView for links/files, plus WebKit content-process recovery.
 
 The SFSafariViewController + Action Extension implementation remains in the repository as a fallback/reference path, but it is no longer the default app root.
