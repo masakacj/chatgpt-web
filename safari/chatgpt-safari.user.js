@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.15
+// @version      0.4.16
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.15';
+  const VERSION = '0.4.16';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
