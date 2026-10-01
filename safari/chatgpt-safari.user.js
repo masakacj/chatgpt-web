@@ -2381,8 +2381,17 @@
       return;
     }
 
+    const raw =
+      String(label || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
     const summary =
-      compactToolSummary(label);
+      /^(?:MCP|工具)(?: ·|调用)/.test(
+        raw
+      )
+        ? raw
+        : compactToolSummary(raw);
 
     if (!summary) {
       group.removeAttribute(
