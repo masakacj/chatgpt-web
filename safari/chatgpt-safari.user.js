@@ -4819,17 +4819,17 @@
       }
     }
 
-    const sidebarRoot =
-      ChatGPTDOMAdapter.sidebarRoot();
-
     if (EXTREME_NATIVE_MODE) {
       state.sidebarObserver
         ?.disconnect();
       state.sidebarObserver = null;
-      state.sidebarRoot = sidebarRoot;
+      state.sidebarRoot = null;
       state.conversationLinks.clear();
       return;
     }
+
+    const sidebarRoot =
+      ChatGPTDOMAdapter.sidebarRoot();
 
     const sidebarRootChanged =
       sidebarRoot !==
@@ -4956,8 +4956,12 @@
           ChatGPTDOMAdapter
             .conversationRoot() !==
             state.conversationRoot ||
-          ChatGPTDOMAdapter.sidebarRoot() !==
-            state.sidebarRoot
+          (
+            !EXTREME_NATIVE_MODE &&
+            ChatGPTDOMAdapter
+              .sidebarRoot() !==
+              state.sidebarRoot
+          )
         ) {
           bindScopedObservers();
         }
