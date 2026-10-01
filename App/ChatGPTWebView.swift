@@ -144,29 +144,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                     <meta name="viewport"
                           content="width=device-width,initial-scale=1">
                   </head>
-                  <body>
-                    <button
-                      data-testid="sidebar-button"
-                      aria-expanded="false"
-                      aria-label="Open sidebar"
-                      onclick="
-                        const open =
-                          this.getAttribute('aria-expanded') !== 'true';
-                        this.setAttribute(
-                          'aria-expanded',
-                          open ? 'true' : 'false'
-                        );
-                        this.setAttribute(
-                          'aria-label',
-                          open ? 'Sidebar opened' : 'Open sidebar'
-                        );
-                        this.textContent =
-                          open ? 'Sidebar opened' : 'Open sidebar';
-                      "
-                    >
-                      Open sidebar
-                    </button>
-                  </body>
+                  <body></body>
                 </html>
                 """,
                 baseURL: URL(
@@ -291,6 +269,11 @@ struct ChatGPTWebView: UIViewRepresentable {
         private weak var browserMenuView: UIVisualEffectView?
         private weak var browserBackButton: UIButton?
         private weak var browserForwardButton: UIButton?
+
+        private static let browserControlPositionXKey =
+            "ChatGPTWeb.browserControlPositionX"
+        private static let browserControlPositionYKey =
+            "ChatGPTWeb.browserControlPositionY"
 
         weak var rootView:
             ChatGPTWebContainerView?
