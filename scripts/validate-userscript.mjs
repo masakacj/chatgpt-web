@@ -2,9 +2,11 @@ import fs from 'node:fs';
 
 const sharedPath = 'safari/chatgpt-safari.user.js';
 const gesturePath = 'safari/chatgpt-ios-gestures.user.js';
+const swiftPath = 'App/ChatGPTWebView.swift';
 
 const shared = fs.readFileSync(sharedPath, 'utf8');
 const gesture = fs.readFileSync(gesturePath, 'utf8');
+const swift = fs.readFileSync(swiftPath, 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
 function fail(message) {
@@ -496,11 +498,6 @@ requireText(
 );
 requireText(
   gesture,
-  'document.elementsFromPoint',
-  'touch-point scroll targeting'
-);
-requireText(
-  gesture,
   'function begin(event)',
   'two-finger vertical scroll start'
 );
@@ -566,6 +563,59 @@ for (
       needle
     );
   }
+}
+
+requireText(
+  swift,
+  'final class ChatGPTEdgeSwipeGestureRecognizer:',
+  'custom low-latency native edge recognizer'
+);
+requireText(
+  swift,
+  'self.triggerDistance = 4',
+  '4pt native edge trigger'
+);
+requireText(
+  swift,
+  'ChatGPTEdgeSwipeGestureRecognizer(',
+  'native custom edge gesture installation'
+);
+requireText(
+  swift,
+  'private static let\n            openSidebarJavaScript',
+  'precompiled sidebar open JavaScript'
+);
+requireText(
+  swift,
+  'abs(translation.x) >= 16',
+  'fast native two-finger navigation trigger'
+);
+if (
+  swift.includes(
+    'UIScreenEdgePanGestureRecognizer'
+  )
+) {
+  fail(
+    'forbidden system edge-pan hysteresis'
+  );
+}
+if (
+  swift.includes(
+    'const selectors = (json);'
+  )
+) {
+  fail(
+    'forbidden broken sidebar selector interpolation'
+  );
+}
+if (
+  gesture.includes(
+    'document.elementsFromPoint'
+  )
+) {
+  fail(
+    'forbidden two-finger hit-test scan'
+  );
 }
 
 console.log(JSON.stringify({
