@@ -133,10 +133,6 @@
     turnCache: [],
     turnCacheDirty: true,
     lastTurnScanAt: 0,
-    toolGroups: new Set(),
-    toolRecords: new WeakMap(),
-    processedToolHeadings: new WeakSet(),
-    toolCounts: { groups: 0, collapsed: 0 },
     conversationLinks: new Map(),
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
@@ -630,10 +626,8 @@
           previous,
           'toolNodesProcessed'
         ),
-      toolGroups:
-        state.toolCounts.groups,
-      toolCollapsed:
-        state.toolCounts.collapsed,
+      toolGroups: 0,
+      toolCollapsed: 0,
       loopCount:
         loop.count,
       loopAvgMs:
@@ -1590,10 +1584,6 @@
     const waiting = hasWaitingUserSignal();
     const running = hasToolOrStreamingSignal();
 
-    if (!waiting && !running) {
-      finalizeTrackedToolGroups();
-    }
-
     if (waiting) {
       state.settlingSince = 0;
       setConversationState(id, 'waiting_user', {
@@ -1920,35 +1910,6 @@
       '  overflow: hidden !important;',
       '  pointer-events: none !important;',
       '}',
-      '[data-cgpt-tool-collapsed="1"] {',
-      '  display: block !important;',
-      '  min-height: 38px !important;',
-      '  max-height: 42px !important;',
-      '  overflow: hidden !important;',
-      '  contain: strict !important;',
-      '}',
-      '[data-cgpt-tool-collapsed="1"] > * {',
-      '  display: none !important;',
-      '}',
-      '[data-cgpt-tool-collapsed="1"]::before {',
-      '  content: attr(data-cgpt-tool-summary);',
-      '  display: block;',
-      '  box-sizing: border-box;',
-      '  min-height: 38px;',
-      '  padding: 9px 11px;',
-      '  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);',
-      '  border-radius: 10px;',
-      '  opacity: .64;',
-      '  font: 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;',
-      '  white-space: nowrap;',
-      '  overflow: hidden;',
-      '  text-overflow: ellipsis;',
-      '}',
-      '[data-cgpt-tool-collapsed="1"] *,',
-      '[data-cgpt-tool-collapsed="1"]::before {',
-      '  animation: none !important;',
-      '  transition: none !important;',
-      '}',
       '[data-cgpt-safari-chat-state] {',
       '  --cgpt-chat-state-color: transparent;',
       '  background-image: radial-gradient(circle, var(--cgpt-chat-state-color) 0 3px, transparent 3.5px) !important;',
@@ -2163,28 +2124,25 @@
     group.removeAttribute(
       'data-cgpt-tool-collapsed'
     );
-    state.toolGroups.add(group);
   }
 
-  function toolActionNodes(scope) {
-    return Array.from(
-      scope.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
-    ).filter((node) => {
-      const text = nodeLabel(node);
-      return TOOL_ACTION_RE.test(text) && !TOOL_GROUP_RE.test(text);
-    });
-  }
-
-  function findToolGroupContainer(heading, turn) {
+  function findToolGroupContainer(
+    heading,
+    turn
+  ) {
     let node = heading.parentElement;
     let fallback = null;
 
     for (
       let depth = 0;
-      node && node !== turn && depth < 7;
-      depth += 1, node = node.parentElement
+      node &&
+      node !== turn &&
+      depth < 7;
+      depth += 1,
+      node = node.parentElement
     ) {
-      const role = node.getAttribute?.('role');
+      const role =
+        node.getAttribute?.('role');
 
       if (
         node.tagName === 'BUTTON' ||
@@ -2203,239 +2161,9 @@
       if (node.children.length >= 2) {
         return node;
       }
-
-      if (
-        !EXTREME_NATIVE_MODE &&
-        toolActionNodes(node).length > 0
-      ) {
-        return node;
-      }
     }
 
     return fallback;
-  }
-
-  function toolGroupNeedsAttention(group) {
-    const nodes = Array.from(
-      group.querySelectorAll(
-        'button,[role="button"],summary,[aria-live],[aria-label],[aria-busy="true"],[role="progressbar"]'
-      )
-    );
-
-    return nodes.some((node) => {
-      if (
-        node.matches?.(
-          '[aria-busy="true"],[role="progressbar"],[data-state="loading"],[data-loading="true"]'
-        )
-      ) {
-        return true;
-      }
-      return TOOL_ATTENTION_RE.test(nodeLabel(node));
-    });
-  }
-
-  function toolGroupRequiresUserAction(group) {
-    const nodes =
-      group.querySelectorAll(
-        'button,[role="button"],summary,[aria-label]'
-      );
-
-    for (const node of nodes) {
-      if (
-        TOOL_USER_ACTION_RE.test(
-          nodeLabel(node)
-        )
-      ) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  function toolSummary(group) {
-    let record = state.toolRecords.get(group);
-    if (!record) {
-      record = {};
-      state.toolRecords.set(group, record);
-    }
-
-    if (record.summary) return record.summary;
-
-    const count = Math.max(1, toolActionNodes(group).length);
-    const chinese =
-      (document.documentElement.lang || '')
-        .toLowerCase()
-        .startsWith('zh');
-
-    record.summary = chinese
-      ? '🛠 工具过程 · ' + count + ' 项 · 已折叠'
-      : '🛠 Tool process · ' + count + ' item' +
-        (count === 1 ? '' : 's') + ' · collapsed';
-
-    return record.summary;
-  }
-
-  function updateToolCounts() {
-    let groups = 0;
-    let collapsed = 0;
-
-    for (
-      const group of
-        Array.from(state.toolGroups)
-    ) {
-      if (
-        !(group instanceof HTMLElement) ||
-        !group.isConnected
-      ) {
-        state.toolGroups.delete(group);
-        continue;
-      }
-
-      groups += 1;
-
-      if (
-        group.hasAttribute(
-          'data-cgpt-tool-collapsed'
-        ) ||
-        group.hasAttribute(
-          'data-cgpt-tool-hidden'
-        ) ||
-        group.hasAttribute(
-          'data-cgpt-tool-summary-only'
-        )
-      ) {
-        collapsed += 1;
-      }
-    }
-
-    state.toolCounts = {
-      groups,
-      collapsed,
-    };
-  }
-
-  function registerToolGroup(
-    group,
-    turn,
-    liveTurn = null
-  ) {
-    if (!(group instanceof HTMLElement)) {
-      return;
-    }
-
-    state.toolGroups.add(group);
-    group.setAttribute(
-      'data-cgpt-tool-group',
-      '1'
-    );
-
-    if (EXTREME_NATIVE_MODE) {
-      const requiresAction =
-        group.matches(':focus-within') ||
-        toolGroupRequiresUserAction(
-          group
-        );
-
-      if (requiresAction) {
-        group.removeAttribute(
-          'data-cgpt-tool-hidden'
-        );
-        group.removeAttribute(
-          'data-cgpt-tool-summary-only'
-        );
-        group.removeAttribute(
-          'data-cgpt-tool-summary'
-        );
-      } else {
-        let summary = '';
-
-        for (
-          const node of
-            toolActionNodes(group)
-              .slice(0, 8)
-        ) {
-          summary =
-            compactToolSummary(
-              nodeLabel(node)
-            );
-
-          if (summary) break;
-        }
-
-        setToolSummaryOnly(
-          group,
-          summary
-        );
-      }
-
-      return;
-    }
-
-    const active =
-      turn === liveTurn ||
-      toolGroupNeedsAttention(group) ||
-      group.matches(':focus-within');
-
-    if (active) {
-      group.removeAttribute(
-        'data-cgpt-tool-collapsed'
-      );
-      group.removeAttribute(
-        'data-cgpt-tool-summary'
-      );
-      group.removeAttribute(
-        'data-cgpt-tool-hidden'
-      );
-    } else {
-      group.setAttribute(
-        'data-cgpt-tool-collapsed',
-        '1'
-      );
-      group.setAttribute(
-        'data-cgpt-tool-summary',
-        toolSummary(group)
-      );
-    }
-  }
-
-  function toolHeadingsInScope(scope) {
-    if (!(scope instanceof Element)) {
-      return [];
-    }
-
-    const selector =
-      'button,[role="button"],' +
-      'summary,[aria-expanded]';
-    const result = [];
-
-    const isProcessHeading = (node) => {
-      const label = nodeLabel(node);
-
-      return (
-        TOOL_GROUP_RE.test(label) ||
-        TOOL_ACTION_RE.test(label) ||
-        PROCESS_GROUP_RE.test(label)
-      );
-    };
-
-    if (
-      scope.matches(selector) &&
-      isProcessHeading(scope)
-    ) {
-      result.push(scope);
-    }
-
-    for (
-      const node of
-        scope.querySelectorAll(selector)
-    ) {
-      if (isProcessHeading(node)) {
-        result.push(node);
-      }
-    }
-
-    return result;
   }
 
   function processToolMutationNode(node) {
@@ -2531,8 +2259,6 @@
         '1'
       );
 
-      state.toolGroups.add(group);
-
       if (
         TOOL_USER_ACTION_RE.test(label)
       ) {
@@ -2577,64 +2303,12 @@
     );
   }
 
-  function finalizeTrackedToolGroups() {
-    if (
-      EXTREME_NATIVE_MODE ||
-      !state.settings.enabled
-    ) {
-      return;
-    }
-
-    const activeTurn =
-      ChatGPTDOMAdapter.activeTurn();
-
-    if (!(activeTurn instanceof HTMLElement)) {
-      return;
-    }
-
-    const liveTurn =
-      isStreaming()
-        ? activeTurn
-        : null;
-    let changed = false;
-
-    for (
-      const group of
-        Array.from(state.toolGroups)
-    ) {
-      if (
-        !(group instanceof HTMLElement) ||
-        !group.isConnected
-      ) {
-        state.toolGroups.delete(group);
-        changed = true;
-        continue;
-      }
-
-      if (!activeTurn.contains(group)) {
-        continue;
-      }
-
-      registerToolGroup(
-        group,
-        activeTurn,
-        liveTurn
-      );
-      changed = true;
-    }
-
-    if (changed) {
-      updateToolCounts();
-    }
-  }
-
   function restoreToolGroups() {
     for (
       const group of
         document.querySelectorAll(
           '[data-cgpt-tool-group="1"],' +
           '[data-cgpt-tool-hidden="1"],' +
-          '[data-cgpt-tool-collapsed="1"],' +
           '[data-cgpt-tool-summary-only="1"]'
         )
     ) {
@@ -2646,9 +2320,6 @@
         'data-cgpt-tool-group'
       );
       group.removeAttribute(
-        'data-cgpt-tool-collapsed'
-      );
-      group.removeAttribute(
         'data-cgpt-tool-summary'
       );
       group.removeAttribute(
@@ -2658,12 +2329,6 @@
         'data-cgpt-tool-summary-only'
       );
     }
-
-    state.toolGroups.clear();
-    state.toolCounts = {
-      groups: 0,
-      collapsed: 0,
-    };
   }
 
   function isStreaming() {
@@ -4285,9 +3950,7 @@
           turnStructureChanged = true;
         }
 
-        if (EXTREME_NATIVE_MODE) {
-          processToolMutationNode(node);
-        }
+        processToolMutationNode(node);
 
         if (
           node.matches?.(
@@ -4413,10 +4076,7 @@
           const activeTurn =
             ChatGPTDOMAdapter.activeTurn();
 
-          if (
-            EXTREME_NATIVE_MODE &&
-            activeTurn
-          ) {
+          if (activeTurn) {
             processToolMutationNode(
               activeTurn
             );
@@ -5175,7 +4835,10 @@
   }
 
   installStyle();
-  setupConversationStateSync();
+
+  if (!EXTREME_NATIVE_MODE) {
+    setupConversationStateSync();
+  }
 
   const sidebarCleanupStarted =
     runOneTimeSidebarCleanup();
