@@ -87,26 +87,6 @@ requireText(
 );
 requireText(
   shared,
-  'DEFAULT_AGGRESSIVE_WINDOWING = false',
-  'safe default with second virtualization disabled'
-);
-requireText(
-  shared,
-  'function applyAggressiveWindowing(',
-  'optional aggressive windowing fallback'
-);
-requireText(
-  shared,
-  'new IntersectionObserver(',
-  'experimental aggressive windowing observer'
-);
-requireText(
-  shared,
-  'data-cgpt-windowed',
-  'experimental windowed turn marker'
-);
-requireText(
-  shared,
   'function turnCandidates(force = false)',
   'cached turn discovery'
 );
@@ -219,6 +199,11 @@ requireText(
   shared,
   "window.addEventListener('storage', onStorageSync)",
   'storage-event sync fallback'
+);
+requireText(
+  shared,
+  'if (!EXTREME_NATIVE_MODE) {\n    setupConversationStateSync();',
+  'desktop-only cross-tab state sync'
 );
 requireText(
   shared,
@@ -448,6 +433,14 @@ const sharedForbidden = [
   ['contain-intrinsic-size: auto 320px', 'estimated historical turn height'],
   ['conversationScroller(', 'dynamic scroll-container probing'],
   ['animation: cgpt-safari-pulse', 'sidebar pulse animation'],
+  ['aggressiveWindowing', 'removed second virtualization setting'],
+  ['new IntersectionObserver(', 'removed second virtualization observer'],
+  ['data-cgpt-windowed', 'removed second virtualization marker'],
+  ['scheduleRefresh(', 'removed redundant performance refresh pipeline'],
+  ['data-cgpt-tool-collapsed', 'removed legacy tool collapse mode'],
+  ['function registerToolGroup(', 'removed legacy tool group pipeline'],
+  ['function toolSummary(', 'removed legacy tool summary pipeline'],
+  ['function finalizeTrackedToolGroups(', 'removed legacy tool finalizer'],
 ];
 
 for (const [needle, description] of sharedForbidden) {
