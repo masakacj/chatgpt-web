@@ -620,6 +620,22 @@ requireText(
   'case "send-touch-ack":',
   'native send haptic handler'
 );
+requireText(
+  swift,
+  'webView.topAnchor.constraint(\n                equalTo:\n                    safeAreaLayoutGuide\n                        .topAnchor',
+  'WebView top safe-area constraint'
+);
+
+if (
+  swift.includes(
+    'webView.topAnchor.constraint(\n                equalTo: topAnchor'
+  )
+) {
+  fail(
+    'forbidden WebView top-edge overlap with status area'
+  );
+}
+
 console.log(JSON.stringify({
   ok: true,
   sharedVersion: pkg.version,

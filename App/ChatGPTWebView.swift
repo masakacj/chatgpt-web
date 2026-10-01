@@ -48,7 +48,9 @@ final class ChatGPTWebContainerView: UIView {
                 equalTo: trailingAnchor
             ),
             webView.topAnchor.constraint(
-                equalTo: topAnchor
+                equalTo:
+                    safeAreaLayoutGuide
+                        .topAnchor
             ),
             webView.bottomAnchor.constraint(
                 equalTo: bottomAnchor
