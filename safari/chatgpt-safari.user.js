@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.33
+// @version      0.4.34
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.33';
+  const VERSION = '0.4.34';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -117,6 +117,16 @@
     '[data-testid*="tool-status" i]',
     '[data-testid*="tool-trace" i]',
   ].join(',');
+  const MODERN_ACTIVITY_HEADER_QUERY =
+    '[class*="group/activity-header"]';
+  const MODERN_MCP_FRAME_QUERY = [
+    'iframe[title^="mcp-" i]',
+    'iframe[title*="mcpoffice" i]',
+  ].join(',');
+  const MODERN_MCP_STATUS_RE =
+    /(?:已打开|正在打开)\s+(?:mcp-[A-Za-z0-9._-]+|mcpoffice)/i;
+  const MODERN_THINKING_RE =
+    /^(?:正在思考|思考了\s*\d|Thinking|Thought for)/i;
   const SEND_CONTROL_QUERY = [
     '[data-testid="send-button"]',
     'button[aria-label="Send prompt"]',
@@ -2239,6 +2249,7 @@
       '}',
       'html[data-cgpt-result-only="1"] [data-cgpt-tool-summary-only="1"],',
       '[data-cgpt-process-pruned="1"],',
+      '[data-cgpt-modern-process-hidden="1"],',
       '[data-cgpt-tool-hidden="1"] {',
       '  display: none !important;',
       '  content-visibility: hidden !important;',
@@ -2791,6 +2802,9 @@
 
     removeResultOnlyIndicator();
     renderResultOnlyCompletionSummary();
+    pruneModernResultOnlyProcess(
+      document
+    );
 
     const completedTurn =
       lastConversationTurn();
@@ -2896,6 +2910,60 @@
     );
   }
 
+  function recordResultToolKey(
+    candidate,
+    key
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      !state.resultCycle?.active ||
+      !(candidate instanceof HTMLElement) ||
+      !key
+    ) {
+      return;
+    }
+
+    const attr =
+      'data-cgpt-result-tool-key';
+
+    const previous =
+      candidate.getAttribute(attr) ||
+      '';
+
+    if (previous === key) {
+      return;
+    }
+
+    const counts =
+      state.resultCycle.toolCounts;
+
+    if (previous) {
+      const oldCount =
+        Number(counts[previous] || 0);
+
+      if (oldCount > 1) {
+        counts[previous] =
+          oldCount - 1;
+      } else {
+        delete counts[previous];
+      }
+    } else {
+      state.resultCycle.toolTotal +=
+        1;
+    }
+
+    counts[key] =
+      Number(counts[key] || 0) + 1;
+
+    candidate.setAttribute(
+      attr,
+      key
+    );
+
+    updateResultOnlyIndicator();
+    touchResultCycle();
+  }
+
   function recordResultToolCandidate(
     candidate,
     label
@@ -2948,45 +3016,10 @@
       return;
     }
 
-    const attr =
-      'data-cgpt-result-tool-key';
-
-    const previous =
-      candidate.getAttribute(attr) ||
-      '';
-
-    if (previous === key) {
-      return;
-    }
-
-    const counts =
-      state.resultCycle.toolCounts;
-
-    if (previous) {
-      const oldCount =
-        Number(counts[previous] || 0);
-
-      if (oldCount > 1) {
-        counts[previous] =
-          oldCount - 1;
-      } else {
-        delete counts[previous];
-      }
-    } else {
-      state.resultCycle.toolTotal +=
-        1;
-    }
-
-    counts[key] =
-      Number(counts[key] || 0) + 1;
-
-    candidate.setAttribute(
-      attr,
+    recordResultToolKey(
+      candidate,
       key
     );
-
-    updateResultOnlyIndicator();
-    touchResultCycle();
   }
 
   function setToolSummaryOnly(
@@ -3136,6 +3169,298 @@
     }
 
     return false;
+  }
+
+  function modernProcessText(node) {
+    return String(
+      node?.innerText ||
+      node?.textContent ||
+      ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function modernProcessMatches(
+    scope,
+    selector
+  ) {
+    const result = [];
+
+    if (
+      scope instanceof Element &&
+      scope.matches?.(selector)
+    ) {
+      result.push(scope);
+    }
+
+    for (
+      const node of
+        scope?.querySelectorAll?.(
+          selector
+        ) || []
+    ) {
+      result.push(node);
+    }
+
+    return result;
+  }
+
+  function findModernMcpWrapper(node) {
+    if (!(node instanceof Element)) {
+      return null;
+    }
+
+    let current = node;
+    let compact = null;
+
+    for (
+      let depth = 0;
+      current &&
+      current !== document.body &&
+      depth < 8;
+      depth += 1
+    ) {
+      current = current.parentElement;
+
+      if (!(current instanceof HTMLElement)) {
+        break;
+      }
+
+      const text =
+        modernProcessText(current);
+
+      if (
+        current.tagName === 'DIV' &&
+        text.length <= 260
+      ) {
+        compact = current;
+        continue;
+      }
+
+      if (compact) {
+        break;
+      }
+    }
+
+    return compact;
+  }
+
+  function hideModernProcessRoot(root) {
+    if (!(root instanceof HTMLElement)) {
+      return false;
+    }
+
+    root.setAttribute(
+      'data-cgpt-modern-process-hidden',
+      '1'
+    );
+
+    return true;
+  }
+
+  function removeModernProcessRoot(root) {
+    if (
+      !(root instanceof HTMLElement) ||
+      groupNeedsUserAction(root)
+    ) {
+      return false;
+    }
+
+    root.setAttribute(
+      'data-cgpt-modern-process-pruned',
+      '1'
+    );
+
+    root.remove();
+    return true;
+  }
+
+  function modernMcpName(text) {
+    return (
+      String(text || '')
+        .match(
+          /\b(mcp-[A-Za-z0-9._-]+|mcpoffice)\b/i
+        )?.[1] || ''
+    );
+  }
+
+  function pruneModernResultOnlyProcess(
+    scope = document
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      !scope
+    ) {
+      return {
+        removed: 0,
+        hidden: 0,
+      };
+    }
+
+    let removed = 0;
+    let hidden = 0;
+
+    const running =
+      isStreaming() ||
+      state.resultCycle?.active;
+
+    const statuses =
+      modernProcessMatches(
+        scope,
+        '[role="status"]'
+      );
+
+    for (const status of statuses) {
+      if (!(status instanceof HTMLElement)) {
+        continue;
+      }
+
+      const label =
+        modernProcessText(status);
+
+      if (!MODERN_MCP_STATUS_RE.test(label)) {
+        continue;
+      }
+
+      const name =
+        modernMcpName(label);
+
+      if (name) {
+        recordResultToolKey(
+          status,
+          'MCP · ' + name
+        );
+      }
+
+      const root =
+        findModernMcpWrapper(status);
+
+      if (
+        !(root instanceof HTMLElement) ||
+        groupNeedsUserAction(root)
+      ) {
+        continue;
+      }
+
+      if (
+        running &&
+        /^正在打开/i.test(label)
+      ) {
+        if (hideModernProcessRoot(root)) {
+          hidden += 1;
+        }
+        continue;
+      }
+
+      if (removeModernProcessRoot(root)) {
+        removed += 1;
+      }
+    }
+
+    const frames =
+      modernProcessMatches(
+        scope,
+        MODERN_MCP_FRAME_QUERY
+      );
+
+    for (const frame of frames) {
+      if (!(frame instanceof HTMLIFrameElement)) {
+        continue;
+      }
+
+      const name =
+        modernMcpName(
+          frame.title || ''
+        );
+
+      if (name) {
+        recordResultToolKey(
+          frame,
+          'MCP · ' + name
+        );
+      }
+
+      const root =
+        findModernMcpWrapper(frame) ||
+        frame.parentElement;
+
+      if (
+        !(root instanceof HTMLElement) ||
+        !root.isConnected ||
+        groupNeedsUserAction(root)
+      ) {
+        continue;
+      }
+
+      const rootText =
+        modernProcessText(root);
+
+      if (
+        running &&
+        /正在打开/i.test(rootText)
+      ) {
+        if (hideModernProcessRoot(root)) {
+          hidden += 1;
+        }
+        continue;
+      }
+
+      if (removeModernProcessRoot(root)) {
+        removed += 1;
+      }
+    }
+
+    const headers =
+      modernProcessMatches(
+        scope,
+        MODERN_ACTIVITY_HEADER_QUERY
+      );
+
+    for (const header of headers) {
+      if (!(header instanceof HTMLElement)) {
+        continue;
+      }
+
+      const label =
+        modernProcessText(header);
+
+      if (
+        !MODERN_THINKING_RE.test(label) ||
+        label.length > 100
+      ) {
+        continue;
+      }
+
+      const root =
+        header.parentElement;
+
+      if (
+        !(root instanceof HTMLElement) ||
+        groupNeedsUserAction(root)
+      ) {
+        continue;
+      }
+
+      if (
+        running &&
+        /^(?:正在思考|Thinking)/i.test(label)
+      ) {
+        if (hideModernProcessRoot(root)) {
+          hidden += 1;
+        }
+        continue;
+      }
+
+      if (removeModernProcessRoot(root)) {
+        removed += 1;
+      }
+    }
+
+    return {
+      removed,
+      hidden,
+    };
   }
 
   function pruneProcessGroup(
@@ -3309,6 +3634,10 @@
         ) {
           return;
         }
+
+        pruneModernResultOnlyProcess(
+          document
+        );
 
         const turns =
           turnCandidates(true);
@@ -5220,6 +5549,12 @@
 
         processToolMutationNode(node);
 
+        if (RESULT_ONLY_MODE) {
+          pruneModernResultOnlyProcess(
+            node
+          );
+        }
+
         if (
           !EXTREME_NATIVE_MODE &&
           node.matches?.(
@@ -5357,6 +5692,10 @@
               activeTurn
             );
           }
+
+          pruneModernResultOnlyProcess(
+            conversationRoot
+          );
 
           scheduleHistoricalResultOnlyPrune(
             40
@@ -5712,6 +6051,9 @@
     setupObservers();
     invalidateTurnCache();
     turnCandidates(true);
+    pruneModernResultOnlyProcess(
+      document
+    );
     scheduleHistoricalResultOnlyPrune(
       20
     );
