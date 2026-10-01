@@ -76,16 +76,16 @@ targets:
 
           cat > "$DEST" <<'JS'
           var ExtensionPreprocessingJS = new function() {
-            this.run = function(arguments) {
-              arguments.completionFunction({
+            this.run = function(parameters) {
+              parameters.completionFunction({
                 ready: true
               });
             };
 
-            this.finalize = function(arguments) {
+            this.finalize = function(parameters) {
               if (
-                !arguments ||
-                arguments.inject !== true
+                !parameters ||
+                parameters.inject !== true
               ) {
                 return;
               }
