@@ -142,6 +142,11 @@ requireText(
 );
 requireText(
   shared,
+  'overscroll-behavior-y: none',
+  'hard vertical overscroll boundary'
+);
+requireText(
+  shared,
   'state.conversationObserver.observe(',
   'conversation-root observer'
 );
@@ -492,6 +497,11 @@ requireText(
 );
 requireText(
   gesture,
+  'return null;',
+  'directional scroll boundary stop'
+);
+requireText(
+  gesture,
   'document.elementsFromPoint',
   'touch-point scroll targeting'
 );
@@ -581,6 +591,7 @@ const gestureForbidden = [
   ['BroadcastChannel', 'conversation state logic in gesture script'],
   ['data-cgpt-tool-collapsed', 'tool compaction in gesture script'],
   ['messageHandlers?.chatGPTNative', 'native update bridge in gesture script'],
+  ['const next = pickScrollContainer(', 'scroll chaining beyond the active container'],
 ];
 
 for (const [needle, description] of gestureForbidden) {
