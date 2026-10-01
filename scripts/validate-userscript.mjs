@@ -165,6 +165,32 @@ requireText(
 );
 requireText(
   shared,
+  'function showSafariInjectionConfirmation(',
+  'visible Safari injection confirmation'
+);
+requireText(
+  shared,
+  "'优化已启用'",
+  'first injection confirmation text'
+);
+requireText(
+  shared,
+  "'优化已重新加载'",
+  'reinjection confirmation text'
+);
+requireText(
+  shared,
+  'window.__CHATGPT_UNIFIED_INJECTED__ = {',
+  'injection diagnostic marker'
+);
+requireText(
+  shared,
+  "'data-cgpt-runtime-version'",
+  'DOM runtime version marker'
+);
+
+requireText(
+  shared,
   'function processToolMutationNode(node)',
   'tool/MCP optimization'
 );
