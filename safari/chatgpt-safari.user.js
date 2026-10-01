@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.10
+// @version      0.4.11
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.10';
+  const VERSION = '0.4.11';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -127,6 +127,7 @@
     conversationObserver: null,
     sidebarObserver: null,
     sidebarReconcileTimer: 0,
+    foregroundResumeTimer: 0,
     bottomScrollTimers: new Set(),
     lastBottomConversationId: '',
     conversationRoot: null,
@@ -4551,10 +4552,14 @@
     const conversationRoot =
       ChatGPTDOMAdapter.conversationRoot();
 
+    const conversationRootChanged =
+      conversationRoot !==
+        state.conversationRoot;
+
     if (
       force ||
-      conversationRoot !==
-        state.conversationRoot
+      conversationRootChanged ||
+      !state.conversationObserver
     ) {
       state.conversationObserver
         ?.disconnect();
@@ -4577,19 +4582,24 @@
           }
         );
 
-        invalidateTurnCache();
-        turnCandidates(true);
-
-        const activeTurn =
-          ChatGPTDOMAdapter.activeTurn();
-
         if (
-          EXTREME_NATIVE_MODE &&
-          activeTurn
+          force ||
+          conversationRootChanged
         ) {
-          processToolMutationNode(
+          invalidateTurnCache();
+          turnCandidates(true);
+
+          const activeTurn =
+            ChatGPTDOMAdapter.activeTurn();
+
+          if (
+            EXTREME_NATIVE_MODE &&
             activeTurn
-          );
+          ) {
+            processToolMutationNode(
+              activeTurn
+            );
+          }
         }
       }
     }
@@ -4597,16 +4607,26 @@
     const sidebarRoot =
       ChatGPTDOMAdapter.sidebarRoot();
 
+    const sidebarRootChanged =
+      sidebarRoot !==
+        state.sidebarRoot;
+
     if (
       force ||
-      sidebarRoot !==
-        state.sidebarRoot
+      sidebarRootChanged ||
+      !state.sidebarObserver
     ) {
       state.sidebarObserver?.disconnect();
 
       state.sidebarRoot = sidebarRoot;
       state.sidebarObserver = null;
-      state.conversationLinks.clear();
+
+      if (
+        force ||
+        sidebarRootChanged
+      ) {
+        state.conversationLinks.clear();
+      }
 
       if (sidebarRoot) {
         state.sidebarObserver =
@@ -4627,7 +4647,12 @@
           }
         );
 
-        reconcileSidebarConversationLinks();
+        if (
+          force ||
+          sidebarRootChanged
+        ) {
+          reconcileSidebarConversationLinks();
+        }
       }
     }
   }
@@ -4744,7 +4769,12 @@
 
     state.statusTimer =
       window.setInterval(() => {
-        if (state.destroyed) return;
+        if (
+          state.destroyed ||
+          document.hidden
+        ) {
+          return;
+        }
 
         if (
           IS_NATIVE_IOS &&
@@ -4867,24 +4897,69 @@
   }
 
   function onVisibility() {
-    if (!document.hidden) {
-      if (
-        IS_NATIVE_IOS &&
-        !document.getElementById(HOST_ID)
-      ) {
-        scheduleControlRecovery(0);
-      }
+    clearTimeout(
+      state.foregroundResumeTimer
+    );
+    state.foregroundResumeTimer = 0;
 
-      if (state.phaseTwoStarted) {
-        bindScopedObservers();
-      }
+    if (document.hidden) {
+      clearInitialBottomScroll();
 
-      scheduleInitialBottomScroll(false);
-      scheduleRefresh(0);
-      scheduleStateEvaluation(0);
-      scheduleSidebarReconcile(0);
-      renderConversationStates();
+      clearTimeout(state.refreshTimer);
+      state.refreshTimer = 0;
+
+      clearTimeout(state.stateEvalTimer);
+      state.stateEvalTimer = 0;
+
+      clearTimeout(
+        state.sidebarReconcileTimer
+      );
+      state.sidebarReconcileTimer = 0;
+
+      clearTimeout(state.routeRebindTimer);
+      state.routeRebindTimer = 0;
+
+      state.conversationObserver
+        ?.disconnect();
+      state.sidebarObserver
+        ?.disconnect();
+
+      state.conversationObserver = null;
+      state.sidebarObserver = null;
+
+      return;
     }
+
+    if (
+      IS_NATIVE_IOS &&
+      !document.getElementById(HOST_ID)
+    ) {
+      scheduleControlRecovery(0);
+    }
+
+    if (!state.phaseTwoStarted) {
+      return;
+    }
+
+    state.foregroundResumeTimer =
+      window.setTimeout(() => {
+        state.foregroundResumeTimer = 0;
+
+        if (
+          state.destroyed ||
+          document.hidden
+        ) {
+          return;
+        }
+
+        if (routeChanged()) {
+          onRoute();
+          return;
+        }
+
+        bindScopedObservers();
+        scheduleStateEvaluation(120);
+      }, IS_NATIVE_IOS ? 220 : 80);
   }
 
   function showControl() {
@@ -5026,6 +5101,7 @@
     clearTimeout(state.updateWatchdogTimer);
     clearTimeout(state.controlRecoveryTimer);
     clearTimeout(state.sidebarReconcileTimer);
+    clearTimeout(state.foregroundResumeTimer);
     clearInitialBottomScroll();
     clearInterval(state.statusTimer);
 
