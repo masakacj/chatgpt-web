@@ -653,7 +653,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self,
                 selector:
                     #selector(
-                        appDidEnterBackground
+                        appDidEnterBackground(_:)
                     ),
                 name:
                     UIApplication
@@ -665,7 +665,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self,
                 selector:
                     #selector(
-                        appDidBecomeActive
+                        appDidBecomeActive(_:)
                     ),
                 name:
                     UIApplication
@@ -677,7 +677,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self,
                 selector:
                     #selector(
-                        powerStateDidChange
+                        powerStateDidChange(_:)
                     ),
                 name:
                     .NSProcessInfoPowerStateDidChange,
@@ -688,7 +688,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self,
                 selector:
                     #selector(
-                        thermalStateDidChange
+                        thermalStateDidChange(_:)
                     ),
                 name:
                     ProcessInfo
@@ -698,28 +698,36 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         @objc
-        private func appDidEnterBackground() {
+        private func appDidEnterBackground(
+            _ notification: Notification
+        ) {
             sendNativeLifecycle(
                 "background"
             )
         }
 
         @objc
-        private func appDidBecomeActive() {
+        private func appDidBecomeActive(
+            _ notification: Notification
+        ) {
             sendNativeLifecycle(
                 "active"
             )
         }
 
         @objc
-        private func powerStateDidChange() {
+        private func powerStateDidChange(
+            _ notification: Notification
+        ) {
             sendNativeLifecycle(
                 "power"
             )
         }
 
         @objc
-        private func thermalStateDidChange() {
+        private func thermalStateDidChange(
+            _ notification: Notification
+        ) {
             sendNativeLifecycle(
                 "thermal"
             )
