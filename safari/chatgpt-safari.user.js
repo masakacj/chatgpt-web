@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.26
+// @version      0.4.27
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.26';
+  const VERSION = '0.4.27';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -110,6 +110,12 @@
     'button[aria-label*="送出"]',
   ].join(',');
 
+  const HAD_EXISTING_RUNTIME =
+    Boolean(
+      window[GLOBAL_KEY]?.version ||
+      window[LEGACY_GLOBAL_KEY]?.version
+    );
+
   try {
     window[GLOBAL_KEY]?.destroy?.();
     window[LEGACY_GLOBAL_KEY]?.destroy?.();
@@ -177,6 +183,85 @@
     const n = Number(value);
     return Math.min(max, Math.max(min, Number.isFinite(n) ? n : min));
   }
+
+  function showSafariInjectionConfirmation(
+    reloaded = false
+  ) {
+    if (!IS_SAFARI_CONTAINER) {
+      return;
+    }
+
+    const id =
+      'cgpt-safari-injection-confirmation';
+
+    document
+      .getElementById(id)
+      ?.remove();
+
+    const badge =
+      document.createElement('div');
+
+    badge.id = id;
+    badge.textContent =
+      (
+        reloaded
+          ? '优化已重新加载'
+          : '优化已启用'
+      ) +
+      ' · v' +
+      VERSION;
+
+    badge.setAttribute(
+      'role',
+      'status'
+    );
+    badge.setAttribute(
+      'aria-live',
+      'polite'
+    );
+
+    Object.assign(
+      badge.style,
+      {
+        position: 'fixed',
+        top:
+          'max(12px, env(safe-area-inset-top))',
+        left: '50%',
+        transform:
+          'translateX(-50%)',
+        zIndex: '2147483647',
+        pointerEvents: 'none',
+        padding: '8px 12px',
+        borderRadius: '999px',
+        background:
+          'rgba(24,24,27,.92)',
+        color: '#fff',
+        font:
+          '600 12px -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif',
+        lineHeight: '1.2',
+        whiteSpace: 'nowrap',
+        boxShadow:
+          '0 4px 16px rgba(0,0,0,.22)',
+      }
+    );
+
+    (
+      document.body ||
+      document.documentElement
+    )?.appendChild(
+      badge
+    );
+
+    window.setTimeout(
+      () => {
+        if (badge.isConnected) {
+          badge.remove();
+        }
+      },
+      1600
+    );
+  }
+
 
   function runtimeHidden() {
     return HAS_NATIVE_LIFECYCLE
@@ -5179,6 +5264,28 @@
 
   window[GLOBAL_KEY] = api;
   window[LEGACY_GLOBAL_KEY] = api;
+
+  window.__CHATGPT_UNIFIED_INJECTED__ = {
+    active: true,
+    version: VERSION,
+    mode:
+      IS_SAFARI_CONTAINER
+        ? 'safari-container'
+        : IS_NATIVE_IOS
+          ? 'native-ios'
+          : 'browser',
+    injectedAt: Date.now(),
+  };
+
+  document.documentElement
+    ?.setAttribute(
+      'data-cgpt-runtime-version',
+      VERSION
+    );
+
+  showSafariInjectionConfirmation(
+    HAD_EXISTING_RUNTIME
+  );
 
   if (EXTREME_NATIVE_MODE) {
     document.documentElement
