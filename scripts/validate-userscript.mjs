@@ -3,10 +3,12 @@ import fs from 'node:fs';
 const sharedPath = 'safari/chatgpt-safari.user.js';
 const gesturePath = 'safari/chatgpt-ios-gestures.user.js';
 const swiftPath = 'App/ChatGPTWebView.swift';
+const storePath = 'App/UnifiedScriptStore.swift';
 
 const shared = fs.readFileSync(sharedPath, 'utf8');
 const gesture = fs.readFileSync(gesturePath, 'utf8');
 const swift = fs.readFileSync(swiftPath, 'utf8');
+const store = fs.readFileSync(storePath, 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 
 function fail(message) {
@@ -617,6 +619,77 @@ if (
     'forbidden two-finger hit-test scan'
   );
 }
+
+requireText(
+  shared,
+  'const HAS_NATIVE_LIFECYCLE =',
+  'native lifecycle capability gate'
+);
+requireText(
+  shared,
+  'function nativeLifecycle(',
+  'native lifecycle runtime entrypoint'
+);
+requireText(
+  shared,
+  'function suspendRuntime()',
+  'native background suspension'
+);
+requireText(
+  shared,
+  'function resumeRuntime(',
+  'native foreground recovery'
+);
+requireText(
+  shared,
+  'function pauseTelemetryForLifecycle()',
+  'background telemetry pause'
+);
+requireText(
+  shared,
+  'function resumeTelemetryForLifecycle()',
+  'foreground telemetry resume'
+);
+requireText(
+  shared,
+  'if (!HAS_NATIVE_LIFECYCLE) {\n      document.addEventListener(',
+  'visibility fallback only for non-native lifecycle'
+);
+requireText(
+  store,
+  '"nativeLifecycle": true',
+  'native lifecycle capability bootstrap'
+);
+requireText(
+  store,
+  '"lowPowerMode":',
+  'native low power mode state'
+);
+requireText(
+  store,
+  '"thermalState":',
+  'native thermal state'
+);
+requireText(
+  swift,
+  'UIApplication\n                        .didEnterBackgroundNotification',
+  'native background notification'
+);
+requireText(
+  swift,
+  'UIApplication\n                        .didBecomeActiveNotification',
+  'native active notification'
+);
+requireText(
+  swift,
+  'NSProcessInfoPowerStateDidChange',
+  'native low power state notification'
+);
+requireText(
+  swift,
+  'thermalStateDidChangeNotification',
+  'native thermal state notification'
+);
 
 console.log(JSON.stringify({
   ok: true,
