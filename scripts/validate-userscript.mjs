@@ -4,27 +4,23 @@ const sharedPath =
   'safari/chatgpt-safari.user.js';
 const contentViewPath =
   'App/ContentView.swift';
-const safariContainerPath =
-  'App/SafariContainerView.swift';
+const webViewPath =
+  'App/ChatGPTWebView.swift';
+const scriptStorePath =
+  'App/UnifiedScriptStore.swift';
 const projectPath =
   'project.yml';
-const actionInfoPath =
-  'SafariScriptAction/Info.plist';
-const actionHandlerPath =
-  'SafariScriptAction/ActionRequestHandler.swift';
 
 const shared =
   fs.readFileSync(sharedPath, 'utf8');
 const contentView =
   fs.readFileSync(contentViewPath, 'utf8');
-const safariContainer =
-  fs.readFileSync(safariContainerPath, 'utf8');
+const webView =
+  fs.readFileSync(webViewPath, 'utf8');
+const scriptStore =
+  fs.readFileSync(scriptStorePath, 'utf8');
 const project =
   fs.readFileSync(projectPath, 'utf8');
-const actionInfo =
-  fs.readFileSync(actionInfoPath, 'utf8');
-const actionHandler =
-  fs.readFileSync(actionHandlerPath, 'utf8');
 const pkg =
   JSON.parse(
     fs.readFileSync('package.json', 'utf8')
@@ -67,198 +63,119 @@ if (
 
 requireText(
   contentView,
-  'SafariContainerView()',
-  'in-app Safari root'
+  'ChatGPTWebView()',
+  'WKWebView root'
 );
 
 if (
-  contentView.includes('SafariAutoLaunchView()') ||
-  contentView.includes('ChatGPTWebView()')
+  contentView.includes('SafariContainerView()') ||
+  contentView.includes('SafariAutoLaunchView()')
 ) {
-  fail('external Safari or WKWebView root is active');
+  fail('Safari container is still the active root');
 }
 
 requireText(
-  safariContainer,
-  'import SafariServices',
-  'SafariServices framework'
+  webView,
+  'import WebKit',
+  'WebKit framework'
 );
 requireText(
-  safariContainer,
-  'SFSafariViewController',
-  'in-app Safari controller'
+  webView,
+  'WKWebViewConfiguration()',
+  'WKWebView configuration'
 );
 requireText(
-  safariContainer,
-  '.ActivityButton(',
-  'script injection action button'
+  webView,
+  'WKWebsiteDataStore.default()',
+  'persistent website data store'
 );
 requireText(
-  safariContainer,
-  '"com.masakacj.chatgptweb.scriptaction"',
-  'script action extension id'
+  webView,
+  'webView.isInspectable = true',
+  'Safari Web Inspector support'
+);
+requireText(
+  webView,
+  'WKScriptMessageHandler',
+  'native JavaScript bridge'
+);
+requireText(
+  webView,
+  'startHotUpdate(',
+  'hot-update runtime'
+);
+requireText(
+  webView,
+  'injectCurrentPage: true',
+  'immediate current-page hot injection'
+);
+requireText(
+  webView,
+  'webViewWebContentProcessDidTerminate',
+  'WebKit process recovery'
+);
+requireText(
+  webView,
+  'presentExternalWebView(',
+  'separate popup browser layer'
+);
+
+requireText(
+  scriptStore,
+  '"hotUpdate": true',
+  'native hot-update bootstrap'
+);
+requireText(
+  scriptStore,
+  'fetchAllRemoteTexts(',
+  'multi-source remote updater'
+);
+requireText(
+  scriptStore,
+  'saveCachedScript(',
+  'cached runtime'
 );
 
 if (
-  safariContainer.includes('UIApplication.shared.open(') ||
-  safariContainer.includes('WKWebView')
+  project.includes(
+    '- ChatGPTWebView.swift'
+  ) ||
+  project.includes(
+    '- UnifiedScriptStore.swift'
+  )
 ) {
-  fail('in-app Safari container must not jump out or use WKWebView');
+  fail('WKWebView developer files are still excluded from the app target');
 }
 
 requireText(
-  project,
-  '- SafariAutoLaunchView.swift',
-  'external Safari launcher exclusion'
-);
-requireText(
-  project,
-  'ChatGPTScriptAction:',
-  'script action target'
-);
-requireText(
-  project,
-  'Build Safari Injection Script',
-  'script injection resource build'
-);
-requireText(
-  project,
-  'ExtensionPreprocessingJS',
-  'Safari action preprocessing object'
-);
-requireText(
-  project,
-  'this.finalize = function(parameters)',
-  'Safari finalize injection phase'
-);
-requireText(
-  project,
-  'parameters.completionFunction({\n                ready: true',
-  'Safari preprocessing run completion'
-);
-requireText(
-  project,
-  'window.__CHATGPT_SAFARI_CONTAINER__ = true;',
-  'Safari container bootstrap'
-);
-
-requireText(
-  actionInfo,
-  '<string>com.apple.services</string>',
-  'Safari action extension point'
-);
-requireText(
-  actionInfo,
-  'NSExtensionJavaScriptPreprocessingFile',
-  'Safari action preprocessing file'
-);
-requireText(
-  actionInfo,
-  '<key>CFBundleExecutable</key>',
-  'action executable'
-);
-requireText(
-  actionHandler,
-  'NSExtensionRequestHandling',
-  'action request handler'
-);
-requireText(
-  actionHandler,
-  'NSExtensionJavaScriptFinalizeArgumentKey',
-  'Safari finalize argument key'
-);
-requireText(
-  actionHandler,
-  'UTType\n                        .propertyList',
-  'Safari finalize property-list item provider'
-);
-requireText(
-  actionHandler,
-  '"inject": true',
-  'Safari finalize injection flag'
-);
-
-requireText(
   shared,
-  'const IS_SAFARI_CONTAINER =',
-  'Safari container mode'
+  'const RESULT_ONLY_MODE =',
+  'Result Only runtime mode'
 );
 requireText(
   shared,
-  'IS_SAFARI_CONTAINER ||',
-  'Safari minimal runtime mode'
-);
-requireText(
-  shared,
-  'function showSafariInjectionConfirmation(',
-  'visible Safari injection confirmation'
-);
-requireText(
-  shared,
-  "'优化已启用'",
-  'first injection confirmation text'
-);
-requireText(
-  shared,
-  "'优化已重新加载'",
-  'reinjection confirmation text'
-);
-requireText(
-  shared,
-  'window.__CHATGPT_UNIFIED_INJECTED__ = {',
-  'injection diagnostic marker'
-);
-requireText(
-  shared,
-  "'data-cgpt-runtime-version'",
-  'DOM runtime version marker'
-);
-
-requireText(
-  shared,
-  'const OPEN_APP_CONTROL_QUERY = [',
-  'open-app banner control selector'
-);
-requireText(
-  shared,
-  'function suppressOpenAppBanner(',
-  'open-app banner suppression'
-);
-requireText(
-  shared,
-  "'data-cgpt-open-app-banner'",
-  'open-app banner hidden marker'
+  'function processToolMutationNode(node)',
+  'tool/MCP process filtering'
 );
 requireText(
   shared,
   '[data-testid*="reasoning" i]',
-  'static reasoning render suppression'
+  'reasoning render suppression'
 );
 requireText(
   shared,
   '[data-testid*="thinking" i]',
-  'static thinking render suppression'
+  'thinking render suppression'
 );
 requireText(
   shared,
   '[data-testid*="tool-progress" i]',
-  'static tool-progress render suppression'
+  'tool-progress suppression'
 );
 requireText(
   shared,
-  '[role="progressbar"] {',
-  'static progressbar render suppression'
-);
-requireText(
-  shared,
-  'suppressOpenAppBanner(\n                  node',
-  'root-mutation banner suppression reuse'
-);
-
-requireText(
-  shared,
-  'function processToolMutationNode(node)',
-  'tool/MCP optimization'
+  'function renderResultOnlyCompletionSummary()',
+  'result completion summary'
 );
 requireText(
   shared,
@@ -286,7 +203,8 @@ console.log(
       ok: true,
       version: pkg.version,
       architecture:
-        'in-app SFSafariViewController + script Action Extension',
+        'WKWebView developer shell + native JS bridge + hot update',
+      inspectable: true,
       sharedBytes:
         Buffer.byteLength(shared),
     },
