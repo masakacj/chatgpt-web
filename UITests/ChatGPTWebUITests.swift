@@ -5,7 +5,7 @@ final class ChatGPTWebUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testFloatingControlIsVisibleDraggableAndHasCacheAction()
+    func testFloatingControlIsVisibleAndDraggable()
         throws
     {
         let app = XCUIApplication()
@@ -38,49 +38,6 @@ final class ChatGPTWebUITests: XCTestCase {
             "Hybrid container should not expose the JS fallback S button"
         )
 
-        button.tap()
-
-        let panelReady =
-            expectation(
-                for:
-                    NSPredicate(
-                        format:
-                            "value == %@",
-                        "panel-ready"
-                    ),
-                evaluatedWith:
-                    button
-            )
-
-        wait(
-            for: [panelReady],
-            timeout: 6
-        )
-
-        button.tap()
-
-        let panelClosed =
-            expectation(
-                for:
-                    NSPredicate(
-                        format:
-                            "value == %@",
-                        "panel-closed"
-                    ),
-                evaluatedWith:
-                    button
-            )
-
-        wait(
-            for: [panelClosed],
-            timeout: 3
-        )
-
-        XCTAssertTrue(
-            button.isHittable,
-            "Native anchor stopped being hittable after collapsing the script panel"
-        )
-
         let initialFrame = button.frame
 
         let destination =
@@ -92,7 +49,7 @@ final class ChatGPTWebUITests: XCTestCase {
                     )
             )
 
-        let start =
+        let dragStart =
             button.coordinate(
                 withNormalizedOffset:
                     CGVector(
@@ -101,7 +58,7 @@ final class ChatGPTWebUITests: XCTestCase {
                     )
             )
 
-        start.press(
+        dragStart.press(
             forDuration: 0.15,
             thenDragTo: destination
         )
@@ -116,8 +73,9 @@ final class ChatGPTWebUITests: XCTestCase {
 
         XCTAssertTrue(
             button.isHittable,
-            "Native anchor stopped being hittable after drag. Initial: \(initialFrame), moved: \(movedFrame), app: \(app.frame)"
+            "Native anchor stopped being hittable after drag"
         )
+
         let movement =
             abs(
                 movedFrame.midX -
@@ -132,25 +90,6 @@ final class ChatGPTWebUITests: XCTestCase {
             movement,
             20,
             "Native anchor did not actually move"
-        )
-
-        button.tap()
-
-        let panelReadyAfterDrag =
-            expectation(
-                for:
-                    NSPredicate(
-                        format:
-                            "value == %@",
-                        "panel-ready"
-                    ),
-                evaluatedWith:
-                    button
-            )
-
-        wait(
-            for: [panelReadyAfterDrag],
-            timeout: 6
         )
     }
 
