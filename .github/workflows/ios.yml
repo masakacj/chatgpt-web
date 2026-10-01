@@ -8,6 +8,7 @@ on:
     paths:
       - "App/**"
       - "Resources/**"
+      - "SafariScriptAction/**"
       - "safari/**"
       - "package.json"
       - "project.yml"
@@ -61,22 +62,32 @@ jobs:
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
 
-      - name: Verify bundled unified script
+      - name: Verify Safari script action
         run: |
           set -euo pipefail
           APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          ACTION="$APP/PlugIns/ChatGPTScriptAction.appex"
+          SCRIPT="$ACTION/InjectChatGPT.js"
+
           test -d "$APP"
-          SCRIPT="$APP/chatgpt-safari.user.js"
-          if [[ ! -f "$SCRIPT" ]]; then
-            echo "Bundled userscript missing. App resources:"
-            find "$APP" -maxdepth 3 -type f -print
-            exit 1
-          fi
+          test -d "$ACTION"
+          test -f "$SCRIPT"
+
           VERSION="$(node -p "require('./package.json').version")"
           APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
+          ACTION_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ACTION/Info.plist")"
+          EXTENSION_POINT="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$ACTION/Info.plist")"
+
           test "$APP_VERSION" = "$VERSION"
+          test "$ACTION_VERSION" = "$VERSION"
+          test "$EXTENSION_POINT" = "com.apple.services"
+
+          grep -q "ExtensionPreprocessingJS" "$SCRIPT"
+          grep -q "__CHATGPT_SAFARI_CONTAINER__ = true" "$SCRIPT"
           grep -q "ChatGPT Web Unified" "$SCRIPT"
           grep -q "@version      $VERSION" "$SCRIPT"
+
+          test ! -f "$APP/chatgpt-safari.user.js"
 
       - name: Verify app icon
         run: |
