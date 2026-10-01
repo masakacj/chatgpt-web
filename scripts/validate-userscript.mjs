@@ -741,6 +741,52 @@ if (
   );
 }
 
+requireText(
+  shared,
+  'const SEND_CONTROL_QUERY = [',
+  'send control fast selector'
+);
+requireText(
+  shared,
+  'function onSendPointerDown(event)',
+  'send pointer acknowledgement'
+);
+requireText(
+  shared,
+  "type: 'send-touch-ack'",
+  'native send haptic message'
+);
+requireText(
+  shared,
+  '[data-cgpt-send-ack="1"]',
+  'instant send visual acknowledgement'
+);
+requireText(
+  swift,
+  'case "send-touch-ack":',
+  'native send haptic handler'
+);
+requireText(
+  swift,
+  'activationWidth: 24',
+  'narrow right edge gesture zone'
+);
+requireText(
+  swift,
+  'maximumStartYFraction:\n                        0.58',
+  'right edge bottom composer exclusion'
+);
+requireText(
+  swift,
+  'keyboardWillShowNotification',
+  'keyboard-aware right edge disable'
+);
+requireText(
+  swift,
+  'rightSidebarEdgeGesture?\n                .isEnabled = false',
+  'right edge disabled while typing'
+);
+
 console.log(JSON.stringify({
   ok: true,
   sharedVersion: pkg.version,
