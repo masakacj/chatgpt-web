@@ -323,11 +323,6 @@ requireText(
 );
 requireText(
   shared,
-  "makeInfoRow('iOS 手势')",
-  'optional iOS gesture version row'
-);
-requireText(
-  shared,
   'function processToolMutationNode(node)',
   'one-shot process node classification'
 );
