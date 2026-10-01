@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.32
+// @version      0.4.33
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.32';
+  const VERSION = '0.4.33';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -44,9 +44,9 @@
   const STATUS_INTERVAL_MS =
     EXTREME_NATIVE_MODE ? 12000 : 7000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
-    EXTREME_NATIVE_MODE ? 4000 : 1200;
+    EXTREME_NATIVE_MODE ? 700 : 1200;
   const ROUTE_SETTLE_DELAY_MS =
-    EXTREME_NATIVE_MODE ? 1400 : 500;
+    EXTREME_NATIVE_MODE ? 700 : 500;
   const STATE_EVAL_DEBOUNCE_MS =
     EXTREME_NATIVE_MODE ? 220 : 120;
   const TURN_CACHE_MAX_AGE_MS =
@@ -108,6 +108,15 @@
   const TOOL_ACTION_RE = /(?:Ran command|Run command|Ran code|Run code|Executed code|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|Python|运行命令|执行命令|运行代码|执行代码|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
   const PROCESS_GROUP_RE = /(?:Thought for|Thinking|Reasoning|思考过程|思考了|正在思考|分析中)/i;
   const TOOL_USER_ACTION_RE = /(?:allow|approve|confirm|yes,?\s*(?:run|proceed)|run\s+(?:it|command)|continue|permission|authorization|允许|批准|确认|继续|运行此|授权|权限)/i;
+  const PROCESS_PRUNE_QUERY = [
+    '[data-testid*="reasoning" i]',
+    '[data-testid*="thinking" i]',
+    '[data-testid*="thought" i]',
+    '[data-testid*="trace" i]',
+    '[data-testid*="tool-progress" i]',
+    '[data-testid*="tool-status" i]',
+    '[data-testid*="tool-trace" i]',
+  ].join(',');
   const SEND_CONTROL_QUERY = [
     '[data-testid="send-button"]',
     'button[aria-label="Send prompt"]',
@@ -179,6 +188,8 @@
     sendAckControl: null,
     pendingSidebarCleanup: false,
     nativeSuspended: false,
+    historicalPruneTimer: 0,
+    historicalPruneGeneration: 0,
     resultCycle: {
       active: false,
       startedAt: 0,
@@ -2227,6 +2238,7 @@
       '  text-overflow: ellipsis;',
       '}',
       'html[data-cgpt-result-only="1"] [data-cgpt-tool-summary-only="1"],',
+      '[data-cgpt-process-pruned="1"],',
       '[data-cgpt-tool-hidden="1"] {',
       '  display: none !important;',
       '  content-visibility: hidden !important;',
@@ -2779,6 +2791,19 @@
 
     removeResultOnlyIndicator();
     renderResultOnlyCompletionSummary();
+
+    const completedTurn =
+      lastConversationTurn();
+
+    if (
+      completedTurn instanceof
+        HTMLElement
+    ) {
+      pruneCompletedTurn(
+        completedTurn
+      );
+    }
+
     updateUI();
   }
 
@@ -3083,6 +3108,271 @@
     return fallback;
   }
 
+  function groupNeedsUserAction(group) {
+    if (!(group instanceof Element)) {
+      return false;
+    }
+
+    const controls =
+      group.querySelectorAll(
+        'button,[role="button"],summary,[aria-expanded]'
+      );
+
+    let checked = 0;
+
+    for (const control of controls) {
+      if (
+        TOOL_USER_ACTION_RE.test(
+          nodeLabel(control)
+        )
+      ) {
+        return true;
+      }
+
+      checked += 1;
+      if (checked >= 12) {
+        break;
+      }
+    }
+
+    return false;
+  }
+
+  function pruneProcessGroup(
+    group,
+    turn = null
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      !(group instanceof HTMLElement) ||
+      group.hasAttribute(
+        'data-cgpt-process-pruned'
+      ) ||
+      groupNeedsUserAction(group)
+    ) {
+      return false;
+    }
+
+    const ownerTurn =
+      turn instanceof HTMLElement
+        ? turn
+        : ChatGPTDOMAdapter
+            .turnFromNode(group);
+
+    const activeTurn =
+      lastConversationTurn();
+
+    if (
+      ownerTurn &&
+      activeTurn &&
+      ownerTurn === activeTurn &&
+      (
+        isStreaming() ||
+        state.resultCycle?.active ||
+        hasWaitingUserSignal()
+      )
+    ) {
+      return false;
+    }
+
+    group.setAttribute(
+      'data-cgpt-process-pruned',
+      '1'
+    );
+    group.setAttribute(
+      'data-cgpt-tool-hidden',
+      '1'
+    );
+    group.removeAttribute(
+      'data-cgpt-tool-summary-only'
+    );
+    group.removeAttribute(
+      'data-cgpt-tool-summary'
+    );
+
+    // Result Only is intentionally destructive for completed process UI:
+    // release large historical DOM subtrees instead of merely hiding them.
+    group.replaceChildren();
+
+    return true;
+  }
+
+  function pruneStaticProcessNodes(
+    scope,
+    turn = null
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      !(scope instanceof Element)
+    ) {
+      return 0;
+    }
+
+    let pruned = 0;
+    const nodes = [];
+
+    if (scope.matches?.(PROCESS_PRUNE_QUERY)) {
+      nodes.push(scope);
+    }
+
+    for (
+      const node of
+        scope.querySelectorAll?.(
+          PROCESS_PRUNE_QUERY
+        ) || []
+    ) {
+      nodes.push(node);
+      if (nodes.length >= 80) {
+        break;
+      }
+    }
+
+    for (const node of nodes) {
+      if (
+        node instanceof HTMLElement &&
+        pruneProcessGroup(
+          node,
+          turn
+        )
+      ) {
+        pruned += 1;
+      }
+    }
+
+    return pruned;
+  }
+
+  function pruneCompletedTurn(turn) {
+    if (
+      !RESULT_ONLY_MODE ||
+      !(turn instanceof HTMLElement)
+    ) {
+      return false;
+    }
+
+    processToolMutationNode(turn);
+    pruneStaticProcessNodes(
+      turn,
+      turn
+    );
+
+    for (
+      const group of
+        turn.querySelectorAll(
+          '[data-cgpt-tool-hidden="1"],' +
+          '[data-cgpt-tool-summary-only="1"],' +
+          '[data-cgpt-tool-group="1"]'
+        )
+    ) {
+      pruneProcessGroup(
+        group,
+        turn
+      );
+    }
+
+    return true;
+  }
+
+  function cancelHistoricalResultOnlyPrune() {
+    clearTimeout(
+      state.historicalPruneTimer
+    );
+    state.historicalPruneTimer = 0;
+    state.historicalPruneGeneration += 1;
+  }
+
+  function scheduleHistoricalResultOnlyPrune(
+    delay = 80
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      state.destroyed ||
+      state.nativeSuspended
+    ) {
+      return;
+    }
+
+    cancelHistoricalResultOnlyPrune();
+
+    const generation =
+      state.historicalPruneGeneration;
+
+    state.historicalPruneTimer =
+      window.setTimeout(() => {
+        state.historicalPruneTimer = 0;
+
+        if (
+          state.destroyed ||
+          state.nativeSuspended ||
+          generation !==
+            state.historicalPruneGeneration
+        ) {
+          return;
+        }
+
+        const turns =
+          turnCandidates(true);
+
+        let index =
+          Math.max(
+            -1,
+            turns.length - 2
+          );
+
+        const step = () => {
+          if (
+            state.destroyed ||
+            state.nativeSuspended ||
+            routeChanged() ||
+            generation !==
+              state.historicalPruneGeneration
+          ) {
+            return;
+          }
+
+          let processed = 0;
+
+          while (
+            index >= 0 &&
+            processed < 3
+          ) {
+            const turn = turns[index];
+            index -= 1;
+            processed += 1;
+
+            if (
+              turn instanceof HTMLElement &&
+              turn.isConnected
+            ) {
+              pruneCompletedTurn(turn);
+            }
+          }
+
+          if (index < 0) {
+            invalidateTurnCache();
+            return;
+          }
+
+          if (
+            typeof window.requestIdleCallback ===
+              'function'
+          ) {
+            window.requestIdleCallback(
+              step,
+              { timeout: 120 }
+            );
+          } else {
+            window.setTimeout(
+              step,
+              16
+            );
+          }
+        };
+
+        step();
+      }, delay);
+  }
+
   function processToolMutationNode(node) {
     if (
       !state.settings.enabled ||
@@ -3106,12 +3396,17 @@
       'summary,[aria-expanded]';
 
     const candidates = [];
+    const candidateLimit =
+      RESULT_ONLY_MODE ? 64 : 12;
 
     if (node.matches?.(selector)) {
       candidates.push(node);
     }
 
-    if (candidates.length < 12) {
+    if (
+      candidates.length <
+        candidateLimit
+    ) {
       for (
         const candidate of
           node.querySelectorAll?.(
@@ -3119,7 +3414,10 @@
           ) || []
       ) {
         candidates.push(candidate);
-        if (candidates.length >= 12) {
+        if (
+          candidates.length >=
+            candidateLimit
+        ) {
           break;
         }
       }
@@ -3214,6 +3512,20 @@
           label
         );
       }
+
+      if (RESULT_ONLY_MODE) {
+        pruneProcessGroup(
+          group,
+          turn
+        );
+      }
+    }
+
+    if (RESULT_ONLY_MODE) {
+      pruneStaticProcessNodes(
+        turn,
+        turn
+      );
     }
 
     state.metrics.toolNodesProcessed +=
@@ -3235,6 +3547,14 @@
         )
     ) {
       if (!(group instanceof HTMLElement)) {
+        continue;
+      }
+
+      if (
+        group.hasAttribute(
+          'data-cgpt-process-pruned'
+        )
+      ) {
         continue;
       }
 
@@ -4804,6 +5124,9 @@
         bindScopedObservers(true);
         invalidateTurnCache();
         turnCandidates(true);
+        scheduleHistoricalResultOnlyPrune(
+          40
+        );
         scheduleInitialBottomScroll(true);
 
         if (!EXTREME_NATIVE_MODE) {
@@ -5034,6 +5357,10 @@
               activeTurn
             );
           }
+
+          scheduleHistoricalResultOnlyPrune(
+            40
+          );
         }
       }
     }
@@ -5385,6 +5712,9 @@
     setupObservers();
     invalidateTurnCache();
     turnCandidates(true);
+    scheduleHistoricalResultOnlyPrune(
+      20
+    );
     scheduleInitialBottomScroll(true);
 
     if (!EXTREME_NATIVE_MODE) {
@@ -5466,6 +5796,7 @@
       resetResultCycle();
     }
 
+    cancelHistoricalResultOnlyPrune();
     restoreToolGroups();
     state.conversationLinks.clear();
     invalidateTurnCache();
@@ -5528,6 +5859,7 @@
 
     clearResultCycleTimer();
     removeResultOnlyIndicator();
+    cancelHistoricalResultOnlyPrune();
 
     state.conversationObserver
       ?.disconnect();
