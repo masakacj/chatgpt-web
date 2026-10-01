@@ -704,6 +704,48 @@ if (
   );
 }
 
+requireText(
+  shared,
+  'function flushPendingBottomScroll()',
+  'event-driven native bottom scroll'
+);
+requireText(
+  shared,
+  'pendingBottomConversationId',
+  'pending native bottom scroll state'
+);
+requireText(
+  shared,
+  'EXTREME_NATIVE_MODE ||\n      state.statusTimer',
+  'native conversation-state heartbeat disabled'
+);
+requireText(
+  shared,
+  'if (!EXTREME_NATIVE_MODE) {\n      evaluateConversationState();',
+  'desktop-only phase conversation-state evaluation'
+);
+requireText(
+  shared,
+  'if (turnStructureChanged) {\n      flushPendingBottomScroll();',
+  'turn-driven bottom alignment'
+);
+
+if (
+  shared.includes(
+    'INITIAL_BOTTOM_SCROLL_DELAYS'
+  ) ||
+  shared.includes(
+    'bottomScrollTimers'
+  ) ||
+  shared.includes(
+    '700,\n  ];'
+  )
+) {
+  fail(
+    'forbidden timer-driven duplicate bottom scrolling'
+  );
+}
+
 console.log(JSON.stringify({
   ok: true,
   sharedVersion: pkg.version,
