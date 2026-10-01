@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.14
+// @version      0.4.15
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.14';
+  const VERSION = '0.4.15';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -35,8 +35,6 @@
     0,
     700,
   ];
-  const PERF_REFRESH_DELAY_MS =
-    IS_NATIVE_IOS ? 180 : 100;
   const STATUS_INTERVAL_MS =
     IS_NATIVE_IOS ? 12000 : 7000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
@@ -45,15 +43,8 @@
     IS_NATIVE_IOS ? 1400 : 500;
   const STATE_EVAL_DEBOUNCE_MS =
     IS_NATIVE_IOS ? 220 : 120;
-  const IOS_KEEP_RECENT_TURNS = 6;
   const TURN_CACHE_MAX_AGE_MS =
     IS_NATIVE_IOS ? 300000 : 120000;
-  const DEFAULT_AGGRESSIVE_WINDOWING = false;
-  const WINDOW_ROOT_MARGIN =
-    IS_NATIVE_IOS
-      ? '220% 0px 260% 0px'
-      : '180% 0px 220% 0px';
-  const WINDOW_MIN_HEIGHT = 56;
   const TURN_SELECTORS = [
     'article[data-testid^="conversation-turn-"]',
     '[data-testid^="conversation-turn-"]',
@@ -73,7 +64,6 @@
   const HOST_ID = 'cgpt-safari-lite-host';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
   const CONTROL_MIGRATION_KEY = 'cgpt-unified-control-visible-v031';
-  const SAFE_LOAD_MIGRATION_KEY = 'cgpt-safe-load-v041';
   const CONTROL_POSITION_KEY =
     'cgpt-unified-control-position-v1';
   const SIDEBAR_CLEANUP_MIGRATION_KEY =
@@ -118,8 +108,6 @@
   const defaults = {
     enabled: true,
     showControl: true,
-    aggressiveWindowing:
-      DEFAULT_AGGRESSIVE_WINDOWING,
     telemetryEnabled: false,
   };
 
@@ -135,7 +123,6 @@
     lastBottomConversationId: '',
     conversationRoot: null,
     sidebarRoot: null,
-    refreshTimer: 0,
     stateEvalTimer: 0,
     phaseTwoTimer: 0,
     routeRebindTimer: 0,
@@ -143,14 +130,9 @@
     phaseTwoStarted: false,
     statusTimer: 0,
     updateWatchdogTimer: 0,
-    optimizedTurns: new Set(),
     turnCache: [],
-    turnSet: new Set(),
     turnCacheDirty: true,
     lastTurnScanAt: 0,
-    nearTurns: new Set(),
-    turnRecords: new WeakMap(),
-    windowObserver: null,
     toolGroups: new Set(),
     toolRecords: new WeakMap(),
     processedToolHeadings: new WeakSet(),
@@ -607,9 +589,7 @@
         telemetryRouteKind(),
       reason:
         String(reason).slice(0, 24),
-      aggressive:
-        state.settings
-          .aggressiveWindowing,
+      aggressive: false,
       streaming:
         isStreaming(),
       phaseTwo:
@@ -1185,13 +1165,8 @@
     try {
       const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
       const shouldRestoreControl = localStorage.getItem(CONTROL_MIGRATION_KEY) !== '1';
-      const shouldApplySafeLoadReset =
-        localStorage.getItem(SAFE_LOAD_MIGRATION_KEY) !== '1';
       if (shouldRestoreControl) {
         localStorage.setItem(CONTROL_MIGRATION_KEY, '1');
-      }
-      if (shouldApplySafeLoadReset) {
-        localStorage.setItem(SAFE_LOAD_MIGRATION_KEY, '1');
       }
       return {
         enabled: stored.enabled !== false,
@@ -1199,10 +1174,6 @@
           shouldRestoreControl
             ? true
             : stored.showControl !== false,
-        aggressiveWindowing:
-          shouldApplySafeLoadReset
-            ? false
-            : stored.aggressiveWindowing === true,
         telemetryEnabled:
           stored.telemetryEnabled === true,
       };
@@ -1914,22 +1885,6 @@
       '  transition: none !important;',
       '  scroll-behavior: auto !important;',
       '}',
-      '[data-cgpt-windowed="1"] {',
-      '  height: var(--cgpt-window-height) !important;',
-      '  min-height: var(--cgpt-window-height) !important;',
-      '  max-height: var(--cgpt-window-height) !important;',
-      '  overflow: hidden !important;',
-      '  contain: strict !important;',
-      '  content-visibility: visible !important;',
-      '}',
-      '[data-cgpt-windowed="1"] > * {',
-      '  display: none !important;',
-      '}',
-      '[data-cgpt-tool-group="1"] {',
-      '  content-visibility: auto !important;',
-      '  contain: layout style paint !important;',
-      '  contain-intrinsic-size: auto 42px !important;',
-      '}',
       '[data-cgpt-tool-summary-only="1"] {',
       '  display: block !important;',
       '  min-height: 30px !important;',
@@ -2018,109 +1973,6 @@
       .mountedTurns();
   }
 
-  function turnIdentity(turn) {
-    if (!(turn instanceof HTMLElement)) return '';
-
-    return [
-      turn.getAttribute('data-testid') || '',
-      turn.getAttribute('data-scroll-anchor') || '',
-      turn.getAttribute('data-message-author-role') || '',
-    ].join('|');
-  }
-
-  function ensureWindowObserver() {
-    if (
-      state.windowObserver ||
-      typeof IntersectionObserver !== 'function'
-    ) {
-      return;
-    }
-
-    state.windowObserver =
-      new IntersectionObserver(
-        (entries) => {
-          if (state.destroyed) return;
-
-          const turns = turnCandidates();
-          const protectedTurns =
-            new Set(
-              turns.slice(
-                -IOS_KEEP_RECENT_TURNS
-              )
-            );
-          const liveTurn =
-            isStreaming() &&
-            turns.length
-              ? turns[turns.length - 1]
-              : null;
-
-          for (const entry of entries) {
-            const turn = entry.target;
-            if (!(turn instanceof HTMLElement)) {
-              continue;
-            }
-
-            if (entry.isIntersecting) {
-              state.nearTurns.add(turn);
-              restoreWindowedTurn(turn);
-              continue;
-            }
-
-            state.nearTurns.delete(turn);
-
-            if (
-              state.settings.enabled &&
-              state.settings.aggressiveWindowing &&
-              canWindowTurn(
-                turn,
-                protectedTurns,
-                liveTurn
-              )
-            ) {
-              windowTurn(turn);
-            } else {
-              restoreWindowedTurn(turn);
-            }
-          }
-        },
-        {
-          root: null,
-          rootMargin: WINDOW_ROOT_MARGIN,
-          threshold: 0,
-        }
-      );
-  }
-
-  function registerTurn(turn) {
-    if (!(turn instanceof HTMLElement)) return;
-
-    const identity = turnIdentity(turn);
-    const previous = state.turnRecords.get(turn);
-
-    if (
-      previous?.identity &&
-      previous.identity !== identity
-    ) {
-      restoreWindowedTurn(turn);
-    }
-
-    state.turnRecords.set(turn, {
-      ...(previous || {}),
-      identity,
-    });
-
-    if (!state.turnSet.has(turn)) {
-      state.turnSet.add(turn);
-
-      if (
-        state.settings.aggressiveWindowing
-      ) {
-        ensureWindowObserver();
-        state.windowObserver?.observe(turn);
-      }
-    }
-  }
-
   function turnCandidates(force = false) {
     const now = performance.now();
     const scanStarted = now;
@@ -2134,29 +1986,10 @@
       return state.turnCache;
     }
 
-    const turns = collectTurnCandidates();
-    const nextSet = new Set(turns);
-
-    for (const oldTurn of Array.from(state.turnSet)) {
-      if (
-        oldTurn.isConnected &&
-        nextSet.has(oldTurn)
-      ) {
-        continue;
-      }
-
-      state.windowObserver?.unobserve(oldTurn);
-      state.nearTurns.delete(oldTurn);
-      restoreWindowedTurn(oldTurn);
-      state.turnSet.delete(oldTurn);
-    }
-
-    for (const turn of turns) {
-      registerTurn(turn);
-    }
+    const turns =
+      collectTurnCandidates();
 
     state.turnCache = turns;
-
     state.turnCacheDirty = false;
     state.lastTurnScanAt = now;
     state.metrics.turnRefreshes += 1;
@@ -2171,115 +2004,6 @@
 
   function currentTurnCount() {
     return turnCandidates().length;
-  }
-
-  function selectionTouches(turn) {
-    const selection = window.getSelection?.();
-    if (!selection || selection.rangeCount < 1) {
-      return false;
-    }
-
-    const anchor = selection.anchorNode;
-    const focus = selection.focusNode;
-
-    return Boolean(
-      (anchor && turn.contains(anchor)) ||
-      (focus && turn.contains(focus))
-    );
-  }
-
-  function turnHasActiveMedia(turn) {
-    return Array.from(
-      turn.querySelectorAll('audio,video')
-    ).some(
-      (media) =>
-        media instanceof HTMLMediaElement &&
-        !media.paused
-    );
-  }
-
-  function canWindowTurn(
-    turn,
-    protectedTurns,
-    liveTurn
-  ) {
-    if (!(turn instanceof HTMLElement)) {
-      return false;
-    }
-
-    if (
-      turn === liveTurn ||
-      protectedTurns.has(turn) ||
-      turn.matches(':focus-within') ||
-      selectionTouches(turn) ||
-      turnHasActiveMedia(turn)
-    ) {
-      return false;
-    }
-
-    if (
-      turn.querySelector(
-        '[aria-busy="true"],' +
-        '[role="progressbar"],' +
-        '[data-state="loading"],' +
-        '[data-loading="true"]'
-      )
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-
-  function windowTurn(turn) {
-    if (
-      !(turn instanceof HTMLElement) ||
-      turn.hasAttribute('data-cgpt-windowed')
-    ) {
-      return;
-    }
-
-    const rect = turn.getBoundingClientRect();
-    const height = Math.ceil(rect.height);
-
-    if (
-      !Number.isFinite(height) ||
-      height < WINDOW_MIN_HEIGHT ||
-      turn.childElementCount === 0
-    ) {
-      return;
-    }
-
-    const record =
-      state.turnRecords.get(turn) || {};
-
-    record.height = height;
-    record.identity = turnIdentity(turn);
-    state.turnRecords.set(turn, record);
-
-    turn.style.setProperty(
-      '--cgpt-window-height',
-      height + 'px'
-    );
-    turn.setAttribute(
-      'data-cgpt-windowed',
-      '1'
-    );
-    state.optimizedTurns.add(turn);
-  }
-
-  function restoreWindowedTurn(turn) {
-    if (!(turn instanceof HTMLElement)) {
-      return;
-    }
-
-    turn.removeAttribute(
-      'data-cgpt-windowed'
-    );
-    turn.style.removeProperty(
-      '--cgpt-window-height'
-    );
-    state.optimizedTurns.delete(turn);
   }
 
   function invalidateTurnCache() {
@@ -2942,123 +2666,10 @@
     };
   }
 
-  function restoreOptimizedTurns() {
-    for (
-      const turn of
-        Array.from(state.optimizedTurns)
-    ) {
-      restoreWindowedTurn(turn);
-    }
-
-    state.optimizedTurns.clear();
-  }
-
-  function applyAggressiveWindowing(
-    turns,
-    liveTurn
-  ) {
-    ensureWindowObserver();
-
-    const protectedTurns =
-      turns.slice(
-        -IOS_KEEP_RECENT_TURNS
-      );
-
-    for (const turn of protectedTurns) {
-      restoreWindowedTurn(turn);
-    }
-
-    if (liveTurn) {
-      restoreWindowedTurn(liveTurn);
-    }
-
-    for (const turn of turns) {
-      if (
-        !(turn instanceof HTMLElement) ||
-        protectedTurns.includes(turn) ||
-        turn === liveTurn ||
-        state.nearTurns.has(turn)
-      ) {
-        continue;
-      }
-
-      const protectedSet =
-        new Set(protectedTurns);
-
-      if (
-        canWindowTurn(
-          turn,
-          protectedSet,
-          liveTurn
-        )
-      ) {
-        windowTurn(turn);
-      }
-    }
-  }
-
-  function applyPerformanceHints() {
-    const turns = turnCandidates();
-
-    if (!state.settings.enabled) {
-      restoreOptimizedTurns();
-      restoreToolGroups();
-      updateUI(turns.length);
-      return;
-    }
-
-    if (
-      state.settings.aggressiveWindowing
-    ) {
-      const streaming = isStreaming();
-      const liveTurn =
-        streaming && turns.length
-          ? turns[turns.length - 1]
-          : null;
-
-      applyAggressiveWindowing(
-        turns,
-        liveTurn
-      );
-    } else if (
-      state.optimizedTurns.size > 0
-    ) {
-      restoreOptimizedTurns();
-    }
-
-    if (!EXTREME_NATIVE_MODE) {
-      updateToolCounts();
-    }
-
-    updateUI(turns.length);
-  }
-
   function isStreaming() {
     return ChatGPTDOMAdapter
       .streamingSignal();
   }
-
-  function scheduleRefresh(
-    delay = PERF_REFRESH_DELAY_MS
-  ) {
-    if (state.destroyed) return;
-    clearTimeout(state.refreshTimer);
-    state.refreshTimer = window.setTimeout(() => {
-      if (state.destroyed) return;
-      if (routeChanged()) {
-        onRoute();
-        return;
-      }
-
-      window.requestAnimationFrame(
-        applyPerformanceHints
-      );
-    }, delay);
-  }
-
-  
-
-  
 
   function scrollConversationToBottom() {
     if (!currentConversationId()) {
@@ -4392,7 +4003,7 @@
     updateUI(currentTurnCount());
   }
 
-  function updateUI(turnCount) {
+  function updateUI() {
     const ui = state.ui;
     if (!ui) return;
 
@@ -4597,7 +4208,6 @@
         invalidateTurnCache();
         turnCandidates(true);
         scheduleInitialBottomScroll(true);
-        scheduleRefresh(120);
         scheduleStateEvaluation(180);
       }, Math.max(delay, remaining));
   }
@@ -4691,10 +4301,6 @@
           stateRelevant = true;
         }
       }
-    }
-
-    if (turnStructureChanged) {
-      scheduleRefresh(80);
     }
 
     if (
@@ -5036,7 +4642,6 @@
     invalidateTurnCache();
     turnCandidates(true);
     scheduleInitialBottomScroll(true);
-    scheduleRefresh(0);
     evaluateConversationState();
     renderConversationStates();
 
@@ -5090,9 +4695,7 @@
     state.activeRouteSince = Date.now();
     state.settlingSince = 0;
 
-    restoreOptimizedTurns();
     restoreToolGroups();
-    state.nearTurns.clear();
     state.conversationLinks.clear();
     invalidateTurnCache();
 
@@ -5112,9 +4715,6 @@
       scheduleRouteRebind();
     }
 
-    scheduleRefresh(
-      ROUTE_SETTLE_DELAY_MS + 120
-    );
     scheduleStateEvaluation(
       ROUTE_SETTLE_DELAY_MS + 180
     );
@@ -5132,9 +4732,6 @@
 
     if (document.hidden) {
       clearInitialBottomScroll();
-
-      clearTimeout(state.refreshTimer);
-      state.refreshTimer = 0;
 
       clearTimeout(state.stateEvalTimer);
       state.stateEvalTimer = 0;
@@ -5212,7 +4809,6 @@
     const preserveKeys = [
       SETTINGS_KEY,
       CONTROL_MIGRATION_KEY,
-      SAFE_LOAD_MIGRATION_KEY,
       CONTROL_POSITION_KEY,
       TELEMETRY_INSTALL_KEY,
     ];
@@ -5403,42 +4999,18 @@
     }
 
     if (!state.settings.enabled) {
-      restoreOptimizedTurns();
       restoreToolGroups();
+      return;
     }
 
-    scheduleRefresh(0);
-  }
+    const activeTurn =
+      ChatGPTDOMAdapter.activeTurn();
 
-  function setAggressiveWindowing(
-    value
-  ) {
-    state.settings.aggressiveWindowing =
-      Boolean(value);
-    saveSettings();
-
-    if (
-      !state.settings.aggressiveWindowing
-    ) {
-      restoreOptimizedTurns();
-      state.windowObserver?.disconnect();
-      state.windowObserver = null;
-      state.nearTurns.clear();
-    } else {
-      invalidateTurnCache();
-      ensureWindowObserver();
-
-      for (
-        const turn of
-          turnCandidates(true)
-      ) {
-        state.windowObserver?.observe(
-          turn
-        );
-      }
+    if (activeTurn) {
+      processToolMutationNode(
+        activeTurn
+      );
     }
-
-    scheduleRefresh(0);
   }
 
   function getState() {
@@ -5458,19 +5030,6 @@
           Boolean(
             ChatGPTDOMAdapter.sidebarRoot()
           ),
-      },
-      windowing: {
-        aggressive:
-          state.settings
-            .aggressiveWindowing,
-        cachedTurns:
-          state.turnCache.length,
-        nearTurns:
-          state.nearTurns.size,
-        windowedTurns:
-          state.optimizedTurns.size,
-        observer:
-          Boolean(state.windowObserver),
       },
       toolGroups: {
         ...state.toolCounts,
@@ -5518,7 +5077,6 @@
 
     stopTelemetryRuntime(true);
 
-    clearTimeout(state.refreshTimer);
     clearTimeout(state.stateEvalTimer);
     clearTimeout(state.phaseTwoTimer);
     clearTimeout(state.routeRebindTimer);
@@ -5555,10 +5113,7 @@
     window.removeEventListener('storage', onStorageSync);
     try { state.channel?.close?.(); } catch (_) {}
 
-    restoreOptimizedTurns();
     restoreToolGroups();
-    state.nearTurns.clear();
-    state.turnSet.clear();
     state.turnCache = [];
     state.conversationLinks.clear();
 
@@ -5593,7 +5148,6 @@
     version: VERSION,
     getState,
     setEnabled,
-    setAggressiveWindowing,
     setTelemetryEnabled,
     startDebugSession,
     stopDebugSession,
@@ -5606,7 +5160,6 @@
     closeNativePanel,
     requestNativeUpdateCheck,
     showControl,
-    refresh: () => scheduleRefresh(0),
     destroy,
   };
 
