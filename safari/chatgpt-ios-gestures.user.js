@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.13
+// @version      0.1.14
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.13';
+  const VERSION = '0.1.14';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   const HOST = location.hostname.toLowerCase();
@@ -36,8 +36,8 @@
 
   const CONFIG = Object.freeze({
     edgeStartPx: 96,
-    triggerPx: 18,
-    axisRatio: 0.90,
+    triggerPx: 8,
+    axisRatio: 0.72,
     maxDurationMs: 1500,
     twoFingerTriggerPx: 6,
     twoFingerAxisRatio: 0.75,
@@ -69,11 +69,9 @@
   }
 
   function openSidebar() {
-    if (isSidebarOpen()) return true;
-
-    if (clickFirst([
-      '[data-testid="open-sidebar-button"]',
+    return clickFirst([
       '[data-testid="sidebar-button"][aria-expanded="false"]',
+      '[data-testid="open-sidebar-button"]',
       'button[aria-label*="Open sidebar"]',
       'button[aria-label*="Show sidebar"]',
       'button[aria-label*="Open navigation"]',
@@ -81,41 +79,7 @@
       'button[aria-label*="显示侧边栏"]',
       'button[aria-label*="展开侧边栏"]',
       'button[aria-label*="打开导航"]',
-    ])) {
-      return true;
-    }
-
-    for (const button of document.querySelectorAll('button,[role="button"]')) {
-      if (!(button instanceof HTMLElement)) continue;
-
-      const rect = button.getBoundingClientRect();
-      if (
-        rect.left > 110 ||
-        rect.top > 140 ||
-        rect.width <= 20 ||
-        rect.height <= 20 ||
-        rect.width >= 90 ||
-        rect.height >= 90
-      ) {
-        continue;
-      }
-
-      const label = [
-        button.getAttribute('aria-label') || '',
-        button.getAttribute('title') || '',
-        button.textContent || '',
-      ].join(' ').replace(/\s+/g, ' ').trim();
-
-      if (
-        /(sidebar|navigation|menu|侧边栏|导航|菜单)/i.test(label) &&
-        !/(close|hide|collapse|关闭|隐藏|收起)/i.test(label)
-      ) {
-        button.click();
-        return true;
-      }
-    }
-
-    return false;
+    ]);
   }
 
   function findSidebarDrawer() {
