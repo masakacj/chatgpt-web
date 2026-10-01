@@ -108,6 +108,170 @@ final class ChatGPTFloatingAnchorButton: UIButton {
     }
 }
 
+
+final class ChatGPTEdgeSwipeGestureRecognizer:
+    UIGestureRecognizer
+{
+    enum Edge: Equatable {
+        case left
+        case right
+    }
+
+    private let edge: Edge
+    private let activationWidth: CGFloat
+    private let triggerDistance: CGFloat
+    private let axisRatio: CGFloat
+    private var startPoint: CGPoint?
+
+    init(
+        edge: Edge,
+        target: Any?,
+        action: Selector?
+    ) {
+        self.edge = edge
+        self.activationWidth = 44
+        self.triggerDistance = 4
+        self.axisRatio = 0.65
+
+        super.init(
+            target: target,
+            action: action
+        )
+
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(
+        _ touches: Set<UITouch>,
+        with event: UIEvent
+    ) {
+        guard
+            touches.count == 1,
+            let touch = touches.first,
+            let view
+        else {
+            state = .failed
+            return
+        }
+
+        let point =
+            touch.location(in: view)
+
+        let insideEdge: Bool
+
+        if edge == .left {
+            insideEdge =
+                point.x <= activationWidth
+        } else {
+            insideEdge =
+                point.x >=
+                    view.bounds.width -
+                    activationWidth
+        }
+
+        guard insideEdge else {
+            state = .failed
+            return
+        }
+
+        startPoint = point
+    }
+
+    override func touchesMoved(
+        _ touches: Set<UITouch>,
+        with event: UIEvent
+    ) {
+        if
+            state == .began ||
+            state == .changed
+        {
+            state = .changed
+            return
+        }
+
+        guard
+            state == .possible,
+            let startPoint,
+            let touch = touches.first,
+            let view
+        else {
+            return
+        }
+
+        let point =
+            touch.location(in: view)
+
+        let rawDx =
+            point.x - startPoint.x
+
+        let directionalDx =
+            edge == .left
+                ? rawDx
+                : -rawDx
+
+        let dy =
+            abs(
+                point.y -
+                startPoint.y
+            )
+
+        if directionalDx < -triggerDistance {
+            state = .failed
+            return
+        }
+
+        if
+            dy >= triggerDistance * 1.5,
+            dy > abs(rawDx) * 1.2
+        {
+            state = .failed
+            return
+        }
+
+        if
+            directionalDx >= triggerDistance,
+            directionalDx >=
+                dy * axisRatio
+        {
+            state = .began
+        }
+    }
+
+    override func touchesEnded(
+        _ touches: Set<UITouch>,
+        with event: UIEvent
+    ) {
+        switch state {
+        case .began, .changed:
+            state = .ended
+
+        case .possible:
+            state = .failed
+
+        default:
+            break
+        }
+    }
+
+    override func touchesCancelled(
+        _ touches: Set<UITouch>,
+        with event: UIEvent
+    ) {
+        if state == .possible {
+            state = .failed
+        } else {
+            state = .cancelled
+        }
+    }
+
+    override func reset() {
+        startPoint = nil
+        super.reset()
+    }
+}
+
 final class ChatGPTWebContainerView: UIView {
     let webView: WKWebView
 
@@ -366,9 +530,9 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var recoveryAlertPresented = false
 
         private weak var leftSidebarEdgeGesture:
-            UIScreenEdgePanGestureRecognizer?
+            ChatGPTEdgeSwipeGestureRecognizer?
         private weak var rightSidebarEdgeGesture:
-            UIScreenEdgePanGestureRecognizer?
+            ChatGPTEdgeSwipeGestureRecognizer?
         private weak var twoFingerNavigationGesture:
             UIPanGestureRecognizer?
         private var twoFingerNavigationDidFire = false
@@ -447,34 +611,28 @@ struct ChatGPTWebView: UIViewRepresentable {
             }
 
             let left =
-                UIScreenEdgePanGestureRecognizer(
+                ChatGPTEdgeSwipeGestureRecognizer(
+                    edge: .left,
                     target: self,
                     action:
                         #selector(
                             handleLeftSidebarEdge(_:)
                         )
                 )
-            left.edges = .left
             left.delegate = self
-            left.cancelsTouchesInView = false
-            left.delaysTouchesBegan = false
-            left.delaysTouchesEnded = false
             rootView.addGestureRecognizer(left)
             leftSidebarEdgeGesture = left
 
             let right =
-                UIScreenEdgePanGestureRecognizer(
+                ChatGPTEdgeSwipeGestureRecognizer(
+                    edge: .right,
                     target: self,
                     action:
                         #selector(
                             handleRightSidebarEdge(_:)
                         )
                 )
-            right.edges = .right
             right.delegate = self
-            right.cancelsTouchesInView = false
-            right.delaysTouchesBegan = false
-            right.delaysTouchesEnded = false
             rootView.addGestureRecognizer(right)
             rightSidebarEdgeGesture = right
 
@@ -516,9 +674,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                 pan.velocity(in: rootView)
 
             return
-                abs(velocity.x) >= 80 &&
                 abs(velocity.x) >
-                    abs(velocity.y) * 1.15
+                    abs(velocity.y) * 1.05
         }
 
         func gestureRecognizer(
@@ -534,7 +691,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         @objc
         private func handleLeftSidebarEdge(
             _ gesture:
-                UIScreenEdgePanGestureRecognizer
+                ChatGPTEdgeSwipeGestureRecognizer
         ) {
             guard gesture.state == .began else {
                 return
@@ -548,7 +705,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         @objc
         private func handleRightSidebarEdge(
             _ gesture:
-                UIScreenEdgePanGestureRecognizer
+                ChatGPTEdgeSwipeGestureRecognizer
         ) {
             guard gesture.state == .began else {
                 return
@@ -559,59 +716,21 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        private func clickChatGPTSidebar(
-            opening: Bool
-        ) {
-            guard let webView else {
-                return
-            }
-
-            let selectors: [String]
-
-            if opening {
-                selectors = [
-                    "[data-testid=\"sidebar-button\"][aria-expanded=\"false\"]",
-                    "[data-testid=\"open-sidebar-button\"]",
-                    "button[aria-label*=\"Open sidebar\"]",
-                    "button[aria-label*=\"Show sidebar\"]",
-                    "button[aria-label*=\"Open navigation\"]",
-                    "button[aria-label*=\"打开侧边栏\"]",
-                    "button[aria-label*=\"显示侧边栏\"]",
-                    "button[aria-label*=\"展开侧边栏\"]",
-                    "button[aria-label*=\"打开导航\"]"
-                ]
-            } else {
-                selectors = [
-                    "[data-testid=\"close-sidebar-button\"]",
-                    "[data-testid=\"sidebar-button\"][aria-expanded=\"true\"]",
-                    "button[aria-label*=\"Close sidebar\"]",
-                    "button[aria-label*=\"Hide sidebar\"]",
-                    "button[aria-label*=\"Collapse sidebar\"]",
-                    "button[aria-label*=\"关闭侧边栏\"]",
-                    "button[aria-label*=\"隐藏侧边栏\"]",
-                    "button[aria-label*=\"收起侧边栏\"]",
-                    "button[aria-label*=\"关闭导航\"]"
-                ]
-            }
-
-            guard
-                let data =
-                    try? JSONSerialization.data(
-                        withJSONObject: selectors
-                    ),
-                let json =
-                    String(
-                        data: data,
-                        encoding: .utf8
-                    )
-            else {
-                return
-            }
-
-            webView.evaluateJavaScript(
+        private static let
+            openSidebarJavaScript =
                 """
                 (() => {
-                  const selectors = (json);
+                  const selectors = [
+                    '[data-testid="sidebar-button"][aria-expanded="false"]',
+                    '[data-testid="open-sidebar-button"]',
+                    'button[aria-label*="Open sidebar"]',
+                    'button[aria-label*="Show sidebar"]',
+                    'button[aria-label*="Open navigation"]',
+                    'button[aria-label*="打开侧边栏"]',
+                    'button[aria-label*="显示侧边栏"]',
+                    'button[aria-label*="展开侧边栏"]',
+                    'button[aria-label*="打开导航"]'
+                  ];
                   for (const selector of selectors) {
                     const button =
                       document.querySelector(selector);
@@ -622,6 +741,40 @@ struct ChatGPTWebView: UIViewRepresentable {
                   return false;
                 })()
                 """
+
+        private static let
+            closeSidebarJavaScript =
+                """
+                (() => {
+                  const selectors = [
+                    '[data-testid="close-sidebar-button"]',
+                    '[data-testid="sidebar-button"][aria-expanded="true"]',
+                    'button[aria-label*="Close sidebar"]',
+                    'button[aria-label*="Hide sidebar"]',
+                    'button[aria-label*="Collapse sidebar"]',
+                    'button[aria-label*="关闭侧边栏"]',
+                    'button[aria-label*="隐藏侧边栏"]',
+                    'button[aria-label*="收起侧边栏"]',
+                    'button[aria-label*="关闭导航"]'
+                  ];
+                  for (const selector of selectors) {
+                    const button =
+                      document.querySelector(selector);
+                    if (!button) continue;
+                    button.click();
+                    return true;
+                  }
+                  return false;
+                })()
+                """
+
+        private func clickChatGPTSidebar(
+            opening: Bool
+        ) {
+            webView?.evaluateJavaScript(
+                opening
+                    ? Self.openSidebarJavaScript
+                    : Self.closeSidebarJavaScript
             )
         }
 
@@ -630,62 +783,69 @@ struct ChatGPTWebView: UIViewRepresentable {
             _ gesture:
                 UIPanGestureRecognizer
         ) {
-            guard
-                let rootView,
-                let webView
-            else {
-                return
-            }
-
             switch gesture.state {
             case .began:
                 twoFingerNavigationDidFire = false
+                attemptTwoFingerNavigation(
+                    gesture
+                )
 
             case .changed:
-                guard
-                    !twoFingerNavigationDidFire
-                else {
-                    return
-                }
-
-                let translation =
-                    gesture.translation(
-                        in: rootView
-                    )
-
-                guard
-                    abs(translation.x) >= 36,
-                    abs(translation.x) >
-                        abs(translation.y) * 1.15
-                else {
-                    return
-                }
-
-                twoFingerNavigationDidFire = true
-
-                if translation.x > 0 {
-                    if webView.canGoBack {
-                        webView.goBack()
-                    } else {
-                        webView.evaluateJavaScript(
-                            "history.back()"
-                        )
-                    }
-                } else {
-                    if webView.canGoForward {
-                        webView.goForward()
-                    } else {
-                        webView.evaluateJavaScript(
-                            "history.forward()"
-                        )
-                    }
-                }
+                attemptTwoFingerNavigation(
+                    gesture
+                )
 
             case .ended, .cancelled, .failed:
                 twoFingerNavigationDidFire = false
 
             default:
                 break
+            }
+        }
+
+        private func attemptTwoFingerNavigation(
+            _ gesture:
+                UIPanGestureRecognizer
+        ) {
+            guard
+                !twoFingerNavigationDidFire,
+                let rootView,
+                let webView
+            else {
+                return
+            }
+
+            let translation =
+                gesture.translation(
+                    in: rootView
+                )
+
+            guard
+                abs(translation.x) >= 16,
+                abs(translation.x) >
+                    abs(translation.y) * 1.05
+            else {
+                return
+            }
+
+            twoFingerNavigationDidFire = true
+
+            if translation.x > 0 {
+                if webView.canGoBack {
+                    webView.goBack()
+                } else {
+                    webView.evaluateJavaScript(
+                        "history.back()"
+                    )
+                }
+            } else {
+                if webView.canGoForward {
+                    webView.goForward()
+                } else {
+                    webView.evaluateJavaScript(
+                        "history.forward()"
+                    )
+                }
             }
         }
 
