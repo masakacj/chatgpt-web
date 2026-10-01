@@ -107,7 +107,7 @@ final class UnifiedScriptStore {
 
         return """
         (() => {
-          const next = (json);
+          const next = \(json);
           window.__CHATGPT_NATIVE__ = {
             ...(window.__CHATGPT_NATIVE__ || {}),
             ...next
@@ -116,7 +116,7 @@ final class UnifiedScriptStore {
             window.ChatGPTWeb ||
             window.ChatGPTSafari;
           api?.nativeLifecycle?.(
-            (String(reflecting: phase)),
+            \(String(reflecting: phase)),
             window.__CHATGPT_NATIVE__
           );
         })();
