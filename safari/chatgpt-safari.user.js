@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.29
+// @version      0.4.30
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.29';
+  const VERSION = '0.4.30';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -34,6 +34,8 @@
   const EXTREME_NATIVE_MODE =
     IS_NATIVE_IOS ||
     IS_SAFARI_CONTAINER;
+  const RESULT_ONLY_MODE =
+    EXTREME_NATIVE_MODE;
   const HAS_NATIVE_LIFECYCLE =
     Boolean(
       window.__CHATGPT_NATIVE__
@@ -173,6 +175,15 @@
     sendAckControl: null,
     pendingSidebarCleanup: false,
     nativeSuspended: false,
+    resultCycle: {
+      active: false,
+      startedAt: 0,
+      finishedAt: 0,
+      lastActivityAt: 0,
+      settleTimer: 0,
+      toolTotal: 0,
+      toolCounts: Object.create(null),
+    },
     metrics: {
       phaseTwoStartedAt: 0,
       observerCallbacks: 0,
@@ -2131,6 +2142,14 @@
   function installStyle() {
     if (document.getElementById(STYLE_ID)) return;
 
+    if (RESULT_ONLY_MODE) {
+      document.documentElement
+        .setAttribute(
+          'data-cgpt-result-only',
+          '1'
+        );
+    }
+
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = [
@@ -2203,6 +2222,7 @@
       '  overflow: hidden;',
       '  text-overflow: ellipsis;',
       '}',
+      'html[data-cgpt-result-only="1"] [data-cgpt-tool-summary-only="1"],',
       '[data-cgpt-tool-hidden="1"] {',
       '  display: none !important;',
       '  content-visibility: hidden !important;',
@@ -2363,11 +2383,390 @@
     return '';
   }
 
+  function formatResultDuration(ms) {
+    const totalSeconds =
+      Math.max(
+        0,
+        Math.round(
+          Number(ms || 0) / 1000
+        )
+      );
+
+    if (totalSeconds < 60) {
+      return totalSeconds + 's';
+    }
+
+    const minutes =
+      Math.floor(totalSeconds / 60);
+    const seconds =
+      totalSeconds % 60;
+
+    return (
+      minutes +
+      'm' +
+      String(seconds).padStart(2, '0') +
+      's'
+    );
+  }
+
+  function resultToolDisplayName(key) {
+    const text =
+      String(key || '').trim();
+
+    const mcp =
+      text.match(
+        /^MCP · ([^·]+?) · (.+)$/
+      );
+
+    if (mcp) {
+      return (
+        mcp[1].trim() +
+        '/' +
+        mcp[2].trim()
+      );
+    }
+
+    return text
+      .replace(/^工具 · /, '')
+      .replace(/^MCP · /, '')
+      .trim();
+  }
+
+  function resultToolSummaryText() {
+    const counts =
+      state.resultCycle?.toolCounts ||
+      Object.create(null);
+
+    const entries =
+      Object.entries(counts)
+        .filter(
+          ([, count]) =>
+            Number(count) > 0
+        )
+        .sort(
+          (a, b) =>
+            Number(b[1]) -
+            Number(a[1])
+        );
+
+    if (!entries.length) {
+      return '';
+    }
+
+    const visible =
+      entries.slice(0, 3)
+        .map(
+          ([key, count]) =>
+            resultToolDisplayName(key) +
+            '×' +
+            count
+        );
+
+    if (entries.length > 3) {
+      visible.push(
+        '+' + (entries.length - 3)
+      );
+    }
+
+    return visible.join(' · ');
+  }
+
+  function resultCycleStatusText() {
+    if (!RESULT_ONLY_MODE) {
+      return '';
+    }
+
+    const cycle =
+      state.resultCycle;
+
+    if (
+      !cycle ||
+      !cycle.startedAt
+    ) {
+      return '结果模式 · 就绪';
+    }
+
+    const end =
+      cycle.active
+        ? Date.now()
+        : (
+            cycle.finishedAt ||
+            Date.now()
+          );
+
+    const duration =
+      formatResultDuration(
+        end - cycle.startedAt
+      );
+
+    const tools =
+      resultToolSummaryText();
+
+    return (
+      (
+        cycle.active
+          ? '处理中'
+          : '完成'
+      ) +
+      ' · ' +
+      duration +
+      (
+        cycle.toolTotal > 0
+          ? ' · ' +
+            cycle.toolTotal +
+            ' tools'
+          : ''
+      ) +
+      (
+        tools
+          ? ' · ' + tools
+          : ''
+      )
+    );
+  }
+
+  function clearResultCycleTimer() {
+    const timer =
+      state.resultCycle
+        ?.settleTimer || 0;
+
+    if (timer) {
+      clearTimeout(timer);
+      state.resultCycle
+        .settleTimer = 0;
+    }
+  }
+
+  function resetResultCycle() {
+    if (!RESULT_ONLY_MODE) {
+      return;
+    }
+
+    clearResultCycleTimer();
+
+    state.resultCycle = {
+      active: false,
+      startedAt: 0,
+      finishedAt: 0,
+      lastActivityAt: 0,
+      settleTimer: 0,
+      toolTotal: 0,
+      toolCounts:
+        Object.create(null),
+    };
+
+    updateUI();
+  }
+
+  function completeResultCycle() {
+    if (
+      !RESULT_ONLY_MODE ||
+      !state.resultCycle?.active
+    ) {
+      return;
+    }
+
+    clearResultCycleTimer();
+
+    state.resultCycle.active = false;
+    state.resultCycle.finishedAt =
+      Date.now();
+    state.resultCycle.lastActivityAt =
+      state.resultCycle.finishedAt;
+
+    updateUI();
+  }
+
+  function scheduleResultCycleSettle(
+    delay = 1800
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      !state.resultCycle?.active ||
+      state.destroyed
+    ) {
+      return;
+    }
+
+    clearResultCycleTimer();
+
+    state.resultCycle.settleTimer =
+      window.setTimeout(() => {
+        if (
+          state.destroyed ||
+          !state.resultCycle?.active
+        ) {
+          return;
+        }
+
+        state.resultCycle.settleTimer = 0;
+
+        const now = Date.now();
+        const sinceActivity =
+          now -
+          Number(
+            state.resultCycle
+              .lastActivityAt || now
+          );
+
+        if (
+          hasWaitingUserSignal() ||
+          hasToolOrStreamingSignal() ||
+          sinceActivity < 3200
+        ) {
+          updateUI();
+          scheduleResultCycleSettle(
+            1600
+          );
+          return;
+        }
+
+        completeResultCycle();
+      }, delay);
+  }
+
+  function touchResultCycle() {
+    if (
+      !RESULT_ONLY_MODE ||
+      !state.resultCycle?.active
+    ) {
+      return;
+    }
+
+    state.resultCycle.lastActivityAt =
+      Date.now();
+
+    scheduleResultCycleSettle();
+  }
+
+  function beginResultCycle() {
+    if (!RESULT_ONLY_MODE) {
+      return;
+    }
+
+    clearResultCycleTimer();
+
+    const now = Date.now();
+
+    state.resultCycle = {
+      active: true,
+      startedAt: now,
+      finishedAt: 0,
+      lastActivityAt: now,
+      settleTimer: 0,
+      toolTotal: 0,
+      toolCounts:
+        Object.create(null),
+    };
+
+    updateUI();
+    scheduleResultCycleSettle(
+      1800
+    );
+  }
+
+  function recordResultToolCandidate(
+    candidate,
+    label
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      !state.resultCycle?.active ||
+      !(candidate instanceof HTMLElement)
+    ) {
+      return;
+    }
+
+    const text =
+      String(label || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (
+      !text ||
+      TOOL_USER_ACTION_RE.test(text) ||
+      PROCESS_GROUP_RE.test(text)
+    ) {
+      return;
+    }
+
+    if (
+      !TOOL_ACTION_RE.test(text) &&
+      !/\bmcp__/i.test(text)
+    ) {
+      return;
+    }
+
+    const key =
+      compactToolSummary(text);
+
+    if (
+      !key ||
+      key === '工具调用' ||
+      key === 'MCP · 调用'
+    ) {
+      return;
+    }
+
+    const attr =
+      'data-cgpt-result-tool-key';
+
+    const previous =
+      candidate.getAttribute(attr) ||
+      '';
+
+    if (previous === key) {
+      return;
+    }
+
+    const counts =
+      state.resultCycle.toolCounts;
+
+    if (previous) {
+      const oldCount =
+        Number(counts[previous] || 0);
+
+      if (oldCount > 1) {
+        counts[previous] =
+          oldCount - 1;
+      } else {
+        delete counts[previous];
+      }
+    } else {
+      state.resultCycle.toolTotal +=
+        1;
+    }
+
+    counts[key] =
+      Number(counts[key] || 0) + 1;
+
+    candidate.setAttribute(
+      attr,
+      key
+    );
+
+    touchResultCycle();
+  }
+
   function setToolSummaryOnly(
     group,
     label
   ) {
     if (!(group instanceof HTMLElement)) {
+      return;
+    }
+
+    if (RESULT_ONLY_MODE) {
+      group.removeAttribute(
+        'data-cgpt-tool-summary-only'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-summary'
+      );
+      group.setAttribute(
+        'data-cgpt-tool-hidden',
+        '1'
+      );
       return;
     }
 
@@ -2518,6 +2917,11 @@
         candidate.closest?.(
           '[data-cgpt-tool-group="1"]'
         );
+
+      recordResultToolCandidate(
+        candidate,
+        label
+      );
 
       if (
         existing &&
@@ -3985,8 +4389,12 @@
 
     const id = currentConversationId();
     const chatStatus =
-      EXTREME_NATIVE_MODE
-        ? null
+      RESULT_ONLY_MODE
+        ? (
+            state.resultCycle?.active
+              ? 'running'
+              : null
+          )
         : id
           ? state.conversationStates[id]
               ?.status
@@ -4004,9 +4412,13 @@
 
     if (ui.status) {
       ui.status.textContent =
-        'v' + VERSION +
-        ' · ' +
-        statusLabel(chatStatus);
+        RESULT_ONLY_MODE
+          ? resultCycleStatusText()
+          : (
+              'v' + VERSION +
+              ' · ' +
+              statusLabel(chatStatus)
+            );
     }
 
     if (ui.scriptInfo) {
@@ -4193,6 +4605,14 @@
     state.metrics.observerCallbacks += 1;
     state.metrics.conversationMutations +=
       mutations.length;
+
+    if (
+      RESULT_ONLY_MODE &&
+      state.resultCycle?.active &&
+      mutations.length
+    ) {
+      touchResultCycle();
+    }
 
     if (routeChanged()) {
       recordTelemetryCost(
@@ -4604,6 +5024,8 @@
 
     clearSendTouchAck();
 
+    beginResultCycle();
+
     state.sendAckControl = control;
 
     control.setAttribute(
@@ -4804,6 +5226,10 @@
     state.activeRouteSince = Date.now();
     state.settlingSince = 0;
 
+    if (RESULT_ONLY_MODE) {
+      resetResultCycle();
+    }
+
     restoreToolGroups();
     state.conversationLinks.clear();
     invalidateTurnCache();
@@ -4864,6 +5290,8 @@
     clearInterval(state.statusTimer);
     state.statusTimer = 0;
 
+    clearResultCycleTimer();
+
     state.conversationObserver
       ?.disconnect();
     state.sidebarObserver
@@ -4905,6 +5333,15 @@
     }
 
     startStatusTimer();
+
+    if (
+      RESULT_ONLY_MODE &&
+      state.resultCycle?.active
+    ) {
+      scheduleResultCycleSettle(
+        900
+      );
+    }
 
     if (wasSuspended) {
       resumeTelemetryForLifecycle();
