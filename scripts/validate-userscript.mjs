@@ -216,6 +216,47 @@ requireText(
 
 requireText(
   shared,
+  'const OPEN_APP_CONTROL_QUERY = [',
+  'open-app banner control selector'
+);
+requireText(
+  shared,
+  'function suppressOpenAppBanner(',
+  'open-app banner suppression'
+);
+requireText(
+  shared,
+  "'data-cgpt-open-app-banner'",
+  'open-app banner hidden marker'
+);
+requireText(
+  shared,
+  '[data-testid*="reasoning" i]',
+  'static reasoning render suppression'
+);
+requireText(
+  shared,
+  '[data-testid*="thinking" i]',
+  'static thinking render suppression'
+);
+requireText(
+  shared,
+  '[data-testid*="tool-progress" i]',
+  'static tool-progress render suppression'
+);
+requireText(
+  shared,
+  '[role="progressbar"] {',
+  'static progressbar render suppression'
+);
+requireText(
+  shared,
+  'suppressOpenAppBanner(\n                  node',
+  'root-mutation banner suppression reuse'
+);
+
+requireText(
+  shared,
   'function processToolMutationNode(node)',
   'tool/MCP optimization'
 );
