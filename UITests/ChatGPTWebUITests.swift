@@ -152,5 +152,85 @@ final class ChatGPTWebUITests: XCTestCase {
             for: [panelReadyAfterDrag],
             timeout: 6
         )
+
+    func testNativeEdgeSidebarGestures()
+        throws
+    {
+        let app = XCUIApplication()
+        app.launchArguments.append(
+            "--ui-testing"
+        )
+        app.launch()
+
+        let openButton =
+            app.buttons["Open sidebar"]
+
+        XCTAssertTrue(
+            openButton.waitForExistence(
+                timeout: 10
+            ),
+            "Sidebar probe button did not appear"
+        )
+
+        let leftStart =
+            app.coordinate(
+                withNormalizedOffset:
+                    CGVector(
+                        dx: 0.002,
+                        dy: 0.56
+                    )
+            )
+        let leftEnd =
+            app.coordinate(
+                withNormalizedOffset:
+                    CGVector(
+                        dx: 0.09,
+                        dy: 0.56
+                    )
+            )
+
+        leftStart.press(
+            forDuration: 0.02,
+            thenDragTo: leftEnd
+        )
+
+        XCTAssertTrue(
+            app.buttons["Sidebar opened"]
+                .waitForExistence(
+                    timeout: 3
+                ),
+            "Left-edge swipe did not open the sidebar probe"
+        )
+
+        let rightStart =
+            app.coordinate(
+                withNormalizedOffset:
+                    CGVector(
+                        dx: 0.998,
+                        dy: 0.56
+                    )
+            )
+        let rightEnd =
+            app.coordinate(
+                withNormalizedOffset:
+                    CGVector(
+                        dx: 0.91,
+                        dy: 0.56
+                    )
+            )
+
+        rightStart.press(
+            forDuration: 0.02,
+            thenDragTo: rightEnd
+        )
+
+        XCTAssertTrue(
+            app.buttons["Open sidebar"]
+                .waitForExistence(
+                    timeout: 3
+                ),
+            "Right-edge swipe did not close the sidebar probe"
+        )
+    }
     }
 }
