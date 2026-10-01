@@ -88,6 +88,8 @@ jobs:
           grep -q "__CHATGPT_SAFARI_CONTAINER__ = true" "$SCRIPT"
           grep -q "ChatGPT Web Unified" "$SCRIPT"
           grep -q "@version      $VERSION" "$SCRIPT"
+          grep -q "优化已启用" "$SCRIPT"
+          grep -q "__CHATGPT_UNIFIED_INJECTED__" "$SCRIPT"
 
       - name: Verify app icon
         run: |
