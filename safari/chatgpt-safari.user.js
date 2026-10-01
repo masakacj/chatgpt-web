@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.17
+// @version      0.4.18
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.17';
+  const VERSION = '0.4.18';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -31,6 +31,11 @@
   );
   const EXTREME_NATIVE_MODE =
     IS_NATIVE_IOS;
+  const HAS_NATIVE_LIFECYCLE =
+    Boolean(
+      window.__CHATGPT_NATIVE__
+        ?.nativeLifecycle
+    );
   const INITIAL_BOTTOM_SCROLL_DELAYS = [
     0,
     700,
@@ -144,6 +149,7 @@
     controlResizeHandler: null,
     controlRecoveryTimer: 0,
     pendingSidebarCleanup: false,
+    nativeSuspended: false,
     metrics: {
       phaseTwoStartedAt: 0,
       observerCallbacks: 0,
@@ -162,6 +168,12 @@
   function clamp(value, min, max) {
     const n = Number(value);
     return Math.min(max, Math.max(min, Number.isFinite(n) ? n : min));
+  }
+
+  function runtimeHidden() {
+    return HAS_NATIVE_LIFECYCLE
+      ? state.nativeSuspended
+      : document.hidden;
   }
 
   function randomTelemetryId(
@@ -471,6 +483,7 @@
     const tick = () => {
       if (
         state.destroyed ||
+        state.nativeSuspended ||
         !state.settings.telemetryEnabled
       ) {
         telemetry.loopTimer = 0;
@@ -479,7 +492,7 @@
 
       const now = performance.now();
 
-      if (!document.hidden) {
+      if (!runtimeHidden()) {
         updateLagBucket(
           telemetry.loop,
           Math.max(
@@ -526,6 +539,7 @@
 
       if (
         state.destroyed ||
+        state.nativeSuspended ||
         !telemetry.debugId
       ) {
         telemetry.rafId = 0;
@@ -534,7 +548,7 @@
 
       if (
         previous > 0 &&
-        !document.hidden
+        !runtimeHidden()
       ) {
         updateLagBucket(
           telemetry.raf,
@@ -925,7 +939,8 @@
     telemetry.flushTimer = 0;
 
     if (
-      !state.settings.telemetryEnabled
+      !state.settings.telemetryEnabled ||
+      state.nativeSuspended
     ) {
       return;
     }
@@ -943,6 +958,68 @@
       }, telemetry.config.flushMs);
 
     startLoopProbe();
+  }
+
+  function pauseTelemetryForLifecycle() {
+    if (
+      !state.settings.telemetryEnabled
+    ) {
+      return;
+    }
+
+    const telemetry = state.telemetry;
+
+    clearInterval(
+      telemetry.sampleTimer
+    );
+    clearInterval(
+      telemetry.flushTimer
+    );
+    clearTimeout(
+      telemetry.loopTimer
+    );
+    clearTimeout(
+      telemetry.uploadTimer
+    );
+
+    telemetry.sampleTimer = 0;
+    telemetry.flushTimer = 0;
+    telemetry.loopTimer = 0;
+    telemetry.uploadTimer = 0;
+
+    if (telemetry.activeBatch) {
+      telemetry.activeBatch = null;
+      telemetry.uploadInFlight = false;
+    }
+
+    stopDebugRafProbe();
+
+    telemetry.loop =
+      emptyLagBucket();
+    telemetry.raf =
+      emptyLagBucket();
+    telemetry.costs =
+      emptyCostBucket();
+  }
+
+  function resumeTelemetryForLifecycle() {
+    if (
+      !state.settings.telemetryEnabled ||
+      state.nativeSuspended
+    ) {
+      return;
+    }
+
+    const telemetry = state.telemetry;
+
+    telemetry.lastCounters =
+      telemetryCounters();
+
+    restartTelemetryTimers();
+
+    if (telemetry.debugId) {
+      startDebugRafProbe();
+    }
   }
 
   function stopTelemetryRuntime(
@@ -1006,7 +1083,10 @@
     restartTelemetryTimers();
     loadTelemetryConfig();
     queueTelemetrySample(
-      'telemetry_on'
+      state.nativeStatus
+        ?.lowPowerMode === true
+        ? 'telemetry_on_lp'
+        : 'telemetry_on'
     );
     flushTelemetry();
     updateTelemetryUI();
@@ -1261,7 +1341,7 @@
 
   function completionStatusForCurrentView(id) {
     return (
-      !document.hidden &&
+      !runtimeHidden() &&
       id === currentConversationId()
     )
       ? 'completed_read'
@@ -1273,7 +1353,7 @@
 
     if (
       status === 'completed_unread' &&
-      !document.hidden &&
+      !runtimeHidden() &&
       id === currentConversationId()
     ) {
       return false;
@@ -1637,7 +1717,7 @@
       return;
     }
 
-    if (record.status === 'completed_unread' && !document.hidden) {
+    if (record.status === 'completed_unread' && !runtimeHidden()) {
       const completedAt = Number(record.completedAt || now);
       const readableSince = Math.max(completedAt, state.activeRouteSince);
       if (now - readableSince >= READ_DWELL_MS) {
@@ -4184,6 +4264,40 @@
     }
   }
 
+  function startStatusTimer() {
+    if (
+      state.destroyed ||
+      state.nativeSuspended ||
+      state.statusTimer
+    ) {
+      return;
+    }
+
+    state.statusTimer =
+      window.setInterval(() => {
+        if (
+          state.destroyed ||
+          runtimeHidden()
+        ) {
+          return;
+        }
+
+        if (
+          IS_NATIVE_IOS &&
+          !document.getElementById(HOST_ID)
+        ) {
+          scheduleControlRecovery(0);
+        }
+
+        if (routeChanged()) {
+          onRoute();
+          return;
+        }
+
+        evaluateConversationState();
+      }, STATUS_INTERVAL_MS);
+  }
+
   function setupObservers() {
     bindScopedObservers(true);
     setupPerformanceDiagnostics();
@@ -4243,11 +4357,13 @@
       onRoute,
       { passive: true }
     );
-    document.addEventListener(
-      'visibilitychange',
-      onVisibility,
-      { passive: true }
-    );
+    if (!HAS_NATIVE_LIFECYCLE) {
+      document.addEventListener(
+        'visibilitychange',
+        onVisibility,
+        { passive: true }
+      );
+    }
 
     if (
       IS_NATIVE_IOS &&
@@ -4256,35 +4372,14 @@
       scheduleControlRecovery(0);
     }
 
-    state.statusTimer =
-      window.setInterval(() => {
-        if (
-          state.destroyed ||
-          document.hidden
-        ) {
-          return;
-        }
-
-        if (
-          IS_NATIVE_IOS &&
-          !document.getElementById(HOST_ID)
-        ) {
-          scheduleControlRecovery(0);
-        }
-
-        if (routeChanged()) {
-          onRoute();
-          return;
-        }
-
-        evaluateConversationState();
-      }, STATUS_INTERVAL_MS);
+    startStatusTimer();
   }
 
   function startPhaseTwoRuntime() {
     if (
       state.destroyed ||
-      state.phaseTwoStarted
+      state.phaseTwoStarted ||
+      state.nativeSuspended
     ) {
       return;
     }
@@ -4379,36 +4474,64 @@
     }
   }
 
-  function onVisibility() {
+  function suspendRuntime() {
+    if (
+      state.destroyed ||
+      state.nativeSuspended
+    ) {
+      return;
+    }
+
+    state.nativeSuspended = true;
+
     clearTimeout(
       state.foregroundResumeTimer
     );
     state.foregroundResumeTimer = 0;
 
-    if (document.hidden) {
-      clearInitialBottomScroll();
+    clearInitialBottomScroll();
 
-      clearTimeout(state.stateEvalTimer);
-      state.stateEvalTimer = 0;
+    clearTimeout(state.stateEvalTimer);
+    state.stateEvalTimer = 0;
 
-      clearTimeout(
-        state.sidebarReconcileTimer
-      );
-      state.sidebarReconcileTimer = 0;
+    clearTimeout(
+      state.sidebarReconcileTimer
+    );
+    state.sidebarReconcileTimer = 0;
 
-      clearTimeout(state.routeRebindTimer);
-      state.routeRebindTimer = 0;
+    clearTimeout(state.routeRebindTimer);
+    state.routeRebindTimer = 0;
 
-      state.conversationObserver
-        ?.disconnect();
-      state.sidebarObserver
-        ?.disconnect();
+    clearInterval(state.statusTimer);
+    state.statusTimer = 0;
 
-      state.conversationObserver = null;
-      state.sidebarObserver = null;
+    state.conversationObserver
+      ?.disconnect();
+    state.sidebarObserver
+      ?.disconnect();
 
+    state.conversationObserver = null;
+    state.sidebarObserver = null;
+
+    pauseTelemetryForLifecycle();
+  }
+
+  function resumeRuntime(
+    delay = IS_NATIVE_IOS ? 80 : 120
+  ) {
+    if (state.destroyed) {
       return;
     }
+
+    const wasSuspended =
+      state.nativeSuspended;
+
+    state.nativeSuspended = false;
+
+    clearTimeout(
+      state.foregroundResumeTimer
+    );
+    state.foregroundResumeTimer = 0;
 
     if (
       IS_NATIVE_IOS &&
@@ -4418,7 +4541,14 @@
     }
 
     if (!state.phaseTwoStarted) {
+      schedulePhaseTwoRuntime();
       return;
+    }
+
+    startStatusTimer();
+
+    if (wasSuspended) {
+      resumeTelemetryForLifecycle();
     }
 
     state.foregroundResumeTimer =
@@ -4427,7 +4557,7 @@
 
         if (
           state.destroyed ||
-          document.hidden
+          state.nativeSuspended
         ) {
           return;
         }
@@ -4438,8 +4568,98 @@
         }
 
         bindScopedObservers();
-        scheduleStateEvaluation(120);
-      }, IS_NATIVE_IOS ? 220 : 80);
+        scheduleStateEvaluation(80);
+      }, delay);
+  }
+
+  function onVisibility() {
+    if (HAS_NATIVE_LIFECYCLE) {
+      return;
+    }
+
+    if (document.hidden) {
+      suspendRuntime();
+    } else {
+      resumeRuntime(120);
+    }
+  }
+
+  function nativeLifecycle(
+    phase,
+    next = null
+  ) {
+    if (
+      next &&
+      typeof next === 'object'
+    ) {
+      state.nativeStatus = {
+        ...state.nativeStatus,
+        ...next,
+      };
+
+      window.__CHATGPT_NATIVE__ = {
+        ...(window.__CHATGPT_NATIVE__ || {}),
+        ...next,
+      };
+    }
+
+    const normalized =
+      String(phase || '');
+
+    if (normalized === 'background') {
+      suspendRuntime();
+      return true;
+    }
+
+    if (normalized === 'active') {
+      resumeRuntime(80);
+      updateUI();
+      return true;
+    }
+
+    if (normalized === 'power') {
+      if (
+        state.settings.telemetryEnabled &&
+        !state.nativeSuspended
+      ) {
+        queueTelemetrySample(
+          state.nativeStatus
+            ?.lowPowerMode === true
+            ? 'power_on'
+            : 'power_off'
+        );
+      }
+
+      if (!state.nativeSuspended) {
+        updateUI();
+      }
+      return true;
+    }
+
+    if (normalized === 'thermal') {
+      if (
+        state.settings.telemetryEnabled &&
+        !state.nativeSuspended
+      ) {
+        queueTelemetrySample(
+          (
+            'thermal_' +
+            String(
+              state.nativeStatus
+                ?.thermalState ||
+                'unknown'
+            )
+          ).slice(0, 24)
+        );
+      }
+
+      if (!state.nativeSuspended) {
+        updateUI();
+      }
+      return true;
+    }
+
+    return false;
   }
 
   function hasCookieFlag(name) {
@@ -4719,6 +4939,16 @@
       nativeStatus: {
         ...state.nativeStatus,
       },
+      lifecycle: {
+        native: HAS_NATIVE_LIFECYCLE,
+        suspended: state.nativeSuspended,
+        lowPowerMode:
+          state.nativeStatus
+            ?.lowPowerMode === true,
+        thermalState:
+          state.nativeStatus
+            ?.thermalState || 'unknown',
+      },
       route:
         location.pathname +
         location.search,
@@ -4805,6 +5035,7 @@
     stopDebugSession,
     flushTelemetry,
     nativeTelemetryResult,
+    nativeLifecycle,
     setNativeStatus,
     nativeActionResult,
     toggleNativePanel,
