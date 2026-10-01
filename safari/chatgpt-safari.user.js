@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.9
+// @version      0.4.10
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.9';
+  const VERSION = '0.4.10';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1698,12 +1698,36 @@
       },
 
       sidebarRoot() {
+        const selectors = [
+          'nav[aria-label]',
+          'nav',
+          'aside',
+        ];
+
+        for (const selector of selectors) {
+          for (
+            const candidate of
+              document.querySelectorAll(
+                selector
+              )
+          ) {
+            if (
+              candidate.querySelector(
+                'a[href*="/c/"],' +
+                '[data-conversation-id]'
+              )
+            ) {
+              return candidate;
+            }
+          }
+        }
+
         return (
-          document.querySelector('aside') ||
           document.querySelector(
             'nav[aria-label]'
           ) ||
-          document.querySelector('nav')
+          document.querySelector('nav') ||
+          document.querySelector('aside')
         );
       },
 
@@ -1912,13 +1936,17 @@
       '  animation: none !important;',
       '  transition: none !important;',
       '}',
-      '[data-cgpt-safari-chat-state] { position: relative !important; }',
-      '[data-cgpt-safari-chat-state]::after { content: ""; position: absolute; right: 30px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; pointer-events: none; }',
-      '[data-cgpt-safari-chat-state="running"]::after { background: #34c759; animation: cgpt-safari-pulse 1.15s ease-in-out infinite; }',
-      '[data-cgpt-safari-chat-state="waiting_user"]::after { background: #ff9f0a; }',
-      '[data-cgpt-safari-chat-state="settling"]::after { background: #8e8e93; animation: cgpt-safari-pulse .9s ease-in-out infinite; }',
-      '[data-cgpt-safari-chat-state="completed_unread"]::after { background: #0a84ff; }',
-      '@keyframes cgpt-safari-pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
+      '[data-cgpt-safari-chat-state] {',
+      '  --cgpt-chat-state-color: transparent;',
+      '  background-image: radial-gradient(circle, var(--cgpt-chat-state-color) 0 3px, transparent 3.5px) !important;',
+      '  background-repeat: no-repeat !important;',
+      '  background-position: right 30px center !important;',
+      '  background-size: 7px 7px !important;',
+      '}',
+      '[data-cgpt-safari-chat-state="running"] { --cgpt-chat-state-color: #34c759; }',
+      '[data-cgpt-safari-chat-state="waiting_user"] { --cgpt-chat-state-color: #ff9f0a; }',
+      '[data-cgpt-safari-chat-state="settling"] { --cgpt-chat-state-color: #8e8e93; }',
+      '[data-cgpt-safari-chat-state="completed_unread"] { --cgpt-chat-state-color: #0a84ff; }',
       '@media print {',
       '  #' + HOST_ID + ' { display: none !important; }',
       '}',
@@ -4493,10 +4521,7 @@
         continue;
       }
 
-      if (
-        mutation.addedNodes.length ||
-        mutation.removedNodes.length
-      ) {
+      if (mutation.removedNodes.length) {
         needsReconcile = true;
       }
 
@@ -4734,7 +4759,6 @@
         }
 
         evaluateConversationState();
-        scheduleSidebarReconcile(0);
       }, STATUS_INTERVAL_MS);
   }
 
@@ -4836,7 +4860,6 @@
     scheduleStateEvaluation(
       ROUTE_SETTLE_DELAY_MS + 180
     );
-    renderConversationStates();
 
     if (state.settings.telemetryEnabled) {
       queueTelemetrySample('route');
