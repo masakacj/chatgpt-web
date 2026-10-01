@@ -691,6 +691,19 @@ requireText(
   'native thermal state notification'
 );
 
+if (
+  store.includes(
+    'const next = (json);'
+  ) ||
+  store.includes(
+    'api?.nativeLifecycle?.(\n            (String(reflecting: phase))'
+  )
+) {
+  fail(
+    'forbidden broken native lifecycle interpolation'
+  );
+}
+
 console.log(JSON.stringify({
   ok: true,
   sharedVersion: pkg.version,
