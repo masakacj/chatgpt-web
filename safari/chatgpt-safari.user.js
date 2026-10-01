@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.19
+// @version      0.4.20
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.19';
+  const VERSION = '0.4.20';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -99,6 +99,13 @@
   const TOOL_ACTION_RE = /(?:Ran command|Run command|Ran code|Run code|Executed code|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|Python|运行命令|执行命令|运行代码|执行代码|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
   const PROCESS_GROUP_RE = /(?:Thought for|Thinking|Reasoning|思考过程|思考了|正在思考|分析中)/i;
   const TOOL_USER_ACTION_RE = /(?:allow|approve|confirm|yes,?\s*(?:run|proceed)|run\s+(?:it|command)|continue|permission|authorization|允许|批准|确认|继续|运行此|授权|权限)/i;
+  const SEND_CONTROL_QUERY = [
+    '[data-testid="send-button"]',
+    'button[aria-label="Send prompt"]',
+    'button[aria-label="Send message"]',
+    'button[aria-label*="发送"]',
+    'button[aria-label*="送出"]',
+  ].join(',');
 
   try {
     window[GLOBAL_KEY]?.destroy?.();
@@ -144,6 +151,8 @@
     ui: null,
     controlResizeHandler: null,
     controlRecoveryTimer: 0,
+    sendAckTimer: 0,
+    sendAckControl: null,
     pendingSidebarCleanup: false,
     nativeSuspended: false,
     metrics: {
@@ -1950,6 +1959,7 @@
       '  transition: none !important;',
       '  scroll-behavior: auto !important;',
       '}',
+      '[data-cgpt-send-ack="1"] { opacity: .55 !important; }',
       '[data-cgpt-tool-summary-only="1"] {',
       '  display: block !important;',
       '  min-height: 30px !important;',
@@ -4331,6 +4341,91 @@
       }, STATUS_INTERVAL_MS);
   }
 
+  function sendControlFromEvent(
+    event
+  ) {
+    const path =
+      event?.composedPath?.() || [];
+
+    for (
+      let index = 0;
+      index < path.length &&
+        index < 10;
+      index += 1
+    ) {
+      const node = path[index];
+
+      if (
+        node instanceof HTMLElement &&
+        node.matches?.(
+          SEND_CONTROL_QUERY
+        )
+      ) {
+        return node;
+      }
+    }
+
+    return null;
+  }
+
+  function clearSendTouchAck() {
+    clearTimeout(state.sendAckTimer);
+    state.sendAckTimer = 0;
+
+    state.sendAckControl
+      ?.removeAttribute(
+        'data-cgpt-send-ack'
+      );
+
+    state.sendAckControl = null;
+  }
+
+  function onSendPointerDown(event) {
+    if (
+      !EXTREME_NATIVE_MODE ||
+      state.destroyed ||
+      state.nativeSuspended
+    ) {
+      return;
+    }
+
+    const control =
+      sendControlFromEvent(event);
+
+    if (
+      !(control instanceof HTMLElement) ||
+      control.hasAttribute('disabled') ||
+      control.getAttribute(
+        'aria-disabled'
+      ) === 'true'
+    ) {
+      return;
+    }
+
+    clearSendTouchAck();
+
+    state.sendAckControl = control;
+
+    control.setAttribute(
+      'data-cgpt-send-ack',
+      '1'
+    );
+
+    state.sendAckTimer =
+      window.setTimeout(
+        clearSendTouchAck,
+        140
+      );
+
+    try {
+      window.webkit?.messageHandlers
+        ?.chatGPTNative
+        ?.postMessage({
+          type: 'send-touch-ack',
+        });
+    } catch (_) {}
+  }
+
   function setupObservers() {
     bindScopedObservers(true);
     setupPerformanceDiagnostics();
@@ -4390,6 +4485,18 @@
       onRoute,
       { passive: true }
     );
+
+    if (EXTREME_NATIVE_MODE) {
+      document.addEventListener(
+        'pointerdown',
+        onSendPointerDown,
+        {
+          capture: true,
+          passive: true,
+        }
+      );
+    }
+
     if (!HAS_NATIVE_LIFECYCLE) {
       document.addEventListener(
         'visibilitychange',
@@ -5007,6 +5114,7 @@
     clearTimeout(state.controlRecoveryTimer);
     clearTimeout(state.sidebarReconcileTimer);
     clearTimeout(state.foregroundResumeTimer);
+    clearSendTouchAck();
     clearInitialBottomScroll();
     clearInterval(state.statusTimer);
 
@@ -5031,6 +5139,11 @@
     window.removeEventListener('popstate', onRoute);
     window.removeEventListener('hashchange', onRoute);
     document.removeEventListener('visibilitychange', onVisibility);
+    document.removeEventListener(
+      'pointerdown',
+      onSendPointerDown,
+      true
+    );
     window.removeEventListener('storage', onStorageSync);
     try { state.channel?.close?.(); } catch (_) {}
 
