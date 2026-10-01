@@ -155,6 +155,7 @@ final class ChatGPTEdgeSwipeGestureRecognizer:
     ) {
         guard
             touches.count == 1,
+            event.allTouches?.count == 1,
             let touch = touches.first,
             let view
         else {
@@ -199,10 +200,14 @@ final class ChatGPTEdgeSwipeGestureRecognizer:
 
         guard
             state == .possible,
+            event.allTouches?.count == 1,
             let startPoint,
             let touch = touches.first,
             let view
         else {
+            if state == .possible {
+                state = .failed
+            }
             return
         }
 
@@ -404,7 +409,29 @@ struct ChatGPTWebView: UIViewRepresentable {
                     <meta name="viewport"
                           content="width=device-width,initial-scale=1">
                   </head>
-                  <body></body>
+                  <body>
+                    <button
+                      data-testid="sidebar-button"
+                      aria-expanded="false"
+                      aria-label="Open sidebar"
+                      onclick="
+                        const open =
+                          this.getAttribute('aria-expanded') !== 'true';
+                        this.setAttribute(
+                          'aria-expanded',
+                          open ? 'true' : 'false'
+                        );
+                        this.setAttribute(
+                          'aria-label',
+                          open ? 'Sidebar opened' : 'Open sidebar'
+                        );
+                        this.textContent =
+                          open ? 'Sidebar opened' : 'Open sidebar';
+                      "
+                    >
+                      Open sidebar
+                    </button>
+                  </body>
                 </html>
                 """,
                 baseURL: URL(
