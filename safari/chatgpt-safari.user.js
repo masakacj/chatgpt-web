@@ -1083,7 +1083,10 @@
     restartTelemetryTimers();
     loadTelemetryConfig();
     queueTelemetrySample(
-      'telemetry_on'
+      state.nativeStatus
+        ?.lowPowerMode === true
+        ? 'telemetry_on_lp'
+        : 'telemetry_on'
     );
     flushTelemetry();
     updateTelemetryUI();
