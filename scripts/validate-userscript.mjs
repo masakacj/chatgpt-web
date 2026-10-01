@@ -128,12 +128,12 @@ requireText(
 );
 requireText(
   project,
-  'this.finalize = function(arguments)',
+  'this.finalize = function(parameters)',
   'Safari finalize injection phase'
 );
 requireText(
   project,
-  'arguments.completionFunction({\n                ready: true',
+  'parameters.completionFunction({\n                ready: true',
   'Safari preprocessing run completion'
 );
 requireText(
