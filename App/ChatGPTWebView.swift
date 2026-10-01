@@ -121,17 +121,25 @@ final class ChatGPTEdgeSwipeGestureRecognizer:
     private let activationWidth: CGFloat
     private let triggerDistance: CGFloat
     private let axisRatio: CGFloat
+    private let maximumStartYFraction:
+        CGFloat
     private var startPoint: CGPoint?
 
     init(
         edge: Edge,
+        activationWidth: CGFloat = 44,
+        maximumStartYFraction:
+            CGFloat = 1,
         target: Any?,
         action: Selector?
     ) {
         self.edge = edge
-        self.activationWidth = 44
+        self.activationWidth =
+            activationWidth
         self.triggerDistance = 4
         self.axisRatio = 0.65
+        self.maximumStartYFraction =
+            maximumStartYFraction
 
         super.init(
             target: target,
@@ -178,7 +186,15 @@ final class ChatGPTEdgeSwipeGestureRecognizer:
                     activationWidth
         }
 
-        guard insideEdge else {
+        let insideVerticalRange =
+            point.y <=
+                view.bounds.height *
+                maximumStartYFraction
+
+        guard
+            insideEdge,
+            insideVerticalRange
+        else {
             state = .failed
             return
         }
@@ -558,6 +574,11 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var checkingUpdate = false
         private var hasStartedInitialHotUpdate = false
         private var lifecycleObserversInstalled = false
+        private var keyboardVisible = false
+        private let sendFeedbackGenerator =
+            UIImpactFeedbackGenerator(
+                style: .light
+            )
 
         private var browserControlsExpanded = false
         private var contentTerminationTimes: [Date] = []
@@ -637,6 +658,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 in: rootView
             )
             installNativeLifecycleBridge()
+            sendFeedbackGenerator.prepare()
         }
 
         private func installNativeLifecycleBridge() {
@@ -695,6 +717,30 @@ struct ChatGPTWebView: UIViewRepresentable {
                         .thermalStateDidChangeNotification,
                 object: nil
             )
+
+            center.addObserver(
+                self,
+                selector:
+                    #selector(
+                        keyboardWillShow(_:)
+                    ),
+                name:
+                    UIResponder
+                        .keyboardWillShowNotification,
+                object: nil
+            )
+
+            center.addObserver(
+                self,
+                selector:
+                    #selector(
+                        keyboardWillHide(_:)
+                    ),
+                name:
+                    UIResponder
+                        .keyboardWillHideNotification,
+                object: nil
+            )
         }
 
         @objc
@@ -731,6 +777,24 @@ struct ChatGPTWebView: UIViewRepresentable {
             sendNativeLifecycle(
                 "thermal"
             )
+        }
+
+        @objc
+        private func keyboardWillShow(
+            _ notification: Notification
+        ) {
+            keyboardVisible = true
+            rightSidebarEdgeGesture?
+                .isEnabled = false
+        }
+
+        @objc
+        private func keyboardWillHide(
+            _ notification: Notification
+        ) {
+            keyboardVisible = false
+            rightSidebarEdgeGesture?
+                .isEnabled = true
         }
 
         private func sendNativeLifecycle(
@@ -786,6 +850,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             let right =
                 ChatGPTEdgeSwipeGestureRecognizer(
                     edge: .right,
+                    activationWidth: 24,
+                    maximumStartYFraction:
+                        0.58,
                     target: self,
                     action:
                         #selector(
@@ -793,6 +860,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                         )
                 )
             right.delegate = self
+            right.isEnabled =
+                !keyboardVisible
             rootView.addGestureRecognizer(right)
             rightSidebarEdgeGesture = right
 
@@ -1825,6 +1894,13 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             case "clear-cache":
                 clearWebCacheKeepingLogin()
+
+            case "send-touch-ack":
+                sendFeedbackGenerator
+                    .impactOccurred(
+                        intensity: 0.55
+                    )
+                sendFeedbackGenerator.prepare()
 
             case "telemetry":
                 if
