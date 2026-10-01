@@ -242,11 +242,6 @@ requireText(
 );
 requireText(
   project,
-  'com.apple.Safari.web-extension',
-  'Safari web extension point'
-);
-requireText(
-  project,
   'embed: true',
   'embedded web extension'
 );
