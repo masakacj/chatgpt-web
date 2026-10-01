@@ -1,330 +1,150 @@
 import fs from 'node:fs';
 
-const sharedPath = 'safari/chatgpt-safari.user.js';
-const swiftPath = 'App/ChatGPTWebView.swift';
-const storePath = 'App/UnifiedScriptStore.swift';
+const sharedPath =
+  'safari/chatgpt-safari.user.js';
+const safariContainerPath =
+  'App/SafariContainerView.swift';
+const contentViewPath =
+  'App/ContentView.swift';
+const projectPath =
+  'project.yml';
+const actionInfoPath =
+  'SafariScriptAction/Info.plist';
+const actionHandlerPath =
+  'SafariScriptAction/ActionRequestHandler.swift';
 
-const shared = fs.readFileSync(sharedPath, 'utf8');
-const swift = fs.readFileSync(swiftPath, 'utf8');
-const store = fs.readFileSync(storePath, 'utf8');
-const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const shared =
+  fs.readFileSync(sharedPath, 'utf8');
+const safariContainer =
+  fs.readFileSync(
+    safariContainerPath,
+    'utf8'
+  );
+const contentView =
+  fs.readFileSync(
+    contentViewPath,
+    'utf8'
+  );
+const project =
+  fs.readFileSync(
+    projectPath,
+    'utf8'
+  );
+const actionInfo =
+  fs.readFileSync(
+    actionInfoPath,
+    'utf8'
+  );
+const actionHandler =
+  fs.readFileSync(
+    actionHandlerPath,
+    'utf8'
+  );
+const pkg =
+  JSON.parse(
+    fs.readFileSync(
+      'package.json',
+      'utf8'
+    )
+  );
 
 function fail(message) {
-  console.error('[validate] ' + message);
+  console.error(
+    '[validate] ' + message
+  );
   process.exit(1);
 }
 
-function requireText(source, text, description) {
+function requireText(
+  source,
+  text,
+  description
+) {
   if (!source.includes(text)) {
-    fail('missing ' + description + ': ' + text);
+    fail(
+      'missing ' +
+      description +
+      ': ' +
+      text
+    );
   }
 }
 
 function versionOf(source) {
   return {
-    metadata: source.match(
-      /^\/\/\s*@version\s+([^\s]+)$/m
-    )?.[1],
-    runtime: source.match(
-      /const VERSION = ['"]([^'"]+)['"];/
-    )?.[1],
+    metadata:
+      source.match(
+        /^\/\/\s*@version\s+([^\s]+)$/m
+      )?.[1],
+    runtime:
+      source.match(
+        /const VERSION = ['"]([^'"]+)['"];/
+      )?.[1],
   };
 }
 
-const sharedVersion = versionOf(shared);
+const sharedVersion =
+  versionOf(shared);
 
-if (!sharedVersion.metadata) {
-  fail('shared @version not found');
+if (
+  !sharedVersion.metadata ||
+  !sharedVersion.runtime
+) {
+  fail(
+    'shared script version missing'
+  );
 }
-if (!sharedVersion.runtime) {
-  fail('shared runtime VERSION not found');
-}
-if (sharedVersion.metadata !== pkg.version) {
-  fail('shared @version does not match package.json');
-}
-if (sharedVersion.runtime !== pkg.version) {
-  fail('shared runtime VERSION does not match package.json');
+
+if (
+  sharedVersion.metadata !==
+    pkg.version ||
+  sharedVersion.runtime !==
+    pkg.version
+) {
+  fail(
+    'shared script/package versions differ'
+  );
 }
 
 requireText(
   shared,
   '// @name         ChatGPT Web Unified',
-  'shared userscript name'
+  'unified userscript'
 );
 requireText(
   shared,
   '// @match        https://chatgpt.com/*',
-  'shared chatgpt.com match'
+  'ChatGPT URL match'
 );
 requireText(
   shared,
-  '// @run-at       document-start',
-  'shared document-start injection'
+  'const IS_SAFARI_CONTAINER =',
+  'Safari container mode'
 );
 requireText(
   shared,
-  '// @grant        none',
-  'shared grant none'
+  'window.__CHATGPT_SAFARI_CONTAINER__ === true',
+  'Safari injection bootstrap flag'
 );
 requireText(
   shared,
-  "HOST.endsWith('.chatgpt.com')",
-  'shared ChatGPT host gate'
+  'IS_SAFARI_CONTAINER ||',
+  'Safari extreme mode'
 );
 requireText(
   shared,
-  'const ChatGPTDOMAdapter =',
-  'central ChatGPT DOM adapter'
+  'function createControl()',
+  'control function'
 );
 requireText(
   shared,
-  'function turnCandidates(force = false)',
-  'cached turn discovery'
-);
-requireText(
-  shared,
-  'state.turnCacheDirty',
-  'incremental turn cache invalidation'
-);
-requireText(
-  shared,
-  'const EXTREME_NATIVE_MODE =',
-  'native subtractive performance mode'
-);
-requireText(
-  shared,
-  'data-cgpt-tool-hidden',
-  'native static process hiding'
-);
-requireText(
-  shared,
-  "perfLabel.textContent = '极速模式';",
-  'extreme mode setting label'
-);
-requireText(
-  shared,
-  'function bindScopedObservers(',
-  'scoped conversation/sidebar observers'
-);
-requireText(
-  shared,
-  'overscroll-behavior-y: none',
-  'hard vertical overscroll boundary'
-);
-requireText(
-  shared,
-  'state.conversationObserver.observe(',
-  'conversation-root observer'
-);
-requireText(
-  shared,
-  'state.sidebarObserver.observe(',
-  'sidebar-root observer'
-);
-requireText(
-  shared,
-  'function scheduleStateEvaluation(',
-  'debounced event-driven state evaluation'
-);
-requireText(
-  shared,
-  'function schedulePhaseTwoRuntime()',
-  'two-phase startup'
-);
-requireText(
-  shared,
-  'window.requestIdleCallback',
-  'idle-delayed heavy runtime startup'
-);
-requireText(
-  shared,
-  'const SETTLE_MS = 2800;',
-  'settling window'
-);
-requireText(
-  shared,
-  'const READ_DWELL_MS = 1200;',
-  'read dwell'
-);
-requireText(
-  shared,
-  'new BroadcastChannel(STATE_CHANNEL)',
-  'cross-tab state sync'
-);
-requireText(
-  shared,
-  'function completionStatusForCurrentView(id)',
-  'visible completion read-state helper'
-);
-requireText(
-  shared,
-  'function shouldRenderConversationState(id, status)',
-  'active unread-dot suppression helper'
-);
-requireText(
-  shared,
-  'function sameConversationCycle(left, right)',
-  'cross-tab generation-cycle helper'
-);
-requireText(
-  shared,
-  'sameConversationCycle(current, record)',
-  'read state downgrade protection'
-);
-requireText(
-  shared,
-  'const nextStatus = completionStatusForCurrentView(id);',
-  'visible completion direct-read transition'
-);
-requireText(
-  shared,
-  'next.runStartedAt = now;',
-  'generation cycle timestamp'
-);
-requireText(
-  shared,
-  "window.addEventListener('storage', onStorageSync)",
-  'storage-event sync fallback'
-);
-requireText(
-  shared,
-  'if (!EXTREME_NATIVE_MODE) {\n    setupConversationStateSync();',
-  'desktop-only cross-tab state sync'
-);
-requireText(
-  shared,
-  "attachShadow({ mode: 'open' })",
-  'isolated control UI'
-);
-requireText(
-  shared,
-  'function nativeAnchorSupported()',
-  'native anchor capability gate'
-);
-requireText(
-  shared,
-  'function toggleNativePanel(anchor)',
-  'native-anchor script panel bridge'
-);
-requireText(
-  shared,
-  'function nativePanelRenderState()',
-  'native panel rendered-state self-check'
-);
-requireText(
-  shared,
-  'state.ui?.update',
-  'native panel update-action readiness'
-);
-requireText(
-  shared,
-  'state.ui?.clearCache',
-  'native panel cache-action readiness'
-);
-requireText(
-  shared,
-  'function closeNativePanel()',
-  'native-anchor panel close bridge'
-);
-requireText(
-  shared,
-  'shadow.append(style, panel);',
-  'native-anchor direct panel mount'
-);
-requireText(
-  shared,
-  "'ChatGPT Web 菜单'",
-  'script panel dialog accessibility'
-);
-requireText(
-  shared,
-  "panel.setAttribute(\n      'aria-hidden',",
-  'script panel visibility accessibility'
-);
-requireText(
-  shared,
-  "'ChatGPT Web 控制'",
-  'fallback browser control accessibility'
-);
-requireText(
-  shared,
-  "'clear-cache'",
-  'script-owned cache action bridge'
-);
-requireText(
-  shared,
-  "'pointermove'",
-  'script-owned draggable control'
-);
-requireText(
-  shared,
-  'function ensureControlMounted()',
-  'self-healing script control mount'
-);
-requireText(
-  shared,
-  'function scheduleControlRecovery(',
-  'script control recovery scheduler'
-);
-requireText(
-  shared,
-  'cleanupDetachedControl();',
-  'detached control cleanup'
-);
-requireText(
-  shared,
-  "const GLOBAL_KEY = 'ChatGPTWeb';",
-  'shared global API'
-);
-requireText(
-  shared,
-  "window[LEGACY_GLOBAL_KEY] = api;",
-  'legacy iOS API alias'
-);
-requireText(
-  shared,
-  'setNativeStatus',
-  'native status API'
-);
-requireText(
-  shared,
-  "update.textContent = '检查更新';",
-  'single explicit update action'
-);
-requireText(
-  shared,
-  "settings.textContent = '设置';",
-  'settings entry in first-layer menu'
-);
-requireText(
-  shared,
-  "reload.textContent = '重新加载 ChatGPT';",
-  'first-layer reload action'
-);
-requireText(
-  shared,
-  "case 'timeout': return '检查超时 · 使用当前版本';",
-  'update timeout UI state'
-);
-requireText(
-  shared,
-  "'重试检查更新'",
-  'manual update retry button state'
-);
-requireText(
-  shared,
-  "makeInfoRow('脚本')",
-  'settings script version row'
-);
-requireText(
-  shared,
-  "makeInfoRow('容器')",
-  'settings container version row'
+  'IS_SAFARI_CONTAINER ||\n      (',
+  'Safari container control suppression'
 );
 requireText(
   shared,
   'function processToolMutationNode(node)',
-  'one-shot process node classification'
+  'tool/MCP DOM optimization'
 );
 requireText(
   shared,
@@ -333,133 +153,43 @@ requireText(
 );
 requireText(
   shared,
-  'function compactToolSummary(label)',
-  'compact tool/MCP name extraction'
+  'function flushPendingBottomScroll()',
+  'event-driven bottom alignment'
 );
 requireText(
   shared,
-  "data-cgpt-static",
-  'static no-animation native mode'
+  'function onSendPointerDown(event)',
+  'send touch acknowledgement'
 );
-requireText(
-  shared,
-  'SIDEBAR_DEEP_RESET_COOKIE',
-  'one-time deep sidebar client-state reset'
-);
-requireText(
-  shared,
-  'localStorage.clear();',
-  'deep client local state cleanup'
-);
-requireText(
-  shared,
-  'indexedDB.databases()',
-  'deep IndexedDB cleanup'
-);
-requireText(
-  shared,
-  'caches.keys()',
-  'deep CacheStorage cleanup'
-);
-requireText(
-  shared,
-  "processToolMutationNode(node);",
-  'added-node-only process handling'
-);
-requireText(
-  shared,
-  'conversationLinks: new Map()',
-  'indexed sidebar conversation links'
-);
-requireText(
-  shared,
-  'diagnostics: {',
-  'runtime diagnostic state'
-);
-
-for (const status of [
-  'running',
-  'waiting_user',
-  'settling',
-  'completed_unread',
-  'completed_read',
-]) {
-  requireText(
-    shared,
-    status,
-    'conversation state ' + status
-  );
-}
 
 const sharedForbidden = [
-  ['SIDEBAR_GESTURE', 'iOS gesture config in shared script'],
-  ["addEventListener('touchstart'", 'touch gesture listener in shared script'],
-  ["addEventListener('touchmove'", 'touch gesture listener in shared script'],
-  ['function openSidebar()', 'sidebar opener in shared script'],
-  ['function closeSidebar()', 'sidebar closer in shared script'],
-  ['function isSidebarOpen()', 'sidebar state detector in shared script'],
-  ['ChatGPTIOSGestures', 'iOS gesture global in shared script'],
-  ['minTurns', 'length-gated optimization'],
-  ['keepRecent', 'legacy recent-turn threshold'],
-  ['nodes.some((other, otherIndex)', 'quadratic turn containment scan'],
-  ['state.observer.observe(document.documentElement', 'global documentElement subtree observer'],
-  ['IOS_TOOL_SWEEP_MS', 'periodic whole-thread tool sweep'],
-  ['replaceChildren(', 'DOM replacement'],
-  ['.innerHTML =', 'innerHTML replacement'],
-  [".removeAttribute('src')", 'media source unloading'],
-  ['开始性能诊断', 'manual debug UI in subtractive runtime'],
-  ['检查 IPA 更新', 'separate IPA update action'],
-  ['scheduleToolScan(', 'repeated tool rescan scheduler'],
-  ['data-cgpt-passive-turn', 'intrinsic-height passive turn virtualization'],
-  ['contain-intrinsic-size: auto 320px', 'estimated historical turn height'],
-  ['conversationScroller(', 'dynamic scroll-container probing'],
-  ['animation: cgpt-safari-pulse', 'sidebar pulse animation'],
-  ['aggressiveWindowing', 'removed second virtualization setting'],
-  ['new IntersectionObserver(', 'removed second virtualization observer'],
-  ['data-cgpt-windowed', 'removed second virtualization marker'],
-  ['scheduleRefresh(', 'removed redundant performance refresh pipeline'],
-  ['data-cgpt-tool-collapsed', 'removed legacy tool collapse mode'],
-  ['function registerToolGroup(', 'removed legacy tool group pipeline'],
-  ['function toolSummary(', 'removed legacy tool summary pipeline'],
-  ['function finalizeTrackedToolGroups(', 'removed legacy tool finalizer'],
-];
-
-for (const [needle, description] of sharedForbidden) {
-  if (shared.includes(needle)) {
-    fail('forbidden ' + description + ': ' + needle);
-  }
-}
-
-requireText(
-  store,
-  '"nativeGestures": false',
-  'native gesture capability disabled'
-);
-
-const gestureArtifacts = [
-  [shared, 'ChatGPTIOSGestures', 'gesture global in shared script'],
-  [shared, 'gestureVersion', 'gesture version in shared script'],
-  [store, 'gestureScriptPath', 'gesture script path in native store'],
-  [store, 'bestLocalGestureScript', 'gesture cache selection'],
-  [store, 'fetchLatestGestureScript', 'gesture remote update'],
-  [store, 'gestureVersion', 'gesture version status'],
-  [swift, 'UIGestureRecognizer', 'custom native gesture recognizer'],
-  [swift, 'UIPanGestureRecognizer', 'custom native pan gesture'],
-  [swift, 'ChatGPTEdgeSwipeGestureRecognizer', 'native edge swipe recognizer'],
-  [swift, 'onDragBegan', 'floating control drag gesture'],
-  [swift, 'onDragChanged', 'floating control drag gesture'],
-  [swift, 'onDragEnded', 'floating control drag gesture'],
-  [swift, 'handleBrowserControlPan', 'external browser drag gesture'],
-  [swift, 'leftSidebarEdgeGesture', 'left sidebar gesture'],
-  [swift, 'rightSidebarEdgeGesture', 'right sidebar gesture'],
-  [swift, 'twoFingerNavigationGesture', 'two-finger navigation gesture'],
+  [
+    "addEventListener('touchstart'",
+    'custom touch gesture'
+  ],
+  [
+    "addEventListener('touchmove'",
+    'custom touch gesture'
+  ],
+  [
+    'ChatGPTIOSGestures',
+    'legacy gesture runtime'
+  ],
+  [
+    'INITIAL_BOTTOM_SCROLL_DELAYS',
+    'duplicate bottom timers'
+  ],
+  [
+    'bottomScrollTimers',
+    'duplicate bottom timers'
+  ],
 ];
 
 for (
-  const [source, needle, description]
-    of gestureArtifacts
+  const [needle, description]
+    of sharedForbidden
 ) {
-  if (source.includes(needle)) {
+  if (shared.includes(needle)) {
     fail(
       'forbidden ' +
       description +
@@ -470,176 +200,141 @@ for (
 }
 
 requireText(
-  shared,
-  'const HAS_NATIVE_LIFECYCLE =',
-  'native lifecycle capability gate'
-);
-requireText(
-  shared,
-  'function nativeLifecycle(',
-  'native lifecycle runtime entrypoint'
-);
-requireText(
-  shared,
-  'function suspendRuntime()',
-  'native background suspension'
-);
-requireText(
-  shared,
-  'function resumeRuntime(',
-  'native foreground recovery'
-);
-requireText(
-  shared,
-  'function pauseTelemetryForLifecycle()',
-  'background telemetry pause'
-);
-requireText(
-  shared,
-  'function resumeTelemetryForLifecycle()',
-  'foreground telemetry resume'
-);
-requireText(
-  shared,
-  'if (!HAS_NATIVE_LIFECYCLE) {\n      document.addEventListener(',
-  'visibility fallback only for non-native lifecycle'
-);
-requireText(
-  store,
-  '"nativeLifecycle": true',
-  'native lifecycle capability bootstrap'
-);
-requireText(
-  store,
-  '"lowPowerMode":',
-  'native low power mode state'
-);
-requireText(
-  store,
-  '"thermalState":',
-  'native thermal state'
-);
-requireText(
-  swift,
-  'UIApplication\n                        .didEnterBackgroundNotification',
-  'native background notification'
-);
-requireText(
-  swift,
-  'UIApplication\n                        .didBecomeActiveNotification',
-  'native active notification'
-);
-requireText(
-  swift,
-  'NSProcessInfoPowerStateDidChange',
-  'native low power state notification'
-);
-requireText(
-  swift,
-  'thermalStateDidChangeNotification',
-  'native thermal state notification'
+  contentView,
+  'SafariContainerView()',
+  'Safari root view'
 );
 
 if (
-  store.includes(
-    'const next = (json);'
-  ) ||
-  store.includes(
-    'api?.nativeLifecycle?.(\n            (String(reflecting: phase))'
+  contentView.includes(
+    'ChatGPTWebView()'
   )
 ) {
   fail(
-    'forbidden broken native lifecycle interpolation'
+    'WKWebView root is still active'
   );
 }
 
 requireText(
-  shared,
-  'function flushPendingBottomScroll()',
-  'event-driven native bottom scroll'
+  safariContainer,
+  'import SafariServices',
+  'SafariServices framework'
 );
 requireText(
-  shared,
-  'pendingBottomConversationId',
-  'pending native bottom scroll state'
+  safariContainer,
+  'SFSafariViewController',
+  'Safari view controller'
 );
 requireText(
-  shared,
-  'EXTREME_NATIVE_MODE ||\n      state.statusTimer',
-  'native conversation-state heartbeat disabled'
+  safariContainer,
+  '.ActivityButton(',
+  'script injection activity button'
 );
 requireText(
-  shared,
-  'if (!EXTREME_NATIVE_MODE) {\n      evaluateConversationState();',
-  'desktop-only phase conversation-state evaluation'
+  safariContainer,
+  '"com.masakacj.chatgptweb.scriptaction"',
+  'script action extension id'
 );
 requireText(
-  shared,
-  'if (turnStructureChanged) {\n      flushPendingBottomScroll();',
-  'turn-driven bottom alignment'
+  safariContainer,
+  'modalPresentationStyle =\n            .fullScreen',
+  'modal Safari presentation'
 );
 
 if (
-  shared.includes(
-    'INITIAL_BOTTOM_SCROLL_DELAYS'
-  ) ||
-  shared.includes(
-    'bottomScrollTimers'
-  ) ||
-  shared.includes(
-    '700,\n  ];'
+  safariContainer.includes(
+    'WKWebView'
   )
 ) {
   fail(
-    'forbidden timer-driven duplicate bottom scrolling'
+    'Safari container must not use WKWebView'
   );
 }
 
 requireText(
-  shared,
-  'const SEND_CONTROL_QUERY = [',
-  'send control fast selector'
+  project,
+  'ChatGPTWebView.swift',
+  'legacy WKWebView exclusion'
 );
 requireText(
-  shared,
-  'function onSendPointerDown(event)',
-  'send pointer acknowledgement'
+  project,
+  'UnifiedScriptStore.swift',
+  'legacy store exclusion'
 );
 requireText(
-  shared,
-  "type: 'send-touch-ack'",
-  'native send haptic message'
+  project,
+  'ChatGPTScriptAction:',
+  'script action target'
 );
 requireText(
-  shared,
-  '[data-cgpt-send-ack="1"]',
-  'instant send visual acknowledgement'
+  project,
+  'type: app-extension',
+  'action extension target type'
 );
 requireText(
-  swift,
-  'case "send-touch-ack":',
-  'native send haptic handler'
+  project,
+  'embed: true',
+  'embedded script action'
 );
 requireText(
-  swift,
-  'webView.topAnchor.constraint(\n                equalTo:\n                    safeAreaLayoutGuide\n                        .topAnchor',
-  'WebView top safe-area constraint'
+  project,
+  'Build Safari Injection Script',
+  'generated injection script'
+);
+requireText(
+  project,
+  'window.__CHATGPT_SAFARI_CONTAINER__ = true;',
+  'injection bootstrap'
+);
+requireText(
+  project,
+  'ExtensionPreprocessingJS',
+  'Safari preprocessing object'
 );
 
-if (
-  swift.includes(
-    'webView.topAnchor.constraint(\n                equalTo: topAnchor'
+requireText(
+  actionInfo,
+  '<string>com.apple.services</string>',
+  'non-UI action extension point'
+);
+requireText(
+  actionInfo,
+  'NSExtensionJavaScriptPreprocessingFile',
+  'JavaScript preprocessing file'
+);
+requireText(
+  actionInfo,
+  'NSExtensionActivationSupportsWebPageWithMaxCount',
+  'webpage activation'
+);
+requireText(
+  actionInfo,
+  '<string>InjectChatGPT</string>',
+  'injection script name'
+);
+
+requireText(
+  actionHandler,
+  'NSExtensionRequestHandling',
+  'action request handler'
+);
+requireText(
+  actionHandler,
+  'context.completeRequest(',
+  'non-UI completion'
+);
+
+console.log(
+  JSON.stringify(
+    {
+      ok: true,
+      version: pkg.version,
+      architecture:
+        'SFSafariViewController + Action Extension script injection',
+      sharedBytes:
+        Buffer.byteLength(shared),
+    },
+    null,
+    2
   )
-) {
-  fail(
-    'forbidden WebView top-edge overlap with status area'
-  );
-}
-
-console.log(JSON.stringify({
-  ok: true,
-  sharedVersion: pkg.version,
-  sharedBytes: Buffer.byteLength(shared),
-  architecture: 'shared runtime + gesture-free iOS shell',
-  sharedSource: sharedPath,
-}, null, 2));
+);
