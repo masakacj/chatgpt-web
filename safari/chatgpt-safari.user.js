@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.28
+// @version      0.4.29
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.28';
+  const VERSION = '0.4.29';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -108,6 +108,15 @@
     'button[aria-label="Send message"]',
     'button[aria-label*="发送"]',
     'button[aria-label*="送出"]',
+  ].join(',');
+
+  const OPEN_APP_CONTROL_QUERY = [
+    'a[href*="apps.apple.com"][href*="6448311069"]',
+    'a[href*="apps.apple.com"][href*="chatgpt" i]',
+    'a[href*="chatgpt.com/download" i]',
+    'a[href*="openai.com/chatgpt/download" i]',
+    'button[aria-label*="open" i][aria-label*="app" i]',
+    'button[aria-label*="打开" i][aria-label*="app" i]',
   ].join(',');
 
   const HAD_EXISTING_RUNTIME =
@@ -2027,6 +2036,98 @@
       },
     });
 
+  function suppressOpenAppBanner(
+    scope = document
+  ) {
+    if (!IS_SAFARI_CONTAINER) {
+      return false;
+    }
+
+    const root =
+      scope instanceof Element ||
+      scope instanceof Document
+        ? scope
+        : document;
+
+    const controls = [];
+
+    if (
+      root instanceof Element &&
+      root.matches?.(
+        OPEN_APP_CONTROL_QUERY
+      )
+    ) {
+      controls.push(root);
+    }
+
+    for (
+      const control of
+        root.querySelectorAll?.(
+          OPEN_APP_CONTROL_QUERY
+        ) || []
+    ) {
+      controls.push(control);
+
+      if (controls.length >= 6) {
+        break;
+      }
+    }
+
+    let hidden = false;
+
+    for (const control of controls) {
+      let node =
+        control instanceof Element
+          ? control
+          : null;
+
+      for (
+        let depth = 0;
+        node &&
+        node !== document.body &&
+        depth < 5;
+        depth += 1,
+        node = node.parentElement
+      ) {
+        const text =
+          String(
+            node.textContent || ''
+          )
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const looksLikeBanner =
+          node.matches?.(
+            '[role="banner"],' +
+            '[data-testid*="banner" i],' +
+            '[data-testid*="open-app" i],' +
+            '[data-testid*="mobile-app" i],' +
+            '[class*="banner" i]'
+          ) ||
+          (
+            text.length > 0 &&
+            text.length <= 220 &&
+            /(?:open|打开|开启).{0,12}(?:app|应用)|(?:app|应用).{0,12}(?:open|打开|开启)/i
+              .test(text)
+          );
+
+        if (!looksLikeBanner) {
+          continue;
+        }
+
+        node.setAttribute(
+          'data-cgpt-open-app-banner',
+          '1'
+        );
+
+        hidden = true;
+        break;
+      }
+    }
+
+    return hidden;
+  }
+
   function installStyle() {
     if (document.getElementById(STYLE_ID)) return;
 
@@ -2044,6 +2145,41 @@
       '  scroll-behavior: auto !important;',
       '}',
       '[data-cgpt-send-ack="1"] { opacity: .55 !important; }',
+      'html[data-cgpt-static="1"] [data-cgpt-open-app-banner="1"],',
+      'html[data-cgpt-static="1"] [data-testid*="open-app" i],',
+      'html[data-cgpt-static="1"] [data-testid*="mobile-app-banner" i],',
+      'html[data-cgpt-static="1"] [data-testid*="app-banner" i] {',
+      '  display: none !important;',
+      '  content-visibility: hidden !important;',
+      '  contain: strict !important;',
+      '  height: 0 !important;',
+      '  min-height: 0 !important;',
+      '  max-height: 0 !important;',
+      '  margin: 0 !important;',
+      '  padding: 0 !important;',
+      '  overflow: hidden !important;',
+      '  pointer-events: none !important;',
+      '}',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [data-testid*="reasoning" i],',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [data-testid*="thinking" i],',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [data-testid*="thought" i],',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [data-testid*="trace" i],',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [data-testid*="tool-progress" i],',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [data-testid*="tool-status" i],',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [data-testid*="tool-trace" i],',
+      'html[data-cgpt-static="1"] [data-testid^="conversation-turn-"] [role="progressbar"] {',
+      '  display: none !important;',
+      '  content-visibility: hidden !important;',
+      '  contain: strict !important;',
+      '  visibility: hidden !important;',
+      '  height: 0 !important;',
+      '  min-height: 0 !important;',
+      '  max-height: 0 !important;',
+      '  margin: 0 !important;',
+      '  padding: 0 !important;',
+      '  overflow: hidden !important;',
+      '  pointer-events: none !important;',
+      '}',
       '[data-cgpt-tool-summary-only="1"] {',
       '  display: block !important;',
       '  min-height: 30px !important;',
@@ -4499,8 +4635,24 @@
       document.documentElement;
 
     state.observer =
-      new MutationObserver(() => {
+      new MutationObserver(
+        (mutations) => {
         state.metrics.observerCallbacks += 1;
+
+        if (IS_SAFARI_CONTAINER) {
+          for (const mutation of mutations) {
+            for (
+              const node of
+                mutation.addedNodes
+            ) {
+              if (node instanceof Element) {
+                suppressOpenAppBanner(
+                  node
+                );
+              }
+            }
+          }
+        }
 
         if (
           IS_NATIVE_IOS &&
@@ -5296,6 +5448,10 @@
   }
 
   installStyle();
+
+  if (IS_SAFARI_CONTAINER) {
+    suppressOpenAppBanner();
+  }
 
   if (!EXTREME_NATIVE_MODE) {
     setupConversationStateSync();
