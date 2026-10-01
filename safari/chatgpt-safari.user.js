@@ -4618,10 +4618,42 @@
       return true;
     }
 
-    if (
-      normalized === 'power' ||
-      normalized === 'thermal'
-    ) {
+    if (normalized === 'power') {
+      if (
+        state.settings.telemetryEnabled &&
+        !state.nativeSuspended
+      ) {
+        queueTelemetrySample(
+          state.nativeStatus
+            ?.lowPowerMode === true
+            ? 'power_on'
+            : 'power_off'
+        );
+      }
+
+      if (!state.nativeSuspended) {
+        updateUI();
+      }
+      return true;
+    }
+
+    if (normalized === 'thermal') {
+      if (
+        state.settings.telemetryEnabled &&
+        !state.nativeSuspended
+      ) {
+        queueTelemetrySample(
+          (
+            'thermal_' +
+            String(
+              state.nativeStatus
+                ?.thermalState ||
+                'unknown'
+            )
+          ).slice(0, 24)
+        );
+      }
+
       if (!state.nativeSuspended) {
         updateUI();
       }
