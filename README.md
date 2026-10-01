@@ -1,5 +1,21 @@
 # ChatGPT Web
 
+## Current iOS runtime (0.4.32)
+
+The default iOS app runtime is again the developer-first WKWebView shell:
+
+- inspectable WKWebView (Safari Web Inspector enabled);
+- persistent ChatGPT website data / login state;
+- native JavaScript bridge;
+- cached + multi-source remote userscript hot update;
+- latest userscript is injected into the current page immediately;
+- returning the app to foreground triggers a throttled hot-update check;
+- Result Only mode hides normal reasoning/tool process UI while keeping explicit approval interactions;
+- separate popup WKWebView for links/files, plus WebKit content-process recovery.
+
+The SFSafariViewController + Action Extension implementation remains in the repository as a fallback/reference path, but it is no longer the default app root.
+
+
 ChatGPT Web now uses a two-layer runtime architecture:
 
 1. **Shared core userscript**
