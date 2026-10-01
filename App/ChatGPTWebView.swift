@@ -5,150 +5,15 @@ import WebKit
 
 final class ChatGPTFloatingAnchorButton: UIButton {
     var onTap: (() -> Void)?
-    var onDragBegan: (() -> Void)?
-    var onDragChanged:
-        ((CGPoint) -> CGPoint)?
-    var onDragEnded: (() -> Void)?
 
-    private var trackingStartPoint =
-        CGPoint.zero
-    private var trackingStartCenter =
-        CGPoint.zero
-    private var trackingDidDrag = false
+    override init(frame: CGRect) {
+        super.init(frame: frame)
 
-    override func beginTracking(
-        _ touch: UITouch,
-        with event: UIEvent?
-    ) -> Bool {
-        guard
-            isEnabled,
-            let superview
-        else {
-            return false
-        }
-
-        trackingStartPoint =
-            touch.location(in: superview)
-        trackingStartCenter = center
-        trackingDidDrag = false
-        isHighlighted = true
-        return true
-    }
-
-    override func continueTracking(
-        _ touch: UITouch,
-        with event: UIEvent?
-    ) -> Bool {
-        guard let superview else {
-            return false
-        }
-
-        let point =
-            touch.location(in: superview)
-        let dx =
-            point.x -
-            trackingStartPoint.x
-        let dy =
-            point.y -
-            trackingStartPoint.y
-
-        if
-            !trackingDidDrag,
-            sqrt(dx * dx + dy * dy) >= 6
-        {
-            trackingDidDrag = true
-            isHighlighted = false
-            onDragBegan?()
-        }
-
-        if trackingDidDrag {
-            let proposed =
-                CGPoint(
-                    x:
-                        trackingStartCenter.x +
-                        dx,
-                    y:
-                        trackingStartCenter.y +
-                        dy
-                )
-
-            center =
-                onDragChanged?(proposed) ??
-                proposed
-        }
-
-        return true
-    }
-
-    override func endTracking(
-        _ touch: UITouch?,
-        with event: UIEvent?
-    ) {
-        isHighlighted = false
-
-        if trackingDidDrag {
-            onDragEnded?()
-        } else {
-            onTap?()
-        }
-
-        trackingDidDrag = false
-    }
-
-    override func cancelTracking(
-        with event: UIEvent?
-    ) {
-        isHighlighted = false
-
-        if trackingDidDrag {
-            onDragEnded?()
-        }
-
-        trackingDidDrag = false
-    }
-}
-
-
-final class ChatGPTEdgeSwipeGestureRecognizer:
-    UIGestureRecognizer
-{
-    enum Edge: Equatable {
-        case left
-        case right
-    }
-
-    private let edge: Edge
-    private let activationWidth: CGFloat
-    private let triggerDistance: CGFloat
-    private let axisRatio: CGFloat
-    private let maximumStartYFraction:
-        CGFloat
-    private var startPoint: CGPoint?
-
-    init(
-        edge: Edge,
-        activationWidth: CGFloat = 44,
-        maximumStartYFraction:
-            CGFloat = 1,
-        target: Any?,
-        action: Selector?
-    ) {
-        self.edge = edge
-        self.activationWidth =
-            activationWidth
-        self.triggerDistance = 4
-        self.axisRatio = 0.65
-        self.maximumStartYFraction =
-            maximumStartYFraction
-
-        super.init(
-            target: target,
-            action: action
+        addTarget(
+            self,
+            action: #selector(handleTap),
+            for: .touchUpInside
         )
-
-        cancelsTouchesInView = false
-        delaysTouchesBegan = false
-        delaysTouchesEnded = false
     }
 
     required init?(coder: NSCoder) {
@@ -157,145 +22,9 @@ final class ChatGPTEdgeSwipeGestureRecognizer:
         )
     }
 
-    override func touchesBegan(
-        _ touches: Set<UITouch>,
-        with event: UIEvent
-    ) {
-        guard
-            touches.count == 1,
-            event.allTouches?.count == 1,
-            let touch = touches.first,
-            let view
-        else {
-            state = .failed
-            return
-        }
-
-        let point =
-            touch.location(in: view)
-
-        let insideEdge: Bool
-
-        if edge == .left {
-            insideEdge =
-                point.x <= activationWidth
-        } else {
-            insideEdge =
-                point.x >=
-                    view.bounds.width -
-                    activationWidth
-        }
-
-        let insideVerticalRange =
-            point.y <=
-                view.bounds.height *
-                maximumStartYFraction
-
-        guard
-            insideEdge,
-            insideVerticalRange
-        else {
-            state = .failed
-            return
-        }
-
-        startPoint = point
-    }
-
-    override func touchesMoved(
-        _ touches: Set<UITouch>,
-        with event: UIEvent
-    ) {
-        if
-            state == .began ||
-            state == .changed
-        {
-            state = .changed
-            return
-        }
-
-        guard
-            state == .possible,
-            event.allTouches?.count == 1,
-            let startPoint,
-            let touch = touches.first,
-            let view
-        else {
-            if state == .possible {
-                state = .failed
-            }
-            return
-        }
-
-        let point =
-            touch.location(in: view)
-
-        let rawDx =
-            point.x - startPoint.x
-
-        let directionalDx =
-            edge == .left
-                ? rawDx
-                : -rawDx
-
-        let dy =
-            abs(
-                point.y -
-                startPoint.y
-            )
-
-        if directionalDx < -triggerDistance {
-            state = .failed
-            return
-        }
-
-        if
-            dy >= triggerDistance * 1.5,
-            dy > abs(rawDx) * 1.2
-        {
-            state = .failed
-            return
-        }
-
-        if
-            directionalDx >= triggerDistance,
-            directionalDx >=
-                dy * axisRatio
-        {
-            state = .began
-        }
-    }
-
-    override func touchesEnded(
-        _ touches: Set<UITouch>,
-        with event: UIEvent
-    ) {
-        switch state {
-        case .began, .changed:
-            state = .ended
-
-        case .possible:
-            state = .failed
-
-        default:
-            break
-        }
-    }
-
-    override func touchesCancelled(
-        _ touches: Set<UITouch>,
-        with event: UIEvent
-    ) {
-        if state == .possible {
-            state = .failed
-        } else {
-            state = .cancelled
-        }
-    }
-
-    override func reset() {
-        startPoint = nil
-        super.reset()
+    @objc
+    private func handleTap() {
+        onTap?()
     }
 }
 
@@ -346,9 +75,6 @@ struct ChatGPTWebView: UIViewRepresentable {
         let initialScript =
             scriptStore.bestLocalScript()
 
-        let initialGestureScript =
-            scriptStore.bestLocalGestureScript()
-
         controller.add(
             context.coordinator,
             name: Coordinator.nativeMessageHandler
@@ -357,13 +83,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         installUserScripts(
             on: controller,
             payload: initialScript,
-            gesturePayload: initialGestureScript,
             status:
                 initialScript?.origin == "cached"
-                ? "cached"
-                : "bundled",
-            gestureStatus:
-                initialGestureScript?.origin == "cached"
                 ? "cached"
                 : "bundled"
         )
@@ -386,9 +107,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
 
-        // Single-finger edge gestures and two-finger
-        // horizontal navigation are handled natively
-        // by Coordinator to keep normal web taps untouched.
+        // Keep WebKit's navigation swipe gestures disabled.
+        // This shell intentionally adds no custom gestures.
         webView.allowsBackForwardNavigationGestures = false
 
         webView.allowsLinkPreview = true
@@ -404,8 +124,7 @@ struct ChatGPTWebView: UIViewRepresentable {
             rootView: container,
             webView: webView,
             contentController: controller,
-            initialScript: initialScript,
-            initialGestureScript: initialGestureScript
+            initialScript: initialScript
         )
 
         context.coordinator.installMainAnchor(
@@ -425,29 +144,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                     <meta name="viewport"
                           content="width=device-width,initial-scale=1">
                   </head>
-                  <body>
-                    <button
-                      data-testid="sidebar-button"
-                      aria-expanded="false"
-                      aria-label="Open sidebar"
-                      onclick="
-                        const open =
-                          this.getAttribute('aria-expanded') !== 'true';
-                        this.setAttribute(
-                          'aria-expanded',
-                          open ? 'true' : 'false'
-                        );
-                        this.setAttribute(
-                          'aria-label',
-                          open ? 'Sidebar opened' : 'Open sidebar'
-                        );
-                        this.textContent =
-                          open ? 'Sidebar opened' : 'Open sidebar';
-                      "
-                    >
-                      Open sidebar
-                    </button>
-                  </body>
+                  <body></body>
                 </html>
                 """,
                 baseURL: URL(
@@ -488,9 +185,7 @@ struct ChatGPTWebView: UIViewRepresentable {
     private func installUserScripts(
         on controller: WKUserContentController,
         payload: UnifiedScriptPayload?,
-        gesturePayload: UnifiedScriptPayload?,
-        status: String,
-        gestureStatus: String
+        status: String
     ) {
         let store = UnifiedScriptStore.shared
 
@@ -501,12 +196,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                         payload?.version ?? "missing",
                     scriptOrigin:
                         payload?.origin ?? "none",
-                    updateStatus: "checking",
-                    gestureVersion:
-                        gesturePayload?.version,
-                    gestureOrigin:
-                        gesturePayload?.origin,
-                    gestureUpdateStatus: "checking"
+                    updateStatus: "checking"
                 ),
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
@@ -523,16 +213,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        if let gesturePayload {
-            controller.addUserScript(
-                WKUserScript(
-                    source: gesturePayload.source,
-                    injectionTime: .atDocumentStart,
-                    forMainFrameOnly: true
-                )
-            )
-        }
-
         controller.addUserScript(
             WKUserScript(
                 source: store.runtimeStatusJavaScript(
@@ -540,13 +220,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                         payload?.version ?? "missing",
                     scriptOrigin:
                         payload?.origin ?? "none",
-                    updateStatus: status,
-                    gestureVersion:
-                        gesturePayload?.version,
-                    gestureOrigin:
-                        gesturePayload?.origin,
-                    gestureUpdateStatus:
-                        gestureStatus
+                    updateStatus: status
                 ),
                 injectionTime: .atDocumentEnd,
                 forMainFrameOnly: true
@@ -558,8 +232,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         NSObject,
         WKNavigationDelegate,
         WKUIDelegate,
-        WKScriptMessageHandler,
-        UIGestureRecognizerDelegate
+        WKScriptMessageHandler
     {
         static let nativeMessageHandler = "chatGPTNative"
 
@@ -567,14 +240,11 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var contentController: WKUserContentController?
 
         private var activeScript: UnifiedScriptPayload?
-        private var activeGestureScript: UnifiedScriptPayload?
 
         private var updateStatus = "bundled"
-        private var gestureUpdateStatus = "bundled"
         private var checkingUpdate = false
         private var hasStartedInitialHotUpdate = false
         private var lifecycleObserversInstalled = false
-        private var keyboardVisible = false
         private let sendFeedbackGenerator =
             UIImpactFeedbackGenerator(
                 style: .light
@@ -583,14 +253,6 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var browserControlsExpanded = false
         private var contentTerminationTimes: [Date] = []
         private var recoveryAlertPresented = false
-
-        private weak var leftSidebarEdgeGesture:
-            ChatGPTEdgeSwipeGestureRecognizer?
-        private weak var rightSidebarEdgeGesture:
-            ChatGPTEdgeSwipeGestureRecognizer?
-        private weak var twoFingerNavigationGesture:
-            UIPanGestureRecognizer?
-        private var twoFingerNavigationDidFire = false
 
         private var latestKnownVersion: String?
 
@@ -607,8 +269,6 @@ struct ChatGPTWebView: UIViewRepresentable {
         private weak var browserMenuView: UIVisualEffectView?
         private weak var browserBackButton: UIButton?
         private weak var browserForwardButton: UIButton?
-        private var browserControlDragStartTransform =
-            CGAffineTransform.identity
 
         private static let browserControlPositionXKey =
             "ChatGPTWeb.browserControlPositionX"
@@ -632,15 +292,12 @@ struct ChatGPTWebView: UIViewRepresentable {
             rootView: ChatGPTWebContainerView,
             webView: WKWebView,
             contentController: WKUserContentController,
-            initialScript: UnifiedScriptPayload?,
-            initialGestureScript: UnifiedScriptPayload?
+            initialScript: UnifiedScriptPayload?
         ) {
             self.rootView = rootView
             self.webView = webView
             self.contentController = contentController
             self.activeScript = initialScript
-            self.activeGestureScript =
-                initialGestureScript
             self.latestKnownVersion =
                 initialScript?.version
 
@@ -649,14 +306,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                 ? "cached"
                 : "bundled"
 
-            self.gestureUpdateStatus =
-                initialGestureScript?.origin == "cached"
-                ? "cached"
-                : "bundled"
-
-            installNativeGestures(
-                in: rootView
-            )
             installNativeLifecycleBridge()
             sendFeedbackGenerator.prepare()
         }
@@ -717,30 +366,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                         .thermalStateDidChangeNotification,
                 object: nil
             )
-
-            center.addObserver(
-                self,
-                selector:
-                    #selector(
-                        keyboardWillShow(_:)
-                    ),
-                name:
-                    UIResponder
-                        .keyboardWillShowNotification,
-                object: nil
-            )
-
-            center.addObserver(
-                self,
-                selector:
-                    #selector(
-                        keyboardWillHide(_:)
-                    ),
-                name:
-                    UIResponder
-                        .keyboardWillHideNotification,
-                object: nil
-            )
         }
 
         @objc
@@ -779,24 +404,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        @objc
-        private func keyboardWillShow(
-            _ notification: Notification
-        ) {
-            keyboardVisible = true
-            rightSidebarEdgeGesture?
-                .isEnabled = false
-        }
-
-        @objc
-        private func keyboardWillHide(
-            _ notification: Notification
-        ) {
-            keyboardVisible = false
-            rightSidebarEdgeGesture?
-                .isEnabled = true
-        }
-
         private func sendNativeLifecycle(
             _ phase: String
         ) {
@@ -823,261 +430,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        private func installNativeGestures(
-            in rootView: UIView
-        ) {
-            guard
-                leftSidebarEdgeGesture == nil,
-                rightSidebarEdgeGesture == nil,
-                twoFingerNavigationGesture == nil
-            else {
-                return
-            }
-
-            let left =
-                ChatGPTEdgeSwipeGestureRecognizer(
-                    edge: .left,
-                    target: self,
-                    action:
-                        #selector(
-                            handleLeftSidebarEdge(_:)
-                        )
-                )
-            left.delegate = self
-            rootView.addGestureRecognizer(left)
-            leftSidebarEdgeGesture = left
-
-            let right =
-                ChatGPTEdgeSwipeGestureRecognizer(
-                    edge: .right,
-                    activationWidth: 24,
-                    maximumStartYFraction:
-                        0.58,
-                    target: self,
-                    action:
-                        #selector(
-                            handleRightSidebarEdge(_:)
-                        )
-                )
-            right.delegate = self
-            right.isEnabled =
-                !keyboardVisible
-            rootView.addGestureRecognizer(right)
-            rightSidebarEdgeGesture = right
-
-            let navigation =
-                UIPanGestureRecognizer(
-                    target: self,
-                    action:
-                        #selector(
-                            handleTwoFingerNavigation(_:)
-                        )
-                )
-            navigation.minimumNumberOfTouches = 2
-            navigation.maximumNumberOfTouches = 2
-            navigation.delegate = self
-            navigation.cancelsTouchesInView = false
-            navigation.delaysTouchesBegan = false
-            navigation.delaysTouchesEnded = false
-            rootView.addGestureRecognizer(navigation)
-            twoFingerNavigationGesture =
-                navigation
-        }
-
-        func gestureRecognizerShouldBegin(
-            _ gestureRecognizer:
-                UIGestureRecognizer
-        ) -> Bool {
-            guard
-                gestureRecognizer ===
-                    twoFingerNavigationGesture,
-                let pan =
-                    gestureRecognizer
-                        as? UIPanGestureRecognizer,
-                let rootView
-            else {
-                return true
-            }
-
-            let velocity =
-                pan.velocity(in: rootView)
-
-            return
-                abs(velocity.x) >
-                    abs(velocity.y) * 1.05
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer:
-                UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith
-                otherGestureRecognizer:
-                UIGestureRecognizer
-        ) -> Bool {
-            return true
-        }
-
-        @objc
-        private func handleLeftSidebarEdge(
-            _ gesture:
-                ChatGPTEdgeSwipeGestureRecognizer
-        ) {
-            guard gesture.state == .began else {
-                return
-            }
-
-            clickChatGPTSidebar(
-                opening: true
-            )
-        }
-
-        @objc
-        private func handleRightSidebarEdge(
-            _ gesture:
-                ChatGPTEdgeSwipeGestureRecognizer
-        ) {
-            guard gesture.state == .began else {
-                return
-            }
-
-            clickChatGPTSidebar(
-                opening: false
-            )
-        }
-
-        private static let
-            openSidebarJavaScript =
-                """
-                (() => {
-                  const selectors = [
-                    '[data-testid="sidebar-button"][aria-expanded="false"]',
-                    '[data-testid="open-sidebar-button"]',
-                    'button[aria-label*="Open sidebar"]',
-                    'button[aria-label*="Show sidebar"]',
-                    'button[aria-label*="Open navigation"]',
-                    'button[aria-label*="打开侧边栏"]',
-                    'button[aria-label*="显示侧边栏"]',
-                    'button[aria-label*="展开侧边栏"]',
-                    'button[aria-label*="打开导航"]'
-                  ];
-                  for (const selector of selectors) {
-                    const button =
-                      document.querySelector(selector);
-                    if (!button) continue;
-                    button.click();
-                    return true;
-                  }
-                  return false;
-                })()
-                """
-
-        private static let
-            closeSidebarJavaScript =
-                """
-                (() => {
-                  const selectors = [
-                    '[data-testid="close-sidebar-button"]',
-                    '[data-testid="sidebar-button"][aria-expanded="true"]',
-                    'button[aria-label*="Close sidebar"]',
-                    'button[aria-label*="Hide sidebar"]',
-                    'button[aria-label*="Collapse sidebar"]',
-                    'button[aria-label*="关闭侧边栏"]',
-                    'button[aria-label*="隐藏侧边栏"]',
-                    'button[aria-label*="收起侧边栏"]',
-                    'button[aria-label*="关闭导航"]'
-                  ];
-                  for (const selector of selectors) {
-                    const button =
-                      document.querySelector(selector);
-                    if (!button) continue;
-                    button.click();
-                    return true;
-                  }
-                  return false;
-                })()
-                """
-
-        private func clickChatGPTSidebar(
-            opening: Bool
-        ) {
-            webView?.evaluateJavaScript(
-                opening
-                    ? Self.openSidebarJavaScript
-                    : Self.closeSidebarJavaScript
-            )
-        }
-
-        @objc
-        private func handleTwoFingerNavigation(
-            _ gesture:
-                UIPanGestureRecognizer
-        ) {
-            switch gesture.state {
-            case .began:
-                twoFingerNavigationDidFire = false
-                attemptTwoFingerNavigation(
-                    gesture
-                )
-
-            case .changed:
-                attemptTwoFingerNavigation(
-                    gesture
-                )
-
-            case .ended, .cancelled, .failed:
-                twoFingerNavigationDidFire = false
-
-            default:
-                break
-            }
-        }
-
-        private func attemptTwoFingerNavigation(
-            _ gesture:
-                UIPanGestureRecognizer
-        ) {
-            guard
-                !twoFingerNavigationDidFire,
-                let rootView,
-                let webView
-            else {
-                return
-            }
-
-            let translation =
-                gesture.translation(
-                    in: rootView
-                )
-
-            guard
-                abs(translation.x) >= 16,
-                abs(translation.x) >
-                    abs(translation.y) * 1.05
-            else {
-                return
-            }
-
-            twoFingerNavigationDidFire = true
-
-            if translation.x > 0 {
-                if webView.canGoBack {
-                    webView.goBack()
-                } else {
-                    webView.evaluateJavaScript(
-                        "history.back()"
-                    )
-                }
-            } else {
-                if webView.canGoForward {
-                    webView.goForward()
-                } else {
-                    webView.evaluateJavaScript(
-                        "history.forward()"
-                    )
-                }
-            }
-        }
-
         func installMainAnchor(
             in rootView: ChatGPTWebContainerView
         ) {
@@ -1087,7 +439,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             let control =
                 ChatGPTFloatingAnchorButton(
-                    type: .system
+                    frame: .zero
                 )
             control.translatesAutoresizingMaskIntoConstraints = true
             control.frame = CGRect(
@@ -1117,7 +469,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 CGSize(width: 0, height: 3)
 
             control.accessibilityLabel =
-                "ChatGPT Web 控制，可拖动"
+                "ChatGPT Web 控制"
             control.accessibilityIdentifier =
                 "chatgpt.web.floatingAnchor"
             control.isAccessibilityElement = true
@@ -1156,48 +508,6 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self.toggleScriptPanel(
                     from: control,
                     retriesRemaining: 12
-                )
-            }
-
-            control.onDragBegan = {
-                [weak self] in
-                self?.closeScriptPanel()
-                self?.collapseExternalBrowserMenu()
-            }
-
-            control.onDragChanged = {
-                [weak self, weak rootView]
-                proposed in
-                guard
-                    let self,
-                    let rootView
-                else {
-                    return proposed
-                }
-
-                return self.clampedMainAnchorCenter(
-                    proposed,
-                    in: rootView
-                )
-            }
-
-            control.onDragEnded = {
-                [weak self, weak control, weak rootView] in
-                guard
-                    let self,
-                    let control,
-                    let rootView
-                else {
-                    return
-                }
-
-                self.clampMainAnchor(
-                    control,
-                    in: rootView
-                )
-                self.saveMainAnchorPosition(
-                    control,
-                    in: rootView
                 )
             }
 
@@ -1713,7 +1023,6 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             checkingUpdate = true
             updateStatus = "checking"
-            gestureUpdateStatus = "checking"
             updateRuntimeStatus()
 
             Task { [weak self] in
@@ -1721,16 +1030,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
-                async let sharedResult =
-                    self.fetchSharedUpdateResult()
-
-                async let gestureResult =
-                    self.fetchGestureUpdateResult()
-
-                let results = await (
-                    sharedResult,
-                    gestureResult
-                )
+                let result =
+                    await self.fetchSharedUpdateResult()
 
                 await MainActor.run { [weak self] in
                     guard let self else {
@@ -1741,31 +1042,20 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                     _ =
                         self.applyScriptResult(
-                            results.0
-                        )
-
-                    _ =
-                        self.applyGestureResult(
-                            results.1
+                            result
                         )
 
                     self.installForFutureNavigations()
                     self.updateRuntimeStatus()
 
-                    if injectCurrentPage {
-                        if let activeScript =
-                            self.activeScript {
-                            self.injectScriptIntoCurrentPage(
-                                activeScript
-                            )
-                        }
-
-                        if let activeGestureScript =
-                            self.activeGestureScript {
-                            self.injectGestureIntoCurrentPage(
-                                activeGestureScript
-                            )
-                        }
+                    if
+                        injectCurrentPage,
+                        let activeScript =
+                            self.activeScript
+                    {
+                        self.injectScriptIntoCurrentPage(
+                            activeScript
+                        )
                     }
                 }
             }
@@ -1777,19 +1067,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             do {
                 return .success(
                     try await scriptStore.fetchLatest()
-                )
-            } catch {
-                return .failure(error)
-            }
-        }
-
-        private func fetchGestureUpdateResult()
-            async -> Result<UnifiedScriptPayload, Error>
-        {
-            do {
-                return .success(
-                    try await scriptStore
-                        .fetchLatestGestureScript()
                 )
             } catch {
                 return .failure(error)
@@ -1827,31 +1104,6 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             case .failure(let error):
                 updateStatus =
-                    failureStatus(error)
-                return false
-            }
-        }
-
-        private func applyGestureResult(
-            _ result:
-                Result<UnifiedScriptPayload, Error>
-        ) -> Bool {
-            switch result {
-            case .success(let latest):
-                let changed =
-                    activeGestureScript?.version !=
-                        latest.version ||
-                    activeGestureScript?.source !=
-                        latest.source
-
-                activeGestureScript = latest
-                gestureUpdateStatus =
-                    changed ? "updated" : "latest"
-
-                return changed
-
-            case .failure(let error):
-                gestureUpdateStatus =
                     failureStatus(error)
                 return false
             }
@@ -2150,19 +1402,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                 CGSize(width: 0, height: 3)
 
             control.accessibilityLabel =
-                "网页控制，可拖动"
+                "网页控制"
 
             control.showsMenuAsPrimaryAction = true
-
-            let pan = UIPanGestureRecognizer(
-                target: self,
-                action:
-                    #selector(
-                        handleBrowserControlPan(_:)
-                    )
-            )
-            pan.cancelsTouchesInView = true
-            control.addGestureRecognizer(pan)
 
             webView.addSubview(control)
 
@@ -2448,56 +1690,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        @objc private func handleBrowserControlPan(
-            _ gesture: UIPanGestureRecognizer
-        ) {
-            guard
-                let control = browserControlButton,
-                let externalWebView
-            else {
-                return
-            }
-
-            switch gesture.state {
-            case .began:
-                browserControlDragStartTransform =
-                    control.transform
-
-            case .changed:
-                let translation =
-                    gesture.translation(
-                        in: externalWebView
-                    )
-
-                var transform =
-                    browserControlDragStartTransform
-
-                transform.tx += translation.x
-                transform.ty += translation.y
-                control.transform = transform
-
-                clampBrowserControl(
-                    control,
-                    in: externalWebView
-                )
-
-            case .ended, .cancelled, .failed:
-                clampBrowserControl(
-                    control,
-                    in: externalWebView
-                )
-
-                saveBrowserControlPosition(
-                    control,
-                    in: externalWebView
-                )
-
-            default:
-                break
-            }
-        }
-
-        
         private func ensureExternalBrowserMenu() {
             guard
                 browserMenuView == nil,
@@ -2874,13 +2066,7 @@ private func collapseExternalBrowserMenu() {
                         scriptOrigin:
                             activeScript?.origin ??
                                 "none",
-                        updateStatus: updateStatus,
-                        gestureVersion:
-                            activeGestureScript?.version,
-                        gestureOrigin:
-                            activeGestureScript?.origin,
-                        gestureUpdateStatus:
-                            gestureUpdateStatus
+                        updateStatus: updateStatus
                     ),
                     injectionTime: .atDocumentStart,
                     forMainFrameOnly: true
@@ -2891,17 +2077,6 @@ private func collapseExternalBrowserMenu() {
                 controller.addUserScript(
                     WKUserScript(
                         source: activeScript.source,
-                        injectionTime: .atDocumentStart,
-                        forMainFrameOnly: true
-                    )
-                )
-            }
-
-            if let activeGestureScript {
-                controller.addUserScript(
-                    WKUserScript(
-                        source:
-                            activeGestureScript.source,
                         injectionTime: .atDocumentStart,
                         forMainFrameOnly: true
                     )
@@ -2920,15 +2095,7 @@ private func collapseExternalBrowserMenu() {
                                     activeScript?.origin ??
                                         "none",
                                 updateStatus:
-                                    updateStatus,
-                                gestureVersion:
-                                    activeGestureScript?
-                                        .version,
-                                gestureOrigin:
-                                    activeGestureScript?
-                                        .origin,
-                                gestureUpdateStatus:
-                                    gestureUpdateStatus
+                                    updateStatus
                             ),
                     injectionTime: .atDocumentEnd,
                     forMainFrameOnly: true
@@ -2953,24 +2120,6 @@ private func collapseExternalBrowserMenu() {
             }
         }
 
-        private func injectGestureIntoCurrentPage(
-            _ payload: UnifiedScriptPayload
-        ) {
-            guard let webView else {
-                return
-            }
-
-            webView.evaluateJavaScript(
-                payload.source
-            ) { [weak self] _, error in
-                if error != nil {
-                    self?.gestureUpdateStatus =
-                        "error"
-                    self?.updateRuntimeStatus()
-                }
-            }
-        }
-
         private func updateRuntimeStatus() {
             guard let webView else {
                 return
@@ -2986,13 +2135,7 @@ private func collapseExternalBrowserMenu() {
                             "none",
                     updateStatus: updateStatus,
                     latestScriptVersion:
-                        latestKnownVersion,
-                    gestureVersion:
-                        activeGestureScript?.version,
-                    gestureOrigin:
-                        activeGestureScript?.origin,
-                    gestureUpdateStatus:
-                        gestureUpdateStatus
+                        latestKnownVersion
                 )
             )
         }
@@ -3005,38 +2148,27 @@ private func collapseExternalBrowserMenu() {
             if let activeScript {
                 webView.evaluateJavaScript(
                     "typeof window.ChatGPTWeb === 'object'"
-                ) { [weak self] result, _ in
-                    guard
-                        let self,
-                        (result as? Bool) != true
-                    else {
-                        return
-                    }
-
-                    self.injectScriptIntoCurrentPage(
-                        activeScript
-                    )
-                }
+          private func ensureScriptsAreRunning() {
+            guard
+                let webView,
+                let activeScript
+            else {
+                return
             }
 
-            if let activeGestureScript {
-                webView.evaluateJavaScript(
-                    """
-                    typeof window.ChatGPTIOSGestures ===
-                      'object'
-                    """
-                ) { [weak self] result, _ in
-                    guard
-                        let self,
-                        (result as? Bool) != true
-                    else {
-                        return
-                    }
-
-                    self.injectGestureIntoCurrentPage(
-                        activeGestureScript
-                    )
+            webView.evaluateJavaScript(
+                "typeof window.ChatGPTWeb === 'object'"
+            ) { [weak self] result, _ in
+                guard
+                    let self,
+                    (result as? Bool) != true
+                else {
+                    return
                 }
+
+                self.injectScriptIntoCurrentPage(
+                    activeScript
+                )
             }
         }
 

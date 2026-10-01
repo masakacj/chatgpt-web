@@ -19,9 +19,6 @@ final class UnifiedScriptStore {
     private let scriptPath =
         "safari/chatgpt-safari.user.js"
 
-    private let gestureScriptPath =
-        "safari/chatgpt-ios-gestures.user.js"
-
     private struct RemoteText {
         let text: String
         let source: String
@@ -130,13 +127,6 @@ final class UnifiedScriptStore {
         )
     }
 
-    func bestLocalGestureScript() -> UnifiedScriptPayload? {
-        newest(
-            cached: loadCachedGestureScript(),
-            bundled: loadBundledGestureScript()
-        )
-    }
-
     func fetchLatest() async throws -> UnifiedScriptPayload {
         let remotes =
             await fetchAllRemoteTexts(
@@ -174,53 +164,11 @@ final class UnifiedScriptStore {
         return payload
     }
 
-    func fetchLatestGestureScript()
-        async throws -> UnifiedScriptPayload
-    {
-        let remotes =
-            await fetchAllRemoteTexts(
-                path: gestureScriptPath
-            )
-
-        let candidates =
-            remotes.compactMap { remote
-                -> UnifiedScriptPayload? in
-                guard
-                    let version =
-                        gestureScriptVersion(
-                            in: remote.text
-                        )
-                else {
-                    return nil
-                }
-
-                return UnifiedScriptPayload(
-                    source: remote.text,
-                    version: version,
-                    origin:
-                        "remote/" + remote.source
-                )
-            }
-
-        guard
-            let payload =
-                newestRemotePayload(candidates)
-        else {
-            throw ScriptError.allSourcesFailed
-        }
-
-        try saveCachedGestureScript(payload)
-        return payload
-    }
-
     func nativeBootstrap(
         scriptVersion: String,
         scriptOrigin: String,
         updateStatus: String,
-        latestScriptVersion: String? = nil,
-        gestureVersion: String? = nil,
-        gestureOrigin: String? = nil,
-        gestureUpdateStatus: String? = nil
+        latestScriptVersion: String? = nil
     ) -> String {
         var payload: [String: Any] = [
             "appVersion": appVersion,
@@ -231,7 +179,7 @@ final class UnifiedScriptStore {
             "updateStatus": updateStatus,
             "hotUpdate": true,
             "telemetryTransport": true,
-            "nativeGestures": true,
+            "nativeGestures": false,
             "uiTesting":
                 ProcessInfo.processInfo.arguments
                     .contains("--ui-testing")
@@ -244,17 +192,6 @@ final class UnifiedScriptStore {
         if let latestScriptVersion {
             payload["latestScriptVersion"] =
                 latestScriptVersion
-        }
-
-        if let gestureVersion {
-            payload["gestureVersion"] = gestureVersion
-        }
-        if let gestureOrigin {
-            payload["gestureOrigin"] = gestureOrigin
-        }
-        if let gestureUpdateStatus {
-            payload["gestureUpdateStatus"] =
-                gestureUpdateStatus
         }
 
         guard
@@ -279,20 +216,14 @@ final class UnifiedScriptStore {
         scriptVersion: String,
         scriptOrigin: String,
         updateStatus: String,
-        latestScriptVersion: String? = nil,
-        gestureVersion: String? = nil,
-        gestureOrigin: String? = nil,
-        gestureUpdateStatus: String? = nil
+        latestScriptVersion: String? = nil
     ) -> String {
         let bootstrap = nativeBootstrap(
             scriptVersion: scriptVersion,
             scriptOrigin: scriptOrigin,
             updateStatus: updateStatus,
             latestScriptVersion:
-                latestScriptVersion,
-            gestureVersion: gestureVersion,
-            gestureOrigin: gestureOrigin,
-            gestureUpdateStatus: gestureUpdateStatus
+                latestScriptVersion
         )
 
         return """
@@ -339,41 +270,6 @@ final class UnifiedScriptStore {
         return metadata
     }
 
-    func gestureScriptVersion(
-        in source: String
-    ) -> String? {
-        let metadata = match(
-            pattern: #"(?m)^//\s*@version\s+([^\s]+)\s*$"#,
-            in: source
-        )
-
-        let runtime = match(
-            pattern: #"const\s+VERSION\s*=\s*['"]([^'"]+)['"]\s*;"#,
-            in: source
-        )
-
-        guard
-            let metadata,
-            let runtime,
-            metadata == runtime
-        else {
-            return nil
-        }
-
-        guard
-            source.contains(
-                "// @name         ChatGPT Web iOS Gestures"
-            ),
-            source.contains(
-                "const GLOBAL_KEY = 'ChatGPTIOSGestures';"
-            )
-        else {
-            return nil
-        }
-
-        return metadata
-    }
-
     private func newest(
         cached: UnifiedScriptPayload?,
         bundled: UnifiedScriptPayload?
@@ -402,15 +298,6 @@ final class UnifiedScriptStore {
         loadCached(
             at: cachedScriptURL,
             validator: scriptVersion
-        )
-    }
-
-    private func loadCachedGestureScript()
-        -> UnifiedScriptPayload?
-    {
-        loadCached(
-            at: cachedGestureScriptURL,
-            validator: gestureScriptVersion
         )
     }
 
@@ -443,15 +330,6 @@ final class UnifiedScriptStore {
         )
     }
 
-    private func loadBundledGestureScript()
-        -> UnifiedScriptPayload?
-    {
-        loadBundled(
-            candidates: bundledGestureScriptCandidates(),
-            validator: gestureScriptVersion
-        )
-    }
-
     private func loadBundled(
         candidates: [URL],
         validator: (String) -> String?
@@ -481,14 +359,6 @@ final class UnifiedScriptStore {
     private func bundledScriptCandidates() -> [URL] {
         bundleCandidates(
             filename: "chatgpt-safari.user.js"
-        )
-    }
-
-    private func bundledGestureScriptCandidates()
-        -> [URL]
-    {
-        bundleCandidates(
-            filename: "chatgpt-ios-gestures.user.js"
         )
     }
 
@@ -562,27 +432,12 @@ final class UnifiedScriptStore {
         )
     }
 
-    private var cachedGestureScriptURL: URL {
-        supportDirectory.appendingPathComponent(
-            "chatgpt-ios-gestures.user.js"
-        )
-    }
-
     private func saveCachedScript(
         _ payload: UnifiedScriptPayload
     ) throws {
         try saveCached(
             payload,
             at: cachedScriptURL
-        )
-    }
-
-    private func saveCachedGestureScript(
-        _ payload: UnifiedScriptPayload
-    ) throws {
-        try saveCached(
-            payload,
-            at: cachedGestureScriptURL
         )
     }
 
@@ -876,7 +731,6 @@ final class UnifiedScriptStore {
     enum ScriptError: Error {
         case badResponse
         case invalidRemoteScript
-        case invalidRemoteGestureScript
         case allSourcesFailed
     }
 }

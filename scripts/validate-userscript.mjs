@@ -1,12 +1,10 @@
 import fs from 'node:fs';
 
 const sharedPath = 'safari/chatgpt-safari.user.js';
-const gesturePath = 'safari/chatgpt-ios-gestures.user.js';
 const swiftPath = 'App/ChatGPTWebView.swift';
 const storePath = 'App/UnifiedScriptStore.swift';
 
 const shared = fs.readFileSync(sharedPath, 'utf8');
-const gesture = fs.readFileSync(gesturePath, 'utf8');
 const swift = fs.readFileSync(swiftPath, 'utf8');
 const store = fs.readFileSync(storePath, 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
@@ -34,7 +32,6 @@ function versionOf(source) {
 }
 
 const sharedVersion = versionOf(shared);
-const gestureVersion = versionOf(gesture);
 
 if (!sharedVersion.metadata) {
   fail('shared @version not found');
@@ -47,16 +44,6 @@ if (sharedVersion.metadata !== pkg.version) {
 }
 if (sharedVersion.runtime !== pkg.version) {
   fail('shared runtime VERSION does not match package.json');
-}
-
-if (!gestureVersion.metadata) {
-  fail('gesture @version not found');
-}
-if (!gestureVersion.runtime) {
-  fail('gesture runtime VERSION not found');
-}
-if (gestureVersion.metadata !== gestureVersion.runtime) {
-  fail('gesture metadata/runtime versions differ');
 }
 
 requireText(
@@ -336,11 +323,6 @@ requireText(
 );
 requireText(
   shared,
-  "makeInfoRow('iOS 手势')",
-  'optional iOS gesture version row'
-);
-requireText(
-  shared,
   'function processToolMutationNode(node)',
   'one-shot process node classification'
 );
@@ -449,110 +431,35 @@ for (const [needle, description] of sharedForbidden) {
 }
 
 requireText(
-  gesture,
-  '// @name         ChatGPT Web iOS Gestures',
-  'iOS gesture userscript name'
-);
-requireText(
-  gesture,
-  '// @match        https://chatgpt.com/*',
-  'gesture chatgpt.com match'
-);
-requireText(
-  gesture,
-  '// @run-at       document-start',
-  'gesture document-start injection'
-);
-requireText(
-  gesture,
-  '// @grant        none',
-  'gesture grant none'
-);
-requireText(
-  gesture,
-  "HOST.endsWith('.chatgpt.com')",
-  'gesture ChatGPT host gate'
-);
-requireText(
-  gesture,
-  "const GLOBAL_KEY = 'ChatGPTIOSGestures';",
-  'gesture global API'
-);
-requireText(
-  gesture,
-  'window.__CHATGPT_NATIVE__',
-  'native execution gate'
-);
-requireText(
-  gesture,
-  'nativeGestures !== true',
-  'native gesture capability gate'
-);
-requireText(
-  gesture,
-  'function pickScrollContainer(',
-  'two-finger scroll-container selection'
-);
-requireText(
-  gesture,
-  'function begin(event)',
-  'two-finger vertical scroll start'
-);
-requireText(
-  gesture,
-  'function move(event)',
-  'two-finger vertical scroll movement'
-);
-requireText(
-  gesture,
-  'CONFIG.horizontalReleaseRatio',
-  'native horizontal gesture handoff'
-);
-requireText(
-  gesture,
-  "window.addEventListener(\n      'touchstart',",
-  'passive two-finger activation listener'
-);
-requireText(
-  gesture,
-  "passive: true",
-  'passive touchstart'
-);
-requireText(
-  gesture,
-  "window.addEventListener(\n      'touchmove',",
-  'on-demand two-finger move listener'
-);
-requireText(
-  gesture,
-  'event.preventDefault();',
-  'claimed vertical scroll cancellation'
-);
-requireText(
-  gesture,
-  'function detachActiveListeners()',
-  'on-demand listener teardown'
+  store,
+  '"nativeGestures": false',
+  'native gesture capability disabled'
 );
 
-const gestureForbidden = [
-  ['function openSidebar()', 'single-finger sidebar opener in JS'],
-  ['function closeSidebar()', 'single-finger sidebar closer in JS'],
-  ['function isSidebarOpen()', 'sidebar state detection in JS'],
-  ['edgeStartPx', 'single-finger edge gesture configuration'],
-  ['window.history.forward()', 'JS horizontal navigation'],
-  ['window.history.back()', 'JS horizontal navigation'],
-  ['twoFingerNavTriggerPx', 'legacy JS two-finger navigation'],
-  ["messageHandlers?.chatGPTNative", 'native update bridge in gesture script'],
-  ['BroadcastChannel', 'conversation state logic in gesture script'],
-  ['data-cgpt-tool-collapsed', 'tool compaction in gesture script'],
-  ['content-visibility', 'performance logic in gesture script'],
+const gestureArtifacts = [
+  [shared, 'ChatGPTIOSGestures', 'gesture global in shared script'],
+  [shared, 'gestureVersion', 'gesture version in shared script'],
+  [store, 'gestureScriptPath', 'gesture script path in native store'],
+  [store, 'bestLocalGestureScript', 'gesture cache selection'],
+  [store, 'fetchLatestGestureScript', 'gesture remote update'],
+  [store, 'gestureVersion', 'gesture version status'],
+  [swift, 'UIGestureRecognizer', 'custom native gesture recognizer'],
+  [swift, 'UIPanGestureRecognizer', 'custom native pan gesture'],
+  [swift, 'ChatGPTEdgeSwipeGestureRecognizer', 'native edge swipe recognizer'],
+  [swift, 'onDragBegan', 'floating control drag gesture'],
+  [swift, 'onDragChanged', 'floating control drag gesture'],
+  [swift, 'onDragEnded', 'floating control drag gesture'],
+  [swift, 'handleBrowserControlPan', 'external browser drag gesture'],
+  [swift, 'leftSidebarEdgeGesture', 'left sidebar gesture'],
+  [swift, 'rightSidebarEdgeGesture', 'right sidebar gesture'],
+  [swift, 'twoFingerNavigationGesture', 'two-finger navigation gesture'],
 ];
 
 for (
-  const [needle, description] of
-    gestureForbidden
+  const [source, needle, description]
+    of gestureArtifacts
 ) {
-  if (gesture.includes(needle)) {
+  if (source.includes(needle)) {
     fail(
       'forbidden ' +
       description +
@@ -560,59 +467,6 @@ for (
       needle
     );
   }
-}
-
-requireText(
-  swift,
-  'final class ChatGPTEdgeSwipeGestureRecognizer:',
-  'custom low-latency native edge recognizer'
-);
-requireText(
-  swift,
-  'self.triggerDistance = 4',
-  '4pt native edge trigger'
-);
-requireText(
-  swift,
-  'ChatGPTEdgeSwipeGestureRecognizer(',
-  'native custom edge gesture installation'
-);
-requireText(
-  swift,
-  'private static let\n            openSidebarJavaScript',
-  'precompiled sidebar open JavaScript'
-);
-requireText(
-  swift,
-  'abs(translation.x) >= 16',
-  'fast native two-finger navigation trigger'
-);
-if (
-  swift.includes(
-    'UIScreenEdgePanGestureRecognizer'
-  )
-) {
-  fail(
-    'forbidden system edge-pan hysteresis'
-  );
-}
-if (
-  swift.includes(
-    'const selectors = (json);'
-  )
-) {
-  fail(
-    'forbidden broken sidebar selector interpolation'
-  );
-}
-if (
-  gesture.includes(
-    'document.elementsFromPoint'
-  )
-) {
-  fail(
-    'forbidden two-finger hit-test scan'
-  );
 }
 
 requireText(
@@ -766,34 +620,10 @@ requireText(
   'case "send-touch-ack":',
   'native send haptic handler'
 );
-requireText(
-  swift,
-  'activationWidth: 24',
-  'narrow right edge gesture zone'
-);
-requireText(
-  swift,
-  'maximumStartYFraction:\n                        0.58',
-  'right edge bottom composer exclusion'
-);
-requireText(
-  swift,
-  'keyboardWillShowNotification',
-  'keyboard-aware right edge disable'
-);
-requireText(
-  swift,
-  'rightSidebarEdgeGesture?\n                .isEnabled = false',
-  'right edge disabled while typing'
-);
-
 console.log(JSON.stringify({
   ok: true,
   sharedVersion: pkg.version,
-  gestureVersion: gestureVersion.metadata,
   sharedBytes: Buffer.byteLength(shared),
-  gestureBytes: Buffer.byteLength(gesture),
-  architecture: 'shared runtime + iOS-only gesture runtime',
+  architecture: 'shared runtime + gesture-free iOS shell',
   sharedSource: sharedPath,
-  iosGestureSource: gesturePath,
 }, null, 2));
