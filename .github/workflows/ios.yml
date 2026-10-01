@@ -81,6 +81,8 @@ jobs:
           test "$APP_VERSION" = "$VERSION"
           test "$ACTION_VERSION" = "$VERSION"
           test "$EXTENSION_POINT" = "com.apple.services"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$ACTION/Info.plist" >/dev/null
+          test -x "$ACTION/ChatGPTScriptAction"
 
           grep -q "ExtensionPreprocessingJS" "$SCRIPT"
           grep -q "__CHATGPT_SAFARI_CONTAINER__ = true" "$SCRIPT"

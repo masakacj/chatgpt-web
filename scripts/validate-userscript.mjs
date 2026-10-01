@@ -294,6 +294,12 @@ requireText(
 
 requireText(
   actionInfo,
+  '<key>CFBundleExecutable</key>',
+  'extension executable key'
+);
+
+requireText(
+  actionInfo,
   '<string>com.apple.services</string>',
   'non-UI action extension point'
 );
