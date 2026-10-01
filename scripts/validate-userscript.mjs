@@ -614,8 +614,20 @@ requireText(
   'function eventTargetsScriptControl(event)',
   'gesture exclusion for script-owned control'
 );
+requireText(
+  gesture,
+  'function eventTargetsInteractiveControl(',
+  'gesture exclusion for interactive controls'
+);
+requireText(
+  gesture,
+  "window.addEventListener('touchstart', start, {\n      passive: true,",
+  'passive touchstart for zero-cost taps'
+);
 
 const gestureForbidden = [
+  ["open: isSidebarOpen()", 'eager sidebar layout query on edge touchstart'],
+  ["window.addEventListener('touchstart', start, {\n      passive: false,", 'blocking touchstart listener'],
   ['content-visibility', 'performance logic in gesture script'],
   ['BroadcastChannel', 'conversation state logic in gesture script'],
   ['data-cgpt-tool-collapsed', 'tool compaction in gesture script'],
