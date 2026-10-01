@@ -2521,7 +2521,6 @@
 
   function updateResultOnlyIndicator() {
     if (
-      !IS_SAFARI_CONTAINER ||
       !RESULT_ONLY_MODE ||
       state.destroyed ||
       !state.resultCycle?.active
@@ -2595,7 +2594,6 @@
 
   function renderResultOnlyCompletionSummary() {
     if (
-      !IS_SAFARI_CONTAINER ||
       !RESULT_ONLY_MODE ||
       !state.resultCycle?.startedAt
     ) {
