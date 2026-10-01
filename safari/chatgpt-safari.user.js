@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.22
+// @version      0.4.23
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.22';
+  const VERSION = '0.4.23';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -29,23 +29,26 @@
   const IS_NATIVE_IOS = Boolean(
     window.__CHATGPT_NATIVE__?.hotUpdate
   );
+  const IS_SAFARI_CONTAINER =
+    window.__CHATGPT_SAFARI_CONTAINER__ === true;
   const EXTREME_NATIVE_MODE =
-    IS_NATIVE_IOS;
+    IS_NATIVE_IOS ||
+    IS_SAFARI_CONTAINER;
   const HAS_NATIVE_LIFECYCLE =
     Boolean(
       window.__CHATGPT_NATIVE__
         ?.nativeLifecycle
     );
   const STATUS_INTERVAL_MS =
-    IS_NATIVE_IOS ? 12000 : 7000;
+    EXTREME_NATIVE_MODE ? 12000 : 7000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
-    IS_NATIVE_IOS ? 4000 : 1200;
+    EXTREME_NATIVE_MODE ? 4000 : 1200;
   const ROUTE_SETTLE_DELAY_MS =
-    IS_NATIVE_IOS ? 1400 : 500;
+    EXTREME_NATIVE_MODE ? 1400 : 500;
   const STATE_EVAL_DEBOUNCE_MS =
-    IS_NATIVE_IOS ? 220 : 120;
+    EXTREME_NATIVE_MODE ? 220 : 120;
   const TURN_CACHE_MAX_AGE_MS =
-    IS_NATIVE_IOS ? 300000 : 120000;
+    EXTREME_NATIVE_MODE ? 300000 : 120000;
   const TURN_SELECTORS = [
     'article[data-testid^="conversation-turn-"]',
     '[data-testid^="conversation-turn-"]',
@@ -2820,7 +2823,11 @@
 
   function createControl() {
     if (
-      (!state.settings.showControl && !IS_NATIVE_IOS) ||
+      IS_SAFARI_CONTAINER ||
+      (
+        !state.settings.showControl &&
+        !IS_NATIVE_IOS
+      ) ||
       state.destroyed
     ) return;
 
