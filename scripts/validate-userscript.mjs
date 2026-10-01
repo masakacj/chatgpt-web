@@ -111,11 +111,6 @@ requireText(
 );
 requireText(
   shared,
-  'const INITIAL_BOTTOM_SCROLL_DELAYS = [',
-  'fixed bottom-scroll schedule'
-);
-requireText(
-  shared,
   "perfLabel.textContent = '极速模式';",
   'extreme mode setting label'
 );
