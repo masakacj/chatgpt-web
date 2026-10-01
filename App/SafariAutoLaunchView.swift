@@ -33,7 +33,10 @@ struct SafariAutoLaunchView: View {
         }
         .padding(28)
         .task {
-            guard !hasLaunchedSafari else {
+            guard
+                !hasLaunchedSafari,
+                !isUITesting
+            else {
                 return
             }
 
@@ -45,6 +48,11 @@ struct SafariAutoLaunchView: View {
 
             openChatGPT()
         }
+    }
+
+    private var isUITesting: Bool {
+        ProcessInfo.processInfo.arguments
+            .contains("--ui-testing")
     }
 
     private func openChatGPT() {
