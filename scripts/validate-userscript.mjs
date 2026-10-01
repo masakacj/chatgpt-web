@@ -128,6 +128,16 @@ requireText(
 );
 requireText(
   project,
+  'this.finalize = function(arguments)',
+  'Safari finalize injection phase'
+);
+requireText(
+  project,
+  'arguments.completionFunction({\n                ready: true',
+  'Safari preprocessing run completion'
+);
+requireText(
+  project,
   'window.__CHATGPT_SAFARI_CONTAINER__ = true;',
   'Safari container bootstrap'
 );
@@ -151,6 +161,21 @@ requireText(
   actionHandler,
   'NSExtensionRequestHandling',
   'action request handler'
+);
+requireText(
+  actionHandler,
+  'NSExtensionJavaScriptFinalizeArgumentKey',
+  'Safari finalize argument key'
+);
+requireText(
+  actionHandler,
+  'UTType\n                        .propertyList',
+  'Safari finalize property-list item provider'
+);
+requireText(
+  actionHandler,
+  '"inject": true',
+  'Safari finalize injection flag'
 );
 
 requireText(
