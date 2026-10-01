@@ -5219,6 +5219,23 @@
 
   function onRoute() {
     state.metrics.routeChanges += 1;
+
+    const previousConversationId =
+      conversationIdFromPath(
+        String(
+          state.lastRoute || ''
+        ).split('?')[0]
+      );
+
+    const nextConversationId =
+      currentConversationId();
+
+    const preserveNewChatCycle =
+      RESULT_ONLY_MODE &&
+      state.resultCycle?.active &&
+      !previousConversationId &&
+      Boolean(nextConversationId);
+
     state.lastRoute =
       location.pathname +
       location.search;
@@ -5226,7 +5243,10 @@
     state.activeRouteSince = Date.now();
     state.settlingSince = 0;
 
-    if (RESULT_ONLY_MODE) {
+    if (
+      RESULT_ONLY_MODE &&
+      !preserveNewChatCycle
+    ) {
       resetResultCycle();
     }
 
