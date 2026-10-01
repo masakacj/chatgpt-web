@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.12
+// @version      0.1.13
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.12';
+  const VERSION = '0.1.13';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   const HOST = location.hostname.toLowerCase();
@@ -558,6 +558,31 @@
     }
   }
 
+  function eventTargetsInteractiveControl(
+    event
+  ) {
+    try {
+      const path =
+        event.composedPath?.() || [];
+
+      return path.some(
+        (node) =>
+          node instanceof HTMLElement &&
+          node.matches?.(
+            'button,' +
+            '[role="button"],' +
+            'a,' +
+            'input,' +
+            'textarea,' +
+            'select,' +
+            '[contenteditable="true"]'
+          )
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   function start(event) {
     if (state.destroyed) return;
 
@@ -581,6 +606,15 @@
       return;
     }
 
+    if (
+      eventTargetsInteractiveControl(
+        event
+      )
+    ) {
+      state.gesture = null;
+      return;
+    }
+
     const touch = event.touches[0];
     const width = window.innerWidth;
 
@@ -597,7 +631,6 @@
           y: touch.clientY,
           at: performance.now(),
           edge,
-          open: isSidebarOpen(),
           claimed: false,
           fired: false,
         }
@@ -660,9 +693,7 @@
     gesture.fired = true;
 
     if (leftEdgeOpen) {
-      if (!gesture.open) {
-        openSidebar();
-      }
+      openSidebar();
     } else if (rightEdgeClose) {
       closeSidebar();
     }
@@ -681,7 +712,7 @@
 
   function install() {
     window.addEventListener('touchstart', start, {
-      passive: false,
+      passive: true,
       capture: true,
     });
     window.addEventListener('touchmove', move, {
