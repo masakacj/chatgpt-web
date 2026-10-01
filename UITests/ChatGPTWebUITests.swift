@@ -5,18 +5,21 @@ final class ChatGPTWebUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testSafariContainerLaunches()
+    func testSafariLauncherIsReady()
         throws
     {
         let app = XCUIApplication()
+        app.launchArguments.append(
+            "--ui-testing"
+        )
         app.launch()
 
         XCTAssertTrue(
-            app.wait(
-                for: .runningForeground,
-                timeout: 10
-            ),
-            "Safari container app did not reach foreground"
+            app.buttons["打开 ChatGPT"]
+                .waitForExistence(
+                    timeout: 10
+                ),
+            "Safari launcher button did not appear"
         )
     }
 }
