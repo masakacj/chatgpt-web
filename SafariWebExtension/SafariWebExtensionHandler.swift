@@ -1,5 +1,4 @@
 import Foundation
-import SafariServices
 
 final class SafariWebExtensionHandler:
     NSObject,
@@ -8,19 +7,8 @@ final class SafariWebExtensionHandler:
     func beginRequest(
         with context: NSExtensionContext
     ) {
-        let response =
-            NSExtensionItem()
-
-        if #available(iOS 15.0, *) {
-            response.userInfo = [
-                SFExtensionMessageKey: [
-                    "ok": true
-                ]
-            ]
-        }
-
         context.completeRequest(
-            returningItems: [response],
+            returningItems: nil,
             completionHandler: nil
         )
     }
