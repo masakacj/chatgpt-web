@@ -2822,15 +2822,7 @@
         return true;
       }
 
-      window.scrollTo(
-        0,
-        Math.max(
-          document.body?.scrollHeight || 0,
-          document.documentElement
-            ?.scrollHeight || 0
-        )
-      );
-      return true;
+      return false;
     } catch (_) {
       return false;
     }
