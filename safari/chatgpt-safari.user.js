@@ -97,7 +97,6 @@
   const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called|MCP|connector|连接器)/i;
   const TOOL_ACTION_RE = /(?:Ran command|Run command|Ran code|Run code|Executed code|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|Python|运行命令|执行命令|运行代码|执行代码|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
   const PROCESS_GROUP_RE = /(?:Thought for|Thinking|Reasoning|思考过程|思考了|正在思考|分析中)/i;
-  const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
   const TOOL_USER_ACTION_RE = /(?:allow|approve|confirm|yes,?\s*(?:run|proceed)|run\s+(?:it|command)|continue|permission|authorization|允许|批准|确认|继续|运行此|授权|权限)/i;
 
   try {
@@ -2121,9 +2120,6 @@
     group.removeAttribute(
       'data-cgpt-tool-hidden'
     );
-    group.removeAttribute(
-      'data-cgpt-tool-collapsed'
-    );
   }
 
   function findToolGroupContainer(
@@ -2764,14 +2760,13 @@
       ':host { all: initial; }',
       '* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }',
       '.wrap { position: relative; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }',
-      '.fab { width: 36px; height: 36px; border: 0; border-radius: 18px; background: rgba(32,32,32,.78); color: white; box-shadow: 0 3px 14px rgba(0,0,0,.22); display: grid; place-items: center; font-size: 14px; font-weight: 700; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); touch-action: none; user-select: none; -webkit-user-select: none; }',
+      '.fab { width: 36px; height: 36px; border: 0; border-radius: 18px; background: rgba(32,32,32,.92); color: white; display: grid; place-items: center; font-size: 14px; font-weight: 700; touch-action: none; user-select: none; -webkit-user-select: none; }',
       '.fab[data-chat-state]::after { content: ""; width: 7px; height: 7px; border-radius: 50%; position: absolute; right: 1px; top: 1px; box-shadow: 0 0 0 2px rgba(255,255,255,.82); }',
-      '.fab[data-chat-state="running"]::after { background: #34c759; animation: pulse 1.15s ease-in-out infinite; }',
+      '.fab[data-chat-state="running"]::after { background: #34c759; }',
       '.fab[data-chat-state="waiting_user"]::after { background: #ff9f0a; }',
-      '.fab[data-chat-state="settling"]::after { background: #8e8e93; animation: pulse .9s ease-in-out infinite; }',
+      '.fab[data-chat-state="settling"]::after { background: #8e8e93; }',
       '.fab[data-chat-state="completed_unread"]::after { background: #0a84ff; }',
-      '@keyframes pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
-      '.panel { position: absolute; top: 42px; right: 0; width: 232px; padding: 8px; border-radius: 13px; background: rgba(28,28,30,.94); color: white; box-shadow: 0 12px 34px rgba(0,0,0,.28); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: none; }',
+      '.panel { position: absolute; top: 42px; right: 0; width: 232px; padding: 8px; border-radius: 13px; background: rgba(28,28,30,.98); color: white; display: none; }',
       ':host([data-panel-side="left"]) .panel { left: 0; right: auto; }',
       ':host([data-panel-side="right"]) .panel { left: auto; right: 0; }',
       ':host([data-panel-vertical="up"]) .panel { top: auto; bottom: 42px; }',
@@ -2789,8 +2784,8 @@
       '.label { font-size: 12px; }',
       'button.action { width: 100%; border: 0; background: transparent; color: white; text-align: left; padding: 8px 2px; font-size: 12px; }',
       'button.compact { width: auto; min-width: 44px; border: 0; border-radius: 8px; padding: 5px 8px; background: rgba(255,255,255,.09); color: white; font-size: 11px; }',
-      '.switch { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.20); position: relative; transition: .15s ease; margin: 0; }',
-      '.switch::after { content: ""; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: white; top: 2px; left: 2px; transition: .15s ease; }',
+      '.switch { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.20); position: relative; margin: 0; }',
+      '.switch::after { content: ""; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: white; top: 2px; left: 2px; }',
       '.switch:checked { background: #34c759; }',
       '.switch:checked::after { transform: translateX(18px); }',
       '.foot { font-size: 10px; opacity: .48; margin: 8px 2px 1px; }',
@@ -4691,9 +4686,6 @@
             ChatGPTDOMAdapter.sidebarRoot()
           ),
       },
-      toolGroups: {
-        ...state.toolCounts,
-      },
       diagnostics: {
         ...state.metrics,
         phaseTwoStarted:
@@ -4750,13 +4742,11 @@
     state.observer?.disconnect();
     state.conversationObserver?.disconnect();
     state.sidebarObserver?.disconnect();
-    state.windowObserver?.disconnect();
     state.longTaskObserver?.disconnect();
 
     state.observer = null;
     state.conversationObserver = null;
     state.sidebarObserver = null;
-    state.windowObserver = null;
     state.longTaskObserver = null;
 
     if (state.controlResizeHandler) {
