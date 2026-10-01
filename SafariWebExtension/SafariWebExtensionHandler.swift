@@ -1,6 +1,6 @@
 import Foundation
 
-final class ActionRequestHandler:
+final class SafariWebExtensionHandler:
     NSObject,
     NSExtensionRequestHandling
 {

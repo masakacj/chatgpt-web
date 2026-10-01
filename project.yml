@@ -20,16 +20,17 @@ targets:
         excludes:
           - ChatGPTWebView.swift
           - UnifiedScriptStore.swift
+          - SafariContainerView.swift
       - path: Resources
     dependencies:
-      - target: ChatGPTScriptAction
+      - target: ChatGPTSafariWebExtension
         embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb
         PRODUCT_NAME: ChatGPTWeb
-        MARKETING_VERSION: 0.4.24
-        CURRENT_PROJECT_VERSION: 48
+        MARKETING_VERSION: 0.4.25
+        CURRENT_PROJECT_VERSION: 49
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: ChatGPT Web
@@ -46,57 +47,50 @@ targets:
       testTargets:
         - ChatGPTWebUITests
 
-  ChatGPTScriptAction:
+  ChatGPTSafariWebExtension:
     type: app-extension
     platform: iOS
     sources:
-      - path: SafariScriptAction
+      - path: SafariWebExtension
+        excludes:
+          - Info.plist
+          - manifest.json
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb.scriptaction
-        PRODUCT_NAME: ChatGPTScriptAction
-        MARKETING_VERSION: 0.4.24
-        CURRENT_PROJECT_VERSION: 48
+        PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb.webextension
+        PRODUCT_NAME: ChatGPTSafariWebExtension
+        MARKETING_VERSION: 0.4.25
+        CURRENT_PROJECT_VERSION: 49
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: SafariScriptAction/Info.plist
+        INFOPLIST_FILE: SafariWebExtension/Info.plist
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
         CODE_SIGN_STYLE: Automatic
     postBuildScripts:
-      - name: Build Safari Injection Script
+      - name: Build Safari Web Extension Resources
         script: |
           set -euo pipefail
+
+          MANIFEST_SOURCE="$SRCROOT/SafariWebExtension/manifest.json"
           SHARED_SOURCE="$SRCROOT/safari/chatgpt-safari.user.js"
           RESOURCE_DIR="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
-          DEST="$RESOURCE_DIR/InjectChatGPT.js"
+          MANIFEST_DEST="$RESOURCE_DIR/manifest.json"
+          CONTENT_DEST="$RESOURCE_DIR/content.js"
 
+          test -f "$MANIFEST_SOURCE"
           test -f "$SHARED_SOURCE"
           mkdir -p "$RESOURCE_DIR"
 
-          cat > "$DEST" <<'JS'
-          var ExtensionPreprocessingJS = new function() {
-            this.run = function(arguments) {
-              try {
-                window.__CHATGPT_SAFARI_CONTAINER__ = true;
+          cp "$MANIFEST_SOURCE" "$MANIFEST_DEST"
+
+          cat > "$CONTENT_DEST" <<'JS'
+          window.__CHATGPT_SAFARI_CONTAINER__ = true;
           JS
 
-          cat "$SHARED_SOURCE" >> "$DEST"
-
-          cat >> "$DEST" <<'JS'
-                arguments.completionFunction({
-                  ok: true
-                });
-              } catch (error) {
-                arguments.completionFunction({
-                  ok: false,
-                  error: String(error)
-                });
-              }
-            };
-          };
-          JS
+          cat "$SHARED_SOURCE" >> "$CONTENT_DEST"
         outputFiles:
-          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/InjectChatGPT.js
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/manifest.json
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/content.js
 
   ChatGPTWebUITests:
     type: bundle.ui-testing

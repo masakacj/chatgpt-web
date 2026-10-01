@@ -2,22 +2,22 @@ import fs from 'node:fs';
 
 const sharedPath =
   'safari/chatgpt-safari.user.js';
-const safariContainerPath =
-  'App/SafariContainerView.swift';
 const contentViewPath =
   'App/ContentView.swift';
+const launchViewPath =
+  'App/SafariAutoLaunchView.swift';
 const projectPath =
   'project.yml';
-const actionInfoPath =
-  'SafariScriptAction/Info.plist';
-const actionHandlerPath =
-  'SafariScriptAction/ActionRequestHandler.swift';
+const extensionInfoPath =
+  'SafariWebExtension/Info.plist';
+const extensionHandlerPath =
+  'SafariWebExtension/SafariWebExtensionHandler.swift';
+const manifestPath =
+  'SafariWebExtension/manifest.json';
 
 const shared =
-  fs.readFileSync(sharedPath, 'utf8');
-const safariContainer =
   fs.readFileSync(
-    safariContainerPath,
+    sharedPath,
     'utf8'
   );
 const contentView =
@@ -25,20 +25,32 @@ const contentView =
     contentViewPath,
     'utf8'
   );
+const launchView =
+  fs.readFileSync(
+    launchViewPath,
+    'utf8'
+  );
 const project =
   fs.readFileSync(
     projectPath,
     'utf8'
   );
-const actionInfo =
+const extensionInfo =
   fs.readFileSync(
-    actionInfoPath,
+    extensionInfoPath,
     'utf8'
   );
-const actionHandler =
+const extensionHandler =
   fs.readFileSync(
-    actionHandlerPath,
+    extensionHandlerPath,
     'utf8'
+  );
+const manifest =
+  JSON.parse(
+    fs.readFileSync(
+      manifestPath,
+      'utf8'
+    )
   );
 const pkg =
   JSON.parse(
@@ -99,10 +111,12 @@ if (
   sharedVersion.metadata !==
     pkg.version ||
   sharedVersion.runtime !==
+    pkg.version ||
+  manifest.version !==
     pkg.version
 ) {
   fail(
-    'shared script/package versions differ'
+    'shared/package/manifest versions differ'
   );
 }
 
@@ -119,12 +133,12 @@ requireText(
 requireText(
   shared,
   'const IS_SAFARI_CONTAINER =',
-  'Safari container mode'
+  'Safari extension mode'
 );
 requireText(
   shared,
   'window.__CHATGPT_SAFARI_CONTAINER__ === true',
-  'Safari injection bootstrap flag'
+  'Safari extension bootstrap flag'
 );
 requireText(
   shared,
@@ -133,13 +147,8 @@ requireText(
 );
 requireText(
   shared,
-  'function createControl()',
-  'control function'
-);
-requireText(
-  shared,
   'IS_SAFARI_CONTAINER ||\n      (',
-  'Safari container control suppression'
+  'Safari control suppression'
 );
 requireText(
   shared,
@@ -156,44 +165,21 @@ requireText(
   'function flushPendingBottomScroll()',
   'event-driven bottom alignment'
 );
-requireText(
-  shared,
-  'function onSendPointerDown(event)',
-  'send touch acknowledgement'
-);
 
-const sharedForbidden = [
-  [
-    "addEventListener('touchstart'",
-    'custom touch gesture'
-  ],
-  [
-    "addEventListener('touchmove'",
-    'custom touch gesture'
-  ],
-  [
-    'ChatGPTIOSGestures',
-    'legacy gesture runtime'
-  ],
-  [
-    'INITIAL_BOTTOM_SCROLL_DELAYS',
-    'duplicate bottom timers'
-  ],
-  [
-    'bottomScrollTimers',
-    'duplicate bottom timers'
-  ],
+const forbiddenShared = [
+  "addEventListener('touchstart'",
+  "addEventListener('touchmove'",
+  'ChatGPTIOSGestures',
+  'INITIAL_BOTTOM_SCROLL_DELAYS',
+  'bottomScrollTimers',
 ];
 
 for (
-  const [needle, description]
-    of sharedForbidden
+  const needle of forbiddenShared
 ) {
   if (shared.includes(needle)) {
     fail(
-      'forbidden ' +
-      description +
-      ': ' +
+      'forbidden shared runtime token: ' +
       needle
     );
   }
@@ -201,134 +187,157 @@ for (
 
 requireText(
   contentView,
-  'SafariContainerView()',
-  'Safari root view'
+  'SafariAutoLaunchView()',
+  'Safari launcher root'
 );
 
 if (
+  contentView.includes(
+    'SafariContainerView()'
+  ) ||
   contentView.includes(
     'ChatGPTWebView()'
   )
 ) {
   fail(
-    'WKWebView root is still active'
+    'legacy embedded browser root is active'
   );
 }
 
 requireText(
-  safariContainer,
-  'import SafariServices',
-  'SafariServices framework'
+  launchView,
+  'UIApplication.shared.open(',
+  'system browser launch'
 );
 requireText(
-  safariContainer,
-  'SFSafariViewController',
-  'Safari view controller'
+  launchView,
+  'https://chatgpt.com/',
+  'ChatGPT launch URL'
 );
 requireText(
-  safariContainer,
-  '.ActivityButton(',
-  'script injection activity button'
+  launchView,
+  '.contains("--ui-testing")',
+  'UI-test launch suppression'
 );
-requireText(
-  safariContainer,
-  '"com.masakacj.chatgptweb.scriptaction"',
-  'script action extension id'
-);
-requireText(
-  safariContainer,
-  'modalPresentationStyle =\n            .fullScreen',
-  'modal Safari presentation'
-);
-
-if (
-  safariContainer.includes(
-    'WKWebView'
-  )
-) {
-  fail(
-    'Safari container must not use WKWebView'
-  );
-}
 
 requireText(
   project,
-  'ChatGPTWebView.swift',
+  '- SafariContainerView.swift',
+  'legacy Safari view exclusion'
+);
+requireText(
+  project,
+  '- ChatGPTWebView.swift',
   'legacy WKWebView exclusion'
 );
 requireText(
   project,
-  'UnifiedScriptStore.swift',
+  '- UnifiedScriptStore.swift',
   'legacy store exclusion'
 );
 requireText(
   project,
-  'ChatGPTScriptAction:',
-  'script action target'
-);
-requireText(
-  project,
-  'type: app-extension',
-  'action extension target type'
+  'ChatGPTSafariWebExtension:',
+  'Safari web extension target'
 );
 requireText(
   project,
   'embed: true',
-  'embedded script action'
+  'embedded web extension'
 );
 requireText(
   project,
-  'Build Safari Injection Script',
-  'generated injection script'
+  'Build Safari Web Extension Resources',
+  'web extension resource build'
 );
 requireText(
   project,
   'window.__CHATGPT_SAFARI_CONTAINER__ = true;',
-  'injection bootstrap'
+  'automatic content bootstrap'
 );
 requireText(
   project,
-  'ExtensionPreprocessingJS',
-  'Safari preprocessing object'
+  'content.js',
+  'automatic content script output'
+);
+requireText(
+  project,
+  'manifest.json',
+  'web extension manifest output'
 );
 
 requireText(
-  actionInfo,
+  extensionInfo,
+  '<string>com.apple.Safari.web-extension</string>',
+  'Safari web extension point'
+);
+requireText(
+  extensionInfo,
+  'SafariWebExtensionHandler',
+  'Safari web extension handler'
+);
+requireText(
+  extensionInfo,
   '<key>CFBundleExecutable</key>',
-  'extension executable key'
-);
-
-requireText(
-  actionInfo,
-  '<string>com.apple.services</string>',
-  'non-UI action extension point'
+  'extension executable'
 );
 requireText(
-  actionInfo,
-  'NSExtensionJavaScriptPreprocessingFile',
-  'JavaScript preprocessing file'
-);
-requireText(
-  actionInfo,
-  'NSExtensionActivationSupportsWebPageWithMaxCount',
-  'webpage activation'
-);
-requireText(
-  actionInfo,
-  '<string>InjectChatGPT</string>',
-  'injection script name'
-);
-
-requireText(
-  actionHandler,
+  extensionHandler,
   'NSExtensionRequestHandling',
-  'action request handler'
+  'native web extension handler'
 );
-requireText(
-  actionHandler,
-  'context.completeRequest(',
-  'non-UI completion'
-);
+
+if (
+  manifest.manifest_version !== 3
+) {
+  fail(
+    'Safari web extension must use manifest v3'
+  );
+}
+
+const contentScripts =
+  manifest.content_scripts || [];
+
+if (contentScripts.length !== 1) {
+  fail(
+    'expected one automatic content script'
+  );
+}
+
+const contentScript =
+  contentScripts[0];
+
+if (
+  contentScript.run_at !==
+    'document_start'
+) {
+  fail(
+    'content script must run at document_start'
+  );
+}
+
+const expectedMatch =
+  'https://chatgpt.com/*';
+
+if (
+  !contentScript.matches
+    ?.includes(expectedMatch) ||
+  !contentScript.js
+    ?.includes('content.js')
+) {
+  fail(
+    'content script must target chatgpt.com with content.js'
+  );
+}
+
+if (
+  !manifest.host_permissions
+    ?.includes(expectedMatch)
+) {
+  fail(
+    'manifest host permission missing chatgpt.com'
+  );
+}
 
 console.log(
   JSON.stringify(
@@ -336,9 +345,11 @@ console.log(
       ok: true,
       version: pkg.version,
       architecture:
-        'SFSafariViewController + Action Extension script injection',
+        'system Safari + automatic Safari Web Extension content script',
       sharedBytes:
         Buffer.byteLength(shared),
+      runAt:
+        contentScript.run_at,
     },
     null,
     2

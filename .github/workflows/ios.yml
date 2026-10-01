@@ -8,7 +8,7 @@ on:
     paths:
       - "App/**"
       - "Resources/**"
-      - "SafariScriptAction/**"
+      - "SafariWebExtension/**"
       - "safari/**"
       - "package.json"
       - "project.yml"
@@ -62,32 +62,57 @@ jobs:
             CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
 
-      - name: Verify Safari script action
+      - name: Verify automatic Safari web extension
         run: |
           set -euo pipefail
+
           APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
-          ACTION="$APP/PlugIns/ChatGPTScriptAction.appex"
-          SCRIPT="$ACTION/InjectChatGPT.js"
+          EXT="$APP/PlugIns/ChatGPTSafariWebExtension.appex"
+          CONTENT="$EXT/content.js"
+          MANIFEST="$EXT/manifest.json"
 
           test -d "$APP"
-          test -d "$ACTION"
-          test -f "$SCRIPT"
+          test -d "$EXT"
+          test -f "$CONTENT"
+          test -f "$MANIFEST"
 
           VERSION="$(node -p "require('./package.json').version")"
           APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
-          ACTION_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ACTION/Info.plist")"
-          EXTENSION_POINT="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$ACTION/Info.plist")"
+          EXT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$EXT/Info.plist")"
+          EXTENSION_POINT="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$EXT/Info.plist")"
+          EXTENSION_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$EXT/Info.plist")"
 
           test "$APP_VERSION" = "$VERSION"
-          test "$ACTION_VERSION" = "$VERSION"
-          test "$EXTENSION_POINT" = "com.apple.services"
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$ACTION/Info.plist" >/dev/null
-          test -x "$ACTION/ChatGPTScriptAction"
+          test "$EXT_VERSION" = "$VERSION"
+          test "$EXTENSION_POINT" = "com.apple.Safari.web-extension"
+          test -n "$EXTENSION_EXECUTABLE"
+          test -x "$EXT/$EXTENSION_EXECUTABLE"
 
-          grep -q "ExtensionPreprocessingJS" "$SCRIPT"
-          grep -q "__CHATGPT_SAFARI_CONTAINER__ = true" "$SCRIPT"
-          grep -q "ChatGPT Web Unified" "$SCRIPT"
-          grep -q "@version      $VERSION" "$SCRIPT"
+          python3 - "$MANIFEST" "$VERSION" <<'PY'
+          import json
+          import sys
+
+          manifest_path, expected_version = sys.argv[1:3]
+
+          with open(manifest_path, "r", encoding="utf-8") as handle:
+              manifest = json.load(handle)
+
+          assert manifest["manifest_version"] == 3
+          assert manifest["version"] == expected_version
+
+          scripts = manifest.get("content_scripts") or []
+          assert len(scripts) == 1
+
+          content = scripts[0]
+          assert content["run_at"] == "document_start"
+          assert "https://chatgpt.com/*" in content["matches"]
+          assert "content.js" in content["js"]
+          assert "https://chatgpt.com/*" in manifest["host_permissions"]
+          PY
+
+          grep -q "__CHATGPT_SAFARI_CONTAINER__ = true" "$CONTENT"
+          grep -q "ChatGPT Web Unified" "$CONTENT"
+          grep -q "@version      $VERSION" "$CONTENT"
 
           test ! -f "$APP/chatgpt-safari.user.js"
 
@@ -208,7 +233,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Run floating control UI smoke test
+      - name: Run Safari launcher UI smoke test
         run: |
           set -euo pipefail
 
