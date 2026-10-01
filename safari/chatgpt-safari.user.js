@@ -4583,6 +4583,8 @@
     if (
       !IS_NATIVE_IOS ||
       state.destroyed ||
+      window.__CHATGPT_NATIVE__
+        ?.uiTesting === true ||
       hasCookieFlag(
         SIDEBAR_DEEP_RESET_COOKIE
       )
