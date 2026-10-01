@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.20
+// @version      0.4.21
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.20';
+  const VERSION = '0.4.21';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -875,10 +875,6 @@
         VERSION,
       appVersion:
         state.nativeStatus?.appVersion ||
-        '',
-      gestureVersion:
-        state.nativeStatus
-          ?.gestureVersion ||
         '',
       samples,
     };
@@ -2536,9 +2532,6 @@
       setNativeStatus({
         ...(window.__CHATGPT_NATIVE__ || {}),
         updateStatus: 'checking',
-        ...(window.__CHATGPT_NATIVE__?.gestureVersion
-          ? { gestureUpdateStatus: 'checking' }
-          : {}),
       });
 
       clearTimeout(state.updateWatchdogTimer);
@@ -2549,9 +2542,6 @@
           setNativeStatus({
             ...(window.__CHATGPT_NATIVE__ || {}),
             updateStatus: 'timeout',
-            ...(window.__CHATGPT_NATIVE__?.gestureVersion
-              ? { gestureUpdateStatus: 'timeout' }
-              : {}),
           });
         }
       }, 10000);
@@ -3024,10 +3014,6 @@
       makeInfoRow('更新');
     const telemetryInfo =
       makeInfoRow('在线诊断');
-    const gestureInfo =
-      state.nativeStatus?.gestureVersion
-        ? makeInfoRow('iOS 手势')
-        : null;
 
     info.append(
       scriptInfo.row,
@@ -3035,9 +3021,6 @@
       updateInfo.row,
       telemetryInfo.row
     );
-    if (gestureInfo) {
-      info.append(gestureInfo.row);
-    }
 
     const perfRow =
       document.createElement('label');
@@ -3458,8 +3441,6 @@
       updateInfo: updateInfo.value,
       telemetryInfo:
         telemetryInfo.value,
-      gestureInfo:
-        gestureInfo?.value || null,
     };
 
     updateUI();
@@ -3862,15 +3843,6 @@
             : failed
               ? '重试检查更新'
               : '检查更新';
-    }
-
-    if (ui.gestureInfo) {
-      const version =
-        state.nativeStatus
-          ?.gestureVersion || '未知';
-
-      ui.gestureInfo.textContent =
-        'v' + version;
     }
 
     updateTelemetryUI();
