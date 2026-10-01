@@ -362,6 +362,41 @@ requireText(
 );
 requireText(
   shared,
+  'data-cgpt-tool-summary-only',
+  'summary-only tool rendering'
+);
+requireText(
+  shared,
+  'function compactToolSummary(label)',
+  'compact tool/MCP name extraction'
+);
+requireText(
+  shared,
+  "data-cgpt-static",
+  'static no-animation native mode'
+);
+requireText(
+  shared,
+  'SIDEBAR_DEEP_RESET_COOKIE',
+  'one-time deep sidebar client-state reset'
+);
+requireText(
+  shared,
+  'localStorage.clear();',
+  'deep client local state cleanup'
+);
+requireText(
+  shared,
+  'indexedDB.databases()',
+  'deep IndexedDB cleanup'
+);
+requireText(
+  shared,
+  'caches.keys()',
+  'deep CacheStorage cleanup'
+);
+requireText(
+  shared,
   "processToolMutationNode(node);",
   'added-node-only process handling'
 );
@@ -412,6 +447,7 @@ const sharedForbidden = [
   ['data-cgpt-passive-turn', 'intrinsic-height passive turn virtualization'],
   ['contain-intrinsic-size: auto 320px', 'estimated historical turn height'],
   ['conversationScroller(', 'dynamic scroll-container probing'],
+  ['animation: cgpt-safari-pulse', 'sidebar pulse animation'],
 ];
 
 for (const [needle, description] of sharedForbidden) {

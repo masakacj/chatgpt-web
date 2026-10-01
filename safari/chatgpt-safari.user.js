@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.13
+// @version      0.4.14
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.13';
+  const VERSION = '0.4.14';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -78,6 +78,8 @@
     'cgpt-unified-control-position-v1';
   const SIDEBAR_CLEANUP_MIGRATION_KEY =
     'cgpt-sidebar-cache-cleanup-v0413';
+  const SIDEBAR_DEEP_RESET_COOKIE =
+    'cgpt_sidebar_reset_v0414';
   const NATIVE_ANCHOR_MIN_VERSION =
     '0.3.31';
   const CONVERSATION_STATE_KEY = 'cgpt-safari-conversation-state-v1';
@@ -103,7 +105,7 @@
     });
 
   const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called|MCP|connector|连接器)/i;
-  const TOOL_ACTION_RE = /(?:Ran command|Run command|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|运行命令|执行命令|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
+  const TOOL_ACTION_RE = /(?:Ran command|Run command|Ran code|Run code|Executed code|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|Python|运行命令|执行命令|运行代码|执行代码|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
   const PROCESS_GROUP_RE = /(?:Thought for|Thinking|Reasoning|思考过程|思考了|正在思考|分析中)/i;
   const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
   const TOOL_USER_ACTION_RE = /(?:allow|approve|confirm|yes,?\s*(?:run|proceed)|run\s+(?:it|command)|continue|permission|authorization|允许|批准|确认|继续|运行此|授权|权限)/i;
@@ -1414,6 +1416,10 @@
   function registerConversationLinks(
     scope = document
   ) {
+    if (EXTREME_NATIVE_MODE) {
+      return;
+    }
+
     for (
       const item of
         ChatGPTDOMAdapter
@@ -1441,7 +1447,12 @@
   }
 
   function renderConversationStateForId(id) {
-    if (!id) return;
+    if (
+      EXTREME_NATIVE_MODE ||
+      !id
+    ) {
+      return;
+    }
 
     const links =
       state.conversationLinks.get(id);
@@ -1485,6 +1496,10 @@
   function renderConversationStates(
     scope = null
   ) {
+    if (EXTREME_NATIVE_MODE) {
+      return;
+    }
+
     if (scope) {
       registerConversationLinks(scope);
     } else if (
@@ -1505,7 +1520,13 @@
   }
 
   function reconcileSidebarConversationLinks() {
-    if (state.destroyed) return;
+    if (
+      state.destroyed ||
+      EXTREME_NATIVE_MODE
+    ) {
+      state.conversationLinks.clear();
+      return;
+    }
 
     const root =
       ChatGPTDOMAdapter.sidebarRoot();
@@ -1525,7 +1546,12 @@
   function scheduleSidebarReconcile(
     delay = 80
   ) {
-    if (state.destroyed) return;
+    if (
+      state.destroyed ||
+      EXTREME_NATIVE_MODE
+    ) {
+      return;
+    }
 
     clearTimeout(
       state.sidebarReconcileTimer
@@ -1881,6 +1907,13 @@
       'html, body {',
       '  overscroll-behavior-y: none !important;',
       '}',
+      'html[data-cgpt-static="1"] *,',
+      'html[data-cgpt-static="1"] *::before,',
+      'html[data-cgpt-static="1"] *::after {',
+      '  animation: none !important;',
+      '  transition: none !important;',
+      '  scroll-behavior: auto !important;',
+      '}',
       '[data-cgpt-windowed="1"] {',
       '  height: var(--cgpt-window-height) !important;',
       '  min-height: var(--cgpt-window-height) !important;',
@@ -1896,6 +1929,29 @@
       '  content-visibility: auto !important;',
       '  contain: layout style paint !important;',
       '  contain-intrinsic-size: auto 42px !important;',
+      '}',
+      '[data-cgpt-tool-summary-only="1"] {',
+      '  display: block !important;',
+      '  min-height: 30px !important;',
+      '  max-height: 34px !important;',
+      '  overflow: hidden !important;',
+      '  contain: layout style paint !important;',
+      '  content-visibility: visible !important;',
+      '}',
+      '[data-cgpt-tool-summary-only="1"] > * {',
+      '  display: none !important;',
+      '}',
+      '[data-cgpt-tool-summary-only="1"]::before {',
+      '  content: attr(data-cgpt-tool-summary);',
+      '  display: block;',
+      '  box-sizing: border-box;',
+      '  min-height: 30px;',
+      '  padding: 6px 10px;',
+      '  opacity: .62;',
+      '  font: 11px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;',
+      '  white-space: nowrap;',
+      '  overflow: hidden;',
+      '  text-overflow: ellipsis;',
       '}',
       '[data-cgpt-tool-hidden="1"] {',
       '  display: none !important;',
@@ -2239,6 +2295,153 @@
     ].join(' ').replace(/\s+/g, ' ').trim();
   }
 
+  function compactToolSummary(label) {
+    const text =
+      String(label || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!text) return '';
+
+    const mcp = text.match(
+      /\bmcp__([A-Za-z0-9.-]+)__([A-Za-z0-9_.-]+)/i
+    );
+
+    if (mcp) {
+      return (
+        'MCP · ' +
+        mcp[1] +
+        ' · ' +
+        mcp[2]
+      );
+    }
+
+    const namedTool = text.match(
+      /(?:Called tool|调用工具)\s*[:·-]?\s*([A-Za-z0-9_.:-]{2,64})/i
+    );
+
+    if (namedTool) {
+      return '工具 · ' + namedTool[1];
+    }
+
+    if (
+      /(?:Ran code|Run code|Executed code|Python|运行代码|执行代码)/i
+        .test(text)
+    ) {
+      return '工具 · 运行代码';
+    }
+
+    if (
+      /(?:Ran command|Run command|运行命令|执行命令)/i
+        .test(text)
+    ) {
+      return '工具 · 运行命令';
+    }
+
+    if (/(?:Searched|搜索)/i.test(text)) {
+      return '工具 · 搜索';
+    }
+
+    if (/(?:Read file|读取文件)/i.test(text)) {
+      return '工具 · 读取文件';
+    }
+
+    if (/(?:Wrote file|写入文件)/i.test(text)) {
+      return '工具 · 写入文件';
+    }
+
+    if (/(?:Edited file|编辑文件)/i.test(text)) {
+      return '工具 · 编辑文件';
+    }
+
+    if (/(?:Opened workspace|打开工作区)/i.test(text)) {
+      return '工具 · 打开工作区';
+    }
+
+    if (/(?:Fetched|获取)/i.test(text)) {
+      return '工具 · 获取数据';
+    }
+
+    if (/(?:MCP|connector|连接器)/i.test(text)) {
+      return 'MCP · 调用';
+    }
+
+    if (TOOL_GROUP_RE.test(text)) {
+      return '工具调用';
+    }
+
+    return '';
+  }
+
+  function setToolSummaryOnly(
+    group,
+    label
+  ) {
+    if (!(group instanceof HTMLElement)) {
+      return;
+    }
+
+    const raw =
+      String(label || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const summary =
+      /^(?:MCP|工具)(?: ·|调用)/.test(
+        raw
+      )
+        ? raw
+        : compactToolSummary(raw);
+
+    if (!summary) {
+      group.removeAttribute(
+        'data-cgpt-tool-summary-only'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-summary'
+      );
+      group.setAttribute(
+        'data-cgpt-tool-hidden',
+        '1'
+      );
+      return;
+    }
+
+    const current =
+      group.getAttribute(
+        'data-cgpt-tool-summary'
+      ) || '';
+
+    const generic =
+      current === '工具调用' ||
+      current === 'MCP · 调用';
+
+    const next =
+      !current || generic
+        ? summary
+        : current.includes(summary)
+          ? current
+          : (
+              current + ' · ' + summary
+            ).slice(0, 110);
+
+    group.setAttribute(
+      'data-cgpt-tool-summary',
+      next
+    );
+    group.setAttribute(
+      'data-cgpt-tool-summary-only',
+      '1'
+    );
+    group.removeAttribute(
+      'data-cgpt-tool-hidden'
+    );
+    group.removeAttribute(
+      'data-cgpt-tool-collapsed'
+    );
+    state.toolGroups.add(group);
+  }
+
   function toolActionNodes(scope) {
     return Array.from(
       scope.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
@@ -2373,6 +2576,9 @@
         ) ||
         group.hasAttribute(
           'data-cgpt-tool-hidden'
+        ) ||
+        group.hasAttribute(
+          'data-cgpt-tool-summary-only'
         )
       ) {
         collapsed += 1;
@@ -2407,21 +2613,35 @@
           group
         );
 
-      group.removeAttribute(
-        'data-cgpt-tool-collapsed'
-      );
-      group.removeAttribute(
-        'data-cgpt-tool-summary'
-      );
-
       if (requiresAction) {
         group.removeAttribute(
           'data-cgpt-tool-hidden'
         );
+        group.removeAttribute(
+          'data-cgpt-tool-summary-only'
+        );
+        group.removeAttribute(
+          'data-cgpt-tool-summary'
+        );
       } else {
-        group.setAttribute(
-          'data-cgpt-tool-hidden',
-          '1'
+        let summary = '';
+
+        for (
+          const node of
+            toolActionNodes(group)
+              .slice(0, 8)
+        ) {
+          summary =
+            compactToolSummary(
+              nodeLabel(node)
+            );
+
+          if (summary) break;
+        }
+
+        setToolSummaryOnly(
+          group,
+          summary
         );
       }
 
@@ -2552,6 +2772,12 @@
         existing.removeAttribute(
           'data-cgpt-tool-hidden'
         );
+        existing.removeAttribute(
+          'data-cgpt-tool-summary-only'
+        );
+        existing.removeAttribute(
+          'data-cgpt-tool-summary'
+        );
         continue;
       }
 
@@ -2581,16 +2807,39 @@
         '1'
       );
 
+      state.toolGroups.add(group);
+
       if (
         TOOL_USER_ACTION_RE.test(label)
       ) {
         group.removeAttribute(
           'data-cgpt-tool-hidden'
         );
-      } else {
+        group.removeAttribute(
+          'data-cgpt-tool-summary-only'
+        );
+        group.removeAttribute(
+          'data-cgpt-tool-summary'
+        );
+      } else if (
+        PROCESS_GROUP_RE.test(label) &&
+        !TOOL_GROUP_RE.test(label) &&
+        !TOOL_ACTION_RE.test(label)
+      ) {
+        group.removeAttribute(
+          'data-cgpt-tool-summary-only'
+        );
+        group.removeAttribute(
+          'data-cgpt-tool-summary'
+        );
         group.setAttribute(
           'data-cgpt-tool-hidden',
           '1'
+        );
+      } else {
+        setToolSummaryOnly(
+          group,
+          label
         );
       }
     }
@@ -2661,7 +2910,8 @@
         document.querySelectorAll(
           '[data-cgpt-tool-group="1"],' +
           '[data-cgpt-tool-hidden="1"],' +
-          '[data-cgpt-tool-collapsed="1"]'
+          '[data-cgpt-tool-collapsed="1"],' +
+          '[data-cgpt-tool-summary-only="1"]'
         )
     ) {
       if (!(group instanceof HTMLElement)) {
@@ -2679,6 +2929,9 @@
       );
       group.removeAttribute(
         'data-cgpt-tool-hidden'
+      );
+      group.removeAttribute(
+        'data-cgpt-tool-summary-only'
       );
     }
 
@@ -4566,6 +4819,15 @@
       }
     }
 
+    if (EXTREME_NATIVE_MODE) {
+      state.sidebarObserver
+        ?.disconnect();
+      state.sidebarObserver = null;
+      state.sidebarRoot = null;
+      state.conversationLinks.clear();
+      return;
+    }
+
     const sidebarRoot =
       ChatGPTDOMAdapter.sidebarRoot();
 
@@ -4694,8 +4956,12 @@
           ChatGPTDOMAdapter
             .conversationRoot() !==
             state.conversationRoot ||
-          ChatGPTDOMAdapter.sidebarRoot() !==
-            state.sidebarRoot
+          (
+            !EXTREME_NATIVE_MODE &&
+            ChatGPTDOMAdapter
+              .sidebarRoot() !==
+              state.sidebarRoot
+          )
         ) {
           bindScopedObservers();
         }
@@ -4924,31 +5190,158 @@
       }, IS_NATIVE_IOS ? 220 : 80);
   }
 
+  function hasCookieFlag(name) {
+    return document.cookie
+      .split(';')
+      .some(
+        (part) =>
+          part.trim() ===
+            name + '=1'
+      );
+  }
+
+  function setCookieFlag(name) {
+    try {
+      document.cookie =
+        name +
+        '=1; Max-Age=31536000; Path=/; SameSite=Lax';
+    } catch (_) {}
+  }
+
+  async function clearClientSiteState() {
+    const preserveKeys = [
+      SETTINGS_KEY,
+      CONTROL_MIGRATION_KEY,
+      SAFE_LOAD_MIGRATION_KEY,
+      CONTROL_POSITION_KEY,
+      TELEMETRY_INSTALL_KEY,
+    ];
+
+    const preserved = new Map();
+
+    try {
+      for (const key of preserveKeys) {
+        const value =
+          localStorage.getItem(key);
+
+        if (value != null) {
+          preserved.set(
+            key,
+            value
+          );
+        }
+      }
+
+      localStorage.clear();
+
+      for (
+        const [key, value] of
+          preserved
+      ) {
+        localStorage.setItem(
+          key,
+          value
+        );
+      }
+    } catch (_) {}
+
+    try {
+      sessionStorage.clear();
+    } catch (_) {}
+
+    const cleanupTasks = [];
+
+    try {
+      if (
+        window.caches &&
+        typeof caches.keys ===
+          'function'
+      ) {
+        cleanupTasks.push(
+          caches.keys().then(
+            (names) =>
+              Promise.all(
+                names.map(
+                  (name) =>
+                    caches.delete(name)
+                )
+              )
+          )
+        );
+      }
+    } catch (_) {}
+
+    try {
+      if (
+        window.indexedDB &&
+        typeof indexedDB.databases ===
+          'function'
+      ) {
+        cleanupTasks.push(
+          indexedDB.databases().then(
+            (databases) =>
+              Promise.all(
+                databases
+                  .map(
+                    (database) =>
+                      database?.name
+                  )
+                  .filter(Boolean)
+                  .map(
+                    (name) =>
+                      new Promise(
+                        (resolve) => {
+                          const request =
+                            indexedDB
+                              .deleteDatabase(
+                                name
+                              );
+
+                          request.onsuccess =
+                            () => resolve();
+                          request.onerror =
+                            () => resolve();
+                          request.onblocked =
+                            () => resolve();
+                        }
+                      )
+                  )
+              )
+          )
+        );
+      }
+    } catch (_) {}
+
+    if (cleanupTasks.length) {
+      await Promise.race([
+        Promise.allSettled(
+          cleanupTasks
+        ),
+        new Promise(
+          (resolve) =>
+            window.setTimeout(
+              resolve,
+              900
+            )
+        ),
+      ]);
+    }
+  }
+
   function runOneTimeSidebarCleanup() {
     if (
       !IS_NATIVE_IOS ||
-      state.destroyed
+      state.destroyed ||
+      hasCookieFlag(
+        SIDEBAR_DEEP_RESET_COOKIE
+      )
     ) {
       return false;
     }
 
-    try {
-      if (
-        localStorage.getItem(
-          SIDEBAR_CLEANUP_MIGRATION_KEY
-        ) === '1'
-      ) {
-        return false;
-      }
-
-      localStorage.setItem(
-        SIDEBAR_CLEANUP_MIGRATION_KEY,
-        '1'
-      );
-      localStorage.removeItem(
-        CONVERSATION_STATE_KEY
-      );
-    } catch (_) {}
+    setCookieFlag(
+      SIDEBAR_DEEP_RESET_COOKIE
+    );
 
     state.conversationStates = {};
     state.conversationLinks.clear();
@@ -4966,21 +5359,29 @@
 
     state.pendingSidebarCleanup = true;
 
-    if (
-      requestNativeAction(
-        'clear-cache'
-      )
-    ) {
-      return true;
-    }
+    void clearClientSiteState()
+      .finally(() => {
+        if (state.destroyed) {
+          return;
+        }
 
-    state.pendingSidebarCleanup = false;
+        if (
+          requestNativeAction(
+            'clear-cache'
+          )
+        ) {
+          return;
+        }
 
-    window.setTimeout(() => {
-      if (!state.destroyed) {
-        location.reload();
-      }
-    }, 120);
+        state.pendingSidebarCleanup =
+          false;
+
+        window.setTimeout(() => {
+          if (!state.destroyed) {
+            location.reload();
+          }
+        }, 120);
+      });
 
     return true;
   }
@@ -5171,6 +5572,10 @@
         'data-cgpt-safari-chat-state'
       );
     }
+    document.documentElement
+      ?.removeAttribute(
+        'data-cgpt-static'
+      );
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(HOST_ID)?.remove();
     state.ui = null;
@@ -5207,6 +5612,14 @@
 
   window[GLOBAL_KEY] = api;
   window[LEGACY_GLOBAL_KEY] = api;
+
+  if (EXTREME_NATIVE_MODE) {
+    document.documentElement
+      ?.setAttribute(
+        'data-cgpt-static',
+        '1'
+      );
+  }
 
   installStyle();
   setupConversationStateSync();
