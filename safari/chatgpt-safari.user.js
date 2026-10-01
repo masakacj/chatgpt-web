@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.14
+// @version      0.4.15
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.14';
+  const VERSION = '0.4.15';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -35,8 +35,6 @@
     0,
     700,
   ];
-  const PERF_REFRESH_DELAY_MS =
-    IS_NATIVE_IOS ? 180 : 100;
   const STATUS_INTERVAL_MS =
     IS_NATIVE_IOS ? 12000 : 7000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
@@ -45,15 +43,8 @@
     IS_NATIVE_IOS ? 1400 : 500;
   const STATE_EVAL_DEBOUNCE_MS =
     IS_NATIVE_IOS ? 220 : 120;
-  const IOS_KEEP_RECENT_TURNS = 6;
   const TURN_CACHE_MAX_AGE_MS =
     IS_NATIVE_IOS ? 300000 : 120000;
-  const DEFAULT_AGGRESSIVE_WINDOWING = false;
-  const WINDOW_ROOT_MARGIN =
-    IS_NATIVE_IOS
-      ? '220% 0px 260% 0px'
-      : '180% 0px 220% 0px';
-  const WINDOW_MIN_HEIGHT = 56;
   const TURN_SELECTORS = [
     'article[data-testid^="conversation-turn-"]',
     '[data-testid^="conversation-turn-"]',
@@ -73,7 +64,6 @@
   const HOST_ID = 'cgpt-safari-lite-host';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
   const CONTROL_MIGRATION_KEY = 'cgpt-unified-control-visible-v031';
-  const SAFE_LOAD_MIGRATION_KEY = 'cgpt-safe-load-v041';
   const CONTROL_POSITION_KEY =
     'cgpt-unified-control-position-v1';
   const SIDEBAR_CLEANUP_MIGRATION_KEY =
@@ -107,7 +97,6 @@
   const TOOL_GROUP_RE = /(?:已调用工具|工具调用列表|调用工具|Called tools?|Tool calls?|Tools called|MCP|connector|连接器)/i;
   const TOOL_ACTION_RE = /(?:Ran command|Run command|Ran code|Run code|Executed code|Called tool|Searched|Read file|Wrote file|Edited file|Opened workspace|Fetched|Executed|Python|运行命令|执行命令|运行代码|执行代码|调用工具|搜索|读取文件|写入文件|编辑文件|打开工作区|已运行|已调用)/i;
   const PROCESS_GROUP_RE = /(?:Thought for|Thinking|Reasoning|思考过程|思考了|正在思考|分析中)/i;
-  const TOOL_ATTENTION_RE = /(?:running|in progress|pending|waiting|failed|error|approval|required|confirm|permission|正在|执行中|等待|失败|错误|需要确认|确认操作|授权|权限)/i;
   const TOOL_USER_ACTION_RE = /(?:allow|approve|confirm|yes,?\s*(?:run|proceed)|run\s+(?:it|command)|continue|permission|authorization|允许|批准|确认|继续|运行此|授权|权限)/i;
 
   try {
@@ -118,8 +107,6 @@
   const defaults = {
     enabled: true,
     showControl: true,
-    aggressiveWindowing:
-      DEFAULT_AGGRESSIVE_WINDOWING,
     telemetryEnabled: false,
   };
 
@@ -135,7 +122,6 @@
     lastBottomConversationId: '',
     conversationRoot: null,
     sidebarRoot: null,
-    refreshTimer: 0,
     stateEvalTimer: 0,
     phaseTwoTimer: 0,
     routeRebindTimer: 0,
@@ -143,18 +129,9 @@
     phaseTwoStarted: false,
     statusTimer: 0,
     updateWatchdogTimer: 0,
-    optimizedTurns: new Set(),
     turnCache: [],
-    turnSet: new Set(),
     turnCacheDirty: true,
     lastTurnScanAt: 0,
-    nearTurns: new Set(),
-    turnRecords: new WeakMap(),
-    windowObserver: null,
-    toolGroups: new Set(),
-    toolRecords: new WeakMap(),
-    processedToolHeadings: new WeakSet(),
-    toolCounts: { groups: 0, collapsed: 0 },
     conversationLinks: new Map(),
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
@@ -607,9 +584,7 @@
         telemetryRouteKind(),
       reason:
         String(reason).slice(0, 24),
-      aggressive:
-        state.settings
-          .aggressiveWindowing,
+      aggressive: false,
       streaming:
         isStreaming(),
       phaseTwo:
@@ -650,10 +625,8 @@
           previous,
           'toolNodesProcessed'
         ),
-      toolGroups:
-        state.toolCounts.groups,
-      toolCollapsed:
-        state.toolCounts.collapsed,
+      toolGroups: 0,
+      toolCollapsed: 0,
       loopCount:
         loop.count,
       loopAvgMs:
@@ -1185,13 +1158,8 @@
     try {
       const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
       const shouldRestoreControl = localStorage.getItem(CONTROL_MIGRATION_KEY) !== '1';
-      const shouldApplySafeLoadReset =
-        localStorage.getItem(SAFE_LOAD_MIGRATION_KEY) !== '1';
       if (shouldRestoreControl) {
         localStorage.setItem(CONTROL_MIGRATION_KEY, '1');
-      }
-      if (shouldApplySafeLoadReset) {
-        localStorage.setItem(SAFE_LOAD_MIGRATION_KEY, '1');
       }
       return {
         enabled: stored.enabled !== false,
@@ -1199,10 +1167,6 @@
           shouldRestoreControl
             ? true
             : stored.showControl !== false,
-        aggressiveWindowing:
-          shouldApplySafeLoadReset
-            ? false
-            : stored.aggressiveWindowing === true,
         telemetryEnabled:
           stored.telemetryEnabled === true,
       };
@@ -1619,10 +1583,6 @@
     const waiting = hasWaitingUserSignal();
     const running = hasToolOrStreamingSignal();
 
-    if (!waiting && !running) {
-      finalizeTrackedToolGroups();
-    }
-
     if (waiting) {
       state.settlingSince = 0;
       setConversationState(id, 'waiting_user', {
@@ -1914,22 +1874,6 @@
       '  transition: none !important;',
       '  scroll-behavior: auto !important;',
       '}',
-      '[data-cgpt-windowed="1"] {',
-      '  height: var(--cgpt-window-height) !important;',
-      '  min-height: var(--cgpt-window-height) !important;',
-      '  max-height: var(--cgpt-window-height) !important;',
-      '  overflow: hidden !important;',
-      '  contain: strict !important;',
-      '  content-visibility: visible !important;',
-      '}',
-      '[data-cgpt-windowed="1"] > * {',
-      '  display: none !important;',
-      '}',
-      '[data-cgpt-tool-group="1"] {',
-      '  content-visibility: auto !important;',
-      '  contain: layout style paint !important;',
-      '  contain-intrinsic-size: auto 42px !important;',
-      '}',
       '[data-cgpt-tool-summary-only="1"] {',
       '  display: block !important;',
       '  min-height: 30px !important;',
@@ -1965,35 +1909,6 @@
       '  overflow: hidden !important;',
       '  pointer-events: none !important;',
       '}',
-      '[data-cgpt-tool-collapsed="1"] {',
-      '  display: block !important;',
-      '  min-height: 38px !important;',
-      '  max-height: 42px !important;',
-      '  overflow: hidden !important;',
-      '  contain: strict !important;',
-      '}',
-      '[data-cgpt-tool-collapsed="1"] > * {',
-      '  display: none !important;',
-      '}',
-      '[data-cgpt-tool-collapsed="1"]::before {',
-      '  content: attr(data-cgpt-tool-summary);',
-      '  display: block;',
-      '  box-sizing: border-box;',
-      '  min-height: 38px;',
-      '  padding: 9px 11px;',
-      '  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);',
-      '  border-radius: 10px;',
-      '  opacity: .64;',
-      '  font: 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;',
-      '  white-space: nowrap;',
-      '  overflow: hidden;',
-      '  text-overflow: ellipsis;',
-      '}',
-      '[data-cgpt-tool-collapsed="1"] *,',
-      '[data-cgpt-tool-collapsed="1"]::before {',
-      '  animation: none !important;',
-      '  transition: none !important;',
-      '}',
       '[data-cgpt-safari-chat-state] {',
       '  --cgpt-chat-state-color: transparent;',
       '  background-image: radial-gradient(circle, var(--cgpt-chat-state-color) 0 3px, transparent 3.5px) !important;',
@@ -2018,109 +1933,6 @@
       .mountedTurns();
   }
 
-  function turnIdentity(turn) {
-    if (!(turn instanceof HTMLElement)) return '';
-
-    return [
-      turn.getAttribute('data-testid') || '',
-      turn.getAttribute('data-scroll-anchor') || '',
-      turn.getAttribute('data-message-author-role') || '',
-    ].join('|');
-  }
-
-  function ensureWindowObserver() {
-    if (
-      state.windowObserver ||
-      typeof IntersectionObserver !== 'function'
-    ) {
-      return;
-    }
-
-    state.windowObserver =
-      new IntersectionObserver(
-        (entries) => {
-          if (state.destroyed) return;
-
-          const turns = turnCandidates();
-          const protectedTurns =
-            new Set(
-              turns.slice(
-                -IOS_KEEP_RECENT_TURNS
-              )
-            );
-          const liveTurn =
-            isStreaming() &&
-            turns.length
-              ? turns[turns.length - 1]
-              : null;
-
-          for (const entry of entries) {
-            const turn = entry.target;
-            if (!(turn instanceof HTMLElement)) {
-              continue;
-            }
-
-            if (entry.isIntersecting) {
-              state.nearTurns.add(turn);
-              restoreWindowedTurn(turn);
-              continue;
-            }
-
-            state.nearTurns.delete(turn);
-
-            if (
-              state.settings.enabled &&
-              state.settings.aggressiveWindowing &&
-              canWindowTurn(
-                turn,
-                protectedTurns,
-                liveTurn
-              )
-            ) {
-              windowTurn(turn);
-            } else {
-              restoreWindowedTurn(turn);
-            }
-          }
-        },
-        {
-          root: null,
-          rootMargin: WINDOW_ROOT_MARGIN,
-          threshold: 0,
-        }
-      );
-  }
-
-  function registerTurn(turn) {
-    if (!(turn instanceof HTMLElement)) return;
-
-    const identity = turnIdentity(turn);
-    const previous = state.turnRecords.get(turn);
-
-    if (
-      previous?.identity &&
-      previous.identity !== identity
-    ) {
-      restoreWindowedTurn(turn);
-    }
-
-    state.turnRecords.set(turn, {
-      ...(previous || {}),
-      identity,
-    });
-
-    if (!state.turnSet.has(turn)) {
-      state.turnSet.add(turn);
-
-      if (
-        state.settings.aggressiveWindowing
-      ) {
-        ensureWindowObserver();
-        state.windowObserver?.observe(turn);
-      }
-    }
-  }
-
   function turnCandidates(force = false) {
     const now = performance.now();
     const scanStarted = now;
@@ -2134,29 +1946,10 @@
       return state.turnCache;
     }
 
-    const turns = collectTurnCandidates();
-    const nextSet = new Set(turns);
-
-    for (const oldTurn of Array.from(state.turnSet)) {
-      if (
-        oldTurn.isConnected &&
-        nextSet.has(oldTurn)
-      ) {
-        continue;
-      }
-
-      state.windowObserver?.unobserve(oldTurn);
-      state.nearTurns.delete(oldTurn);
-      restoreWindowedTurn(oldTurn);
-      state.turnSet.delete(oldTurn);
-    }
-
-    for (const turn of turns) {
-      registerTurn(turn);
-    }
+    const turns =
+      collectTurnCandidates();
 
     state.turnCache = turns;
-
     state.turnCacheDirty = false;
     state.lastTurnScanAt = now;
     state.metrics.turnRefreshes += 1;
@@ -2171,115 +1964,6 @@
 
   function currentTurnCount() {
     return turnCandidates().length;
-  }
-
-  function selectionTouches(turn) {
-    const selection = window.getSelection?.();
-    if (!selection || selection.rangeCount < 1) {
-      return false;
-    }
-
-    const anchor = selection.anchorNode;
-    const focus = selection.focusNode;
-
-    return Boolean(
-      (anchor && turn.contains(anchor)) ||
-      (focus && turn.contains(focus))
-    );
-  }
-
-  function turnHasActiveMedia(turn) {
-    return Array.from(
-      turn.querySelectorAll('audio,video')
-    ).some(
-      (media) =>
-        media instanceof HTMLMediaElement &&
-        !media.paused
-    );
-  }
-
-  function canWindowTurn(
-    turn,
-    protectedTurns,
-    liveTurn
-  ) {
-    if (!(turn instanceof HTMLElement)) {
-      return false;
-    }
-
-    if (
-      turn === liveTurn ||
-      protectedTurns.has(turn) ||
-      turn.matches(':focus-within') ||
-      selectionTouches(turn) ||
-      turnHasActiveMedia(turn)
-    ) {
-      return false;
-    }
-
-    if (
-      turn.querySelector(
-        '[aria-busy="true"],' +
-        '[role="progressbar"],' +
-        '[data-state="loading"],' +
-        '[data-loading="true"]'
-      )
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-
-  function windowTurn(turn) {
-    if (
-      !(turn instanceof HTMLElement) ||
-      turn.hasAttribute('data-cgpt-windowed')
-    ) {
-      return;
-    }
-
-    const rect = turn.getBoundingClientRect();
-    const height = Math.ceil(rect.height);
-
-    if (
-      !Number.isFinite(height) ||
-      height < WINDOW_MIN_HEIGHT ||
-      turn.childElementCount === 0
-    ) {
-      return;
-    }
-
-    const record =
-      state.turnRecords.get(turn) || {};
-
-    record.height = height;
-    record.identity = turnIdentity(turn);
-    state.turnRecords.set(turn, record);
-
-    turn.style.setProperty(
-      '--cgpt-window-height',
-      height + 'px'
-    );
-    turn.setAttribute(
-      'data-cgpt-windowed',
-      '1'
-    );
-    state.optimizedTurns.add(turn);
-  }
-
-  function restoreWindowedTurn(turn) {
-    if (!(turn instanceof HTMLElement)) {
-      return;
-    }
-
-    turn.removeAttribute(
-      'data-cgpt-windowed'
-    );
-    turn.style.removeProperty(
-      '--cgpt-window-height'
-    );
-    state.optimizedTurns.delete(turn);
   }
 
   function invalidateTurnCache() {
@@ -2436,31 +2120,25 @@
     group.removeAttribute(
       'data-cgpt-tool-hidden'
     );
-    group.removeAttribute(
-      'data-cgpt-tool-collapsed'
-    );
-    state.toolGroups.add(group);
   }
 
-  function toolActionNodes(scope) {
-    return Array.from(
-      scope.querySelectorAll('button,[role="button"],summary,[aria-expanded]')
-    ).filter((node) => {
-      const text = nodeLabel(node);
-      return TOOL_ACTION_RE.test(text) && !TOOL_GROUP_RE.test(text);
-    });
-  }
-
-  function findToolGroupContainer(heading, turn) {
+  function findToolGroupContainer(
+    heading,
+    turn
+  ) {
     let node = heading.parentElement;
     let fallback = null;
 
     for (
       let depth = 0;
-      node && node !== turn && depth < 7;
-      depth += 1, node = node.parentElement
+      node &&
+      node !== turn &&
+      depth < 7;
+      depth += 1,
+      node = node.parentElement
     ) {
-      const role = node.getAttribute?.('role');
+      const role =
+        node.getAttribute?.('role');
 
       if (
         node.tagName === 'BUTTON' ||
@@ -2479,239 +2157,9 @@
       if (node.children.length >= 2) {
         return node;
       }
-
-      if (
-        !EXTREME_NATIVE_MODE &&
-        toolActionNodes(node).length > 0
-      ) {
-        return node;
-      }
     }
 
     return fallback;
-  }
-
-  function toolGroupNeedsAttention(group) {
-    const nodes = Array.from(
-      group.querySelectorAll(
-        'button,[role="button"],summary,[aria-live],[aria-label],[aria-busy="true"],[role="progressbar"]'
-      )
-    );
-
-    return nodes.some((node) => {
-      if (
-        node.matches?.(
-          '[aria-busy="true"],[role="progressbar"],[data-state="loading"],[data-loading="true"]'
-        )
-      ) {
-        return true;
-      }
-      return TOOL_ATTENTION_RE.test(nodeLabel(node));
-    });
-  }
-
-  function toolGroupRequiresUserAction(group) {
-    const nodes =
-      group.querySelectorAll(
-        'button,[role="button"],summary,[aria-label]'
-      );
-
-    for (const node of nodes) {
-      if (
-        TOOL_USER_ACTION_RE.test(
-          nodeLabel(node)
-        )
-      ) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  function toolSummary(group) {
-    let record = state.toolRecords.get(group);
-    if (!record) {
-      record = {};
-      state.toolRecords.set(group, record);
-    }
-
-    if (record.summary) return record.summary;
-
-    const count = Math.max(1, toolActionNodes(group).length);
-    const chinese =
-      (document.documentElement.lang || '')
-        .toLowerCase()
-        .startsWith('zh');
-
-    record.summary = chinese
-      ? '🛠 工具过程 · ' + count + ' 项 · 已折叠'
-      : '🛠 Tool process · ' + count + ' item' +
-        (count === 1 ? '' : 's') + ' · collapsed';
-
-    return record.summary;
-  }
-
-  function updateToolCounts() {
-    let groups = 0;
-    let collapsed = 0;
-
-    for (
-      const group of
-        Array.from(state.toolGroups)
-    ) {
-      if (
-        !(group instanceof HTMLElement) ||
-        !group.isConnected
-      ) {
-        state.toolGroups.delete(group);
-        continue;
-      }
-
-      groups += 1;
-
-      if (
-        group.hasAttribute(
-          'data-cgpt-tool-collapsed'
-        ) ||
-        group.hasAttribute(
-          'data-cgpt-tool-hidden'
-        ) ||
-        group.hasAttribute(
-          'data-cgpt-tool-summary-only'
-        )
-      ) {
-        collapsed += 1;
-      }
-    }
-
-    state.toolCounts = {
-      groups,
-      collapsed,
-    };
-  }
-
-  function registerToolGroup(
-    group,
-    turn,
-    liveTurn = null
-  ) {
-    if (!(group instanceof HTMLElement)) {
-      return;
-    }
-
-    state.toolGroups.add(group);
-    group.setAttribute(
-      'data-cgpt-tool-group',
-      '1'
-    );
-
-    if (EXTREME_NATIVE_MODE) {
-      const requiresAction =
-        group.matches(':focus-within') ||
-        toolGroupRequiresUserAction(
-          group
-        );
-
-      if (requiresAction) {
-        group.removeAttribute(
-          'data-cgpt-tool-hidden'
-        );
-        group.removeAttribute(
-          'data-cgpt-tool-summary-only'
-        );
-        group.removeAttribute(
-          'data-cgpt-tool-summary'
-        );
-      } else {
-        let summary = '';
-
-        for (
-          const node of
-            toolActionNodes(group)
-              .slice(0, 8)
-        ) {
-          summary =
-            compactToolSummary(
-              nodeLabel(node)
-            );
-
-          if (summary) break;
-        }
-
-        setToolSummaryOnly(
-          group,
-          summary
-        );
-      }
-
-      return;
-    }
-
-    const active =
-      turn === liveTurn ||
-      toolGroupNeedsAttention(group) ||
-      group.matches(':focus-within');
-
-    if (active) {
-      group.removeAttribute(
-        'data-cgpt-tool-collapsed'
-      );
-      group.removeAttribute(
-        'data-cgpt-tool-summary'
-      );
-      group.removeAttribute(
-        'data-cgpt-tool-hidden'
-      );
-    } else {
-      group.setAttribute(
-        'data-cgpt-tool-collapsed',
-        '1'
-      );
-      group.setAttribute(
-        'data-cgpt-tool-summary',
-        toolSummary(group)
-      );
-    }
-  }
-
-  function toolHeadingsInScope(scope) {
-    if (!(scope instanceof Element)) {
-      return [];
-    }
-
-    const selector =
-      'button,[role="button"],' +
-      'summary,[aria-expanded]';
-    const result = [];
-
-    const isProcessHeading = (node) => {
-      const label = nodeLabel(node);
-
-      return (
-        TOOL_GROUP_RE.test(label) ||
-        TOOL_ACTION_RE.test(label) ||
-        PROCESS_GROUP_RE.test(label)
-      );
-    };
-
-    if (
-      scope.matches(selector) &&
-      isProcessHeading(scope)
-    ) {
-      result.push(scope);
-    }
-
-    for (
-      const node of
-        scope.querySelectorAll(selector)
-    ) {
-      if (isProcessHeading(node)) {
-        result.push(node);
-      }
-    }
-
-    return result;
   }
 
   function processToolMutationNode(node) {
@@ -2807,8 +2255,6 @@
         '1'
       );
 
-      state.toolGroups.add(group);
-
       if (
         TOOL_USER_ACTION_RE.test(label)
       ) {
@@ -2853,64 +2299,12 @@
     );
   }
 
-  function finalizeTrackedToolGroups() {
-    if (
-      EXTREME_NATIVE_MODE ||
-      !state.settings.enabled
-    ) {
-      return;
-    }
-
-    const activeTurn =
-      ChatGPTDOMAdapter.activeTurn();
-
-    if (!(activeTurn instanceof HTMLElement)) {
-      return;
-    }
-
-    const liveTurn =
-      isStreaming()
-        ? activeTurn
-        : null;
-    let changed = false;
-
-    for (
-      const group of
-        Array.from(state.toolGroups)
-    ) {
-      if (
-        !(group instanceof HTMLElement) ||
-        !group.isConnected
-      ) {
-        state.toolGroups.delete(group);
-        changed = true;
-        continue;
-      }
-
-      if (!activeTurn.contains(group)) {
-        continue;
-      }
-
-      registerToolGroup(
-        group,
-        activeTurn,
-        liveTurn
-      );
-      changed = true;
-    }
-
-    if (changed) {
-      updateToolCounts();
-    }
-  }
-
   function restoreToolGroups() {
     for (
       const group of
         document.querySelectorAll(
           '[data-cgpt-tool-group="1"],' +
           '[data-cgpt-tool-hidden="1"],' +
-          '[data-cgpt-tool-collapsed="1"],' +
           '[data-cgpt-tool-summary-only="1"]'
         )
     ) {
@@ -2922,9 +2316,6 @@
         'data-cgpt-tool-group'
       );
       group.removeAttribute(
-        'data-cgpt-tool-collapsed'
-      );
-      group.removeAttribute(
         'data-cgpt-tool-summary'
       );
       group.removeAttribute(
@@ -2934,131 +2325,12 @@
         'data-cgpt-tool-summary-only'
       );
     }
-
-    state.toolGroups.clear();
-    state.toolCounts = {
-      groups: 0,
-      collapsed: 0,
-    };
-  }
-
-  function restoreOptimizedTurns() {
-    for (
-      const turn of
-        Array.from(state.optimizedTurns)
-    ) {
-      restoreWindowedTurn(turn);
-    }
-
-    state.optimizedTurns.clear();
-  }
-
-  function applyAggressiveWindowing(
-    turns,
-    liveTurn
-  ) {
-    ensureWindowObserver();
-
-    const protectedTurns =
-      turns.slice(
-        -IOS_KEEP_RECENT_TURNS
-      );
-
-    for (const turn of protectedTurns) {
-      restoreWindowedTurn(turn);
-    }
-
-    if (liveTurn) {
-      restoreWindowedTurn(liveTurn);
-    }
-
-    for (const turn of turns) {
-      if (
-        !(turn instanceof HTMLElement) ||
-        protectedTurns.includes(turn) ||
-        turn === liveTurn ||
-        state.nearTurns.has(turn)
-      ) {
-        continue;
-      }
-
-      const protectedSet =
-        new Set(protectedTurns);
-
-      if (
-        canWindowTurn(
-          turn,
-          protectedSet,
-          liveTurn
-        )
-      ) {
-        windowTurn(turn);
-      }
-    }
-  }
-
-  function applyPerformanceHints() {
-    const turns = turnCandidates();
-
-    if (!state.settings.enabled) {
-      restoreOptimizedTurns();
-      restoreToolGroups();
-      updateUI(turns.length);
-      return;
-    }
-
-    if (
-      state.settings.aggressiveWindowing
-    ) {
-      const streaming = isStreaming();
-      const liveTurn =
-        streaming && turns.length
-          ? turns[turns.length - 1]
-          : null;
-
-      applyAggressiveWindowing(
-        turns,
-        liveTurn
-      );
-    } else if (
-      state.optimizedTurns.size > 0
-    ) {
-      restoreOptimizedTurns();
-    }
-
-    if (!EXTREME_NATIVE_MODE) {
-      updateToolCounts();
-    }
-
-    updateUI(turns.length);
   }
 
   function isStreaming() {
     return ChatGPTDOMAdapter
       .streamingSignal();
   }
-
-  function scheduleRefresh(
-    delay = PERF_REFRESH_DELAY_MS
-  ) {
-    if (state.destroyed) return;
-    clearTimeout(state.refreshTimer);
-    state.refreshTimer = window.setTimeout(() => {
-      if (state.destroyed) return;
-      if (routeChanged()) {
-        onRoute();
-        return;
-      }
-
-      window.requestAnimationFrame(
-        applyPerformanceHints
-      );
-    }, delay);
-  }
-
-  
-
-  
 
   function scrollConversationToBottom() {
     if (!currentConversationId()) {
@@ -3488,14 +2760,13 @@
       ':host { all: initial; }',
       '* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }',
       '.wrap { position: relative; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }',
-      '.fab { width: 36px; height: 36px; border: 0; border-radius: 18px; background: rgba(32,32,32,.78); color: white; box-shadow: 0 3px 14px rgba(0,0,0,.22); display: grid; place-items: center; font-size: 14px; font-weight: 700; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); touch-action: none; user-select: none; -webkit-user-select: none; }',
+      '.fab { width: 36px; height: 36px; border: 0; border-radius: 18px; background: rgba(32,32,32,.92); color: white; display: grid; place-items: center; font-size: 14px; font-weight: 700; touch-action: none; user-select: none; -webkit-user-select: none; }',
       '.fab[data-chat-state]::after { content: ""; width: 7px; height: 7px; border-radius: 50%; position: absolute; right: 1px; top: 1px; box-shadow: 0 0 0 2px rgba(255,255,255,.82); }',
-      '.fab[data-chat-state="running"]::after { background: #34c759; animation: pulse 1.15s ease-in-out infinite; }',
+      '.fab[data-chat-state="running"]::after { background: #34c759; }',
       '.fab[data-chat-state="waiting_user"]::after { background: #ff9f0a; }',
-      '.fab[data-chat-state="settling"]::after { background: #8e8e93; animation: pulse .9s ease-in-out infinite; }',
+      '.fab[data-chat-state="settling"]::after { background: #8e8e93; }',
       '.fab[data-chat-state="completed_unread"]::after { background: #0a84ff; }',
-      '@keyframes pulse { 0%,100% { opacity: .45; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.12); } }',
-      '.panel { position: absolute; top: 42px; right: 0; width: 232px; padding: 8px; border-radius: 13px; background: rgba(28,28,30,.94); color: white; box-shadow: 0 12px 34px rgba(0,0,0,.28); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); display: none; }',
+      '.panel { position: absolute; top: 42px; right: 0; width: 232px; padding: 8px; border-radius: 13px; background: rgba(28,28,30,.98); color: white; display: none; }',
       ':host([data-panel-side="left"]) .panel { left: 0; right: auto; }',
       ':host([data-panel-side="right"]) .panel { left: auto; right: 0; }',
       ':host([data-panel-vertical="up"]) .panel { top: auto; bottom: 42px; }',
@@ -3513,8 +2784,8 @@
       '.label { font-size: 12px; }',
       'button.action { width: 100%; border: 0; background: transparent; color: white; text-align: left; padding: 8px 2px; font-size: 12px; }',
       'button.compact { width: auto; min-width: 44px; border: 0; border-radius: 8px; padding: 5px 8px; background: rgba(255,255,255,.09); color: white; font-size: 11px; }',
-      '.switch { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.20); position: relative; transition: .15s ease; margin: 0; }',
-      '.switch::after { content: ""; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: white; top: 2px; left: 2px; transition: .15s ease; }',
+      '.switch { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: rgba(255,255,255,.20); position: relative; margin: 0; }',
+      '.switch::after { content: ""; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: white; top: 2px; left: 2px; }',
       '.switch:checked { background: #34c759; }',
       '.switch:checked::after { transform: translateX(18px); }',
       '.foot { font-size: 10px; opacity: .48; margin: 8px 2px 1px; }',
@@ -4392,7 +3663,7 @@
     updateUI(currentTurnCount());
   }
 
-  function updateUI(turnCount) {
+  function updateUI() {
     const ui = state.ui;
     if (!ui) return;
 
@@ -4597,7 +3868,6 @@
         invalidateTurnCache();
         turnCandidates(true);
         scheduleInitialBottomScroll(true);
-        scheduleRefresh(120);
         scheduleStateEvaluation(180);
       }, Math.max(delay, remaining));
   }
@@ -4675,9 +3945,7 @@
           turnStructureChanged = true;
         }
 
-        if (EXTREME_NATIVE_MODE) {
-          processToolMutationNode(node);
-        }
+        processToolMutationNode(node);
 
         if (
           node.matches?.(
@@ -4691,10 +3959,6 @@
           stateRelevant = true;
         }
       }
-    }
-
-    if (turnStructureChanged) {
-      scheduleRefresh(80);
     }
 
     if (
@@ -4807,10 +4071,7 @@
           const activeTurn =
             ChatGPTDOMAdapter.activeTurn();
 
-          if (
-            EXTREME_NATIVE_MODE &&
-            activeTurn
-          ) {
+          if (activeTurn) {
             processToolMutationNode(
               activeTurn
             );
@@ -5036,7 +4297,6 @@
     invalidateTurnCache();
     turnCandidates(true);
     scheduleInitialBottomScroll(true);
-    scheduleRefresh(0);
     evaluateConversationState();
     renderConversationStates();
 
@@ -5090,9 +4350,7 @@
     state.activeRouteSince = Date.now();
     state.settlingSince = 0;
 
-    restoreOptimizedTurns();
     restoreToolGroups();
-    state.nearTurns.clear();
     state.conversationLinks.clear();
     invalidateTurnCache();
 
@@ -5112,9 +4370,6 @@
       scheduleRouteRebind();
     }
 
-    scheduleRefresh(
-      ROUTE_SETTLE_DELAY_MS + 120
-    );
     scheduleStateEvaluation(
       ROUTE_SETTLE_DELAY_MS + 180
     );
@@ -5132,9 +4387,6 @@
 
     if (document.hidden) {
       clearInitialBottomScroll();
-
-      clearTimeout(state.refreshTimer);
-      state.refreshTimer = 0;
 
       clearTimeout(state.stateEvalTimer);
       state.stateEvalTimer = 0;
@@ -5212,7 +4464,6 @@
     const preserveKeys = [
       SETTINGS_KEY,
       CONTROL_MIGRATION_KEY,
-      SAFE_LOAD_MIGRATION_KEY,
       CONTROL_POSITION_KEY,
       TELEMETRY_INSTALL_KEY,
     ];
@@ -5403,42 +4654,18 @@
     }
 
     if (!state.settings.enabled) {
-      restoreOptimizedTurns();
       restoreToolGroups();
+      return;
     }
 
-    scheduleRefresh(0);
-  }
+    const activeTurn =
+      ChatGPTDOMAdapter.activeTurn();
 
-  function setAggressiveWindowing(
-    value
-  ) {
-    state.settings.aggressiveWindowing =
-      Boolean(value);
-    saveSettings();
-
-    if (
-      !state.settings.aggressiveWindowing
-    ) {
-      restoreOptimizedTurns();
-      state.windowObserver?.disconnect();
-      state.windowObserver = null;
-      state.nearTurns.clear();
-    } else {
-      invalidateTurnCache();
-      ensureWindowObserver();
-
-      for (
-        const turn of
-          turnCandidates(true)
-      ) {
-        state.windowObserver?.observe(
-          turn
-        );
-      }
+    if (activeTurn) {
+      processToolMutationNode(
+        activeTurn
+      );
     }
-
-    scheduleRefresh(0);
   }
 
   function getState() {
@@ -5458,22 +4685,6 @@
           Boolean(
             ChatGPTDOMAdapter.sidebarRoot()
           ),
-      },
-      windowing: {
-        aggressive:
-          state.settings
-            .aggressiveWindowing,
-        cachedTurns:
-          state.turnCache.length,
-        nearTurns:
-          state.nearTurns.size,
-        windowedTurns:
-          state.optimizedTurns.size,
-        observer:
-          Boolean(state.windowObserver),
-      },
-      toolGroups: {
-        ...state.toolCounts,
       },
       diagnostics: {
         ...state.metrics,
@@ -5518,7 +4729,6 @@
 
     stopTelemetryRuntime(true);
 
-    clearTimeout(state.refreshTimer);
     clearTimeout(state.stateEvalTimer);
     clearTimeout(state.phaseTwoTimer);
     clearTimeout(state.routeRebindTimer);
@@ -5532,13 +4742,11 @@
     state.observer?.disconnect();
     state.conversationObserver?.disconnect();
     state.sidebarObserver?.disconnect();
-    state.windowObserver?.disconnect();
     state.longTaskObserver?.disconnect();
 
     state.observer = null;
     state.conversationObserver = null;
     state.sidebarObserver = null;
-    state.windowObserver = null;
     state.longTaskObserver = null;
 
     if (state.controlResizeHandler) {
@@ -5555,10 +4763,7 @@
     window.removeEventListener('storage', onStorageSync);
     try { state.channel?.close?.(); } catch (_) {}
 
-    restoreOptimizedTurns();
     restoreToolGroups();
-    state.nearTurns.clear();
-    state.turnSet.clear();
     state.turnCache = [];
     state.conversationLinks.clear();
 
@@ -5593,7 +4798,6 @@
     version: VERSION,
     getState,
     setEnabled,
-    setAggressiveWindowing,
     setTelemetryEnabled,
     startDebugSession,
     stopDebugSession,
@@ -5606,7 +4810,6 @@
     closeNativePanel,
     requestNativeUpdateCheck,
     showControl,
-    refresh: () => scheduleRefresh(0),
     destroy,
   };
 
@@ -5622,7 +4825,10 @@
   }
 
   installStyle();
-  setupConversationStateSync();
+
+  if (!EXTREME_NATIVE_MODE) {
+    setupConversationStateSync();
+  }
 
   const sidebarCleanupStarted =
     runOneTimeSidebarCleanup();
