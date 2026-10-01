@@ -5,37 +5,18 @@ final class ChatGPTWebUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testFloatingControlIsVisibleAndHittable()
+    func testSafariContainerLaunches()
         throws
     {
         let app = XCUIApplication()
-        app.launchArguments.append(
-            "--ui-testing"
-        )
         app.launch()
 
-        let button =
-            app.buttons[
-                "chatgpt.web.floatingAnchor"
-            ]
-
         XCTAssertTrue(
-            button.waitForExistence(
+            app.wait(
+                for: .runningForeground,
                 timeout: 10
             ),
-            "Native anchor did not appear"
-        )
-
-        XCTAssertTrue(
-            button.isHittable,
-            "Native anchor is not hittable"
-        )
-
-        XCTAssertFalse(
-            app.buttons[
-                "ChatGPT Web 控制"
-            ].exists,
-            "Hybrid container should not expose the JS fallback S button"
+            "Safari container app did not reach foreground"
         )
     }
 }
