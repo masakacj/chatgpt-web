@@ -122,11 +122,6 @@ requireText(
 );
 requireText(
   shared,
-  'data-cgpt-passive-turn',
-  'native passive historical turn rendering'
-);
-requireText(
-  shared,
   'data-cgpt-tool-hidden',
   'native static process hiding'
 );
@@ -409,6 +404,8 @@ const sharedForbidden = [
   ['开始性能诊断', 'manual debug UI in subtractive runtime'],
   ['检查 IPA 更新', 'separate IPA update action'],
   ['scheduleToolScan(', 'repeated tool rescan scheduler'],
+  ['data-cgpt-passive-turn', 'intrinsic-height passive turn virtualization'],
+  ['contain-intrinsic-size: auto 320px', 'estimated historical turn height'],
   ['conversationScroller(', 'dynamic scroll-container probing'],
 ];
 
