@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.30
+// @version      0.4.31
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.30';
+  const VERSION = '0.4.31';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -68,6 +68,10 @@
   const LEGACY_GLOBAL_KEY = 'ChatGPTSafari';
   const STYLE_ID = 'cgpt-safari-lite-style';
   const HOST_ID = 'cgpt-safari-lite-host';
+  const RESULT_STATUS_ID =
+    'cgpt-result-only-status';
+  const RESULT_SUMMARY_ATTR =
+    'data-cgpt-result-summary';
   const SETTINGS_KEY = 'cgpt-safari-lite-settings-v1';
   const CONTROL_MIGRATION_KEY = 'cgpt-unified-control-visible-v031';
   const CONTROL_POSITION_KEY =
@@ -2235,6 +2239,15 @@
       '  overflow: hidden !important;',
       '  pointer-events: none !important;',
       '}',
+      '[' + RESULT_SUMMARY_ATTR + '="1"] {',
+      '  margin-top: 8px !important;',
+      '  opacity: .52 !important;',
+      '  font: 11px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif !important;',
+      '  white-space: normal !important;',
+      '  overflow-wrap: anywhere !important;',
+      '  user-select: none !important;',
+      '  -webkit-user-select: none !important;',
+      '}',
       '[data-cgpt-safari-chat-state] {',
       '  --cgpt-chat-state-color: transparent;',
       '  background-image: radial-gradient(circle, var(--cgpt-chat-state-color) 0 3px, transparent 3.5px) !important;',
@@ -2471,6 +2484,197 @@
     return visible.join(' · ');
   }
 
+  function resultOnlyIndicatorText() {
+    if (
+      !RESULT_ONLY_MODE ||
+      !state.resultCycle?.active
+    ) {
+      return '';
+    }
+
+    if (hasWaitingUserSignal()) {
+      return '等待确认';
+    }
+
+    const total =
+      Number(
+        state.resultCycle.toolTotal || 0
+      );
+
+    return (
+      '处理中' +
+      (
+        total > 0
+          ? ' · ' + total + ' tools'
+          : ''
+      )
+    );
+  }
+
+  function removeResultOnlyIndicator() {
+    document
+      .getElementById(
+        RESULT_STATUS_ID
+      )
+      ?.remove();
+  }
+
+  function updateResultOnlyIndicator() {
+    if (
+      !IS_SAFARI_CONTAINER ||
+      !RESULT_ONLY_MODE ||
+      state.destroyed ||
+      !state.resultCycle?.active
+    ) {
+      removeResultOnlyIndicator();
+      return;
+    }
+
+    const text =
+      resultOnlyIndicatorText();
+
+    if (!text) {
+      removeResultOnlyIndicator();
+      return;
+    }
+
+    let badge =
+      document.getElementById(
+        RESULT_STATUS_ID
+      );
+
+    if (!(badge instanceof HTMLElement)) {
+      badge =
+        document.createElement('div');
+
+      badge.id = RESULT_STATUS_ID;
+      badge.setAttribute(
+        'role',
+        'status'
+      );
+      badge.setAttribute(
+        'aria-live',
+        'polite'
+      );
+
+      Object.assign(
+        badge.style,
+        {
+          position: 'fixed',
+          top:
+            'max(12px, env(safe-area-inset-top))',
+          left: '50%',
+          transform:
+            'translateX(-50%)',
+          zIndex: '2147483646',
+          pointerEvents: 'none',
+          padding: '6px 10px',
+          borderRadius: '999px',
+          background:
+            'rgba(24,24,27,.86)',
+          color: '#fff',
+          font:
+            '600 11px -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif',
+          lineHeight: '1.2',
+          whiteSpace: 'nowrap',
+          boxShadow:
+            '0 3px 12px rgba(0,0,0,.18)',
+        }
+      );
+
+      (
+        document.body ||
+        document.documentElement
+      )?.appendChild(
+        badge
+      );
+    }
+
+    badge.textContent = text;
+  }
+
+  function renderResultOnlyCompletionSummary() {
+    if (
+      !IS_SAFARI_CONTAINER ||
+      !RESULT_ONLY_MODE ||
+      !state.resultCycle?.startedAt
+    ) {
+      return;
+    }
+
+    const turn =
+      lastConversationTurn();
+
+    if (!(turn instanceof HTMLElement)) {
+      return;
+    }
+
+    const role =
+      turn.getAttribute(
+        'data-message-author-role'
+      ) ||
+      turn.querySelector(
+        '[data-message-author-role]'
+      )?.getAttribute(
+        'data-message-author-role'
+      );
+
+    if (
+      role &&
+      role !== 'assistant'
+    ) {
+      return;
+    }
+
+    const existing =
+      turn.querySelector(
+        '[' +
+        RESULT_SUMMARY_ATTR +
+        '="1"]'
+      );
+
+    const summary =
+      existing instanceof HTMLElement
+        ? existing
+        : document.createElement('div');
+
+    summary.setAttribute(
+      RESULT_SUMMARY_ATTR,
+      '1'
+    );
+
+    const duration =
+      formatResultDuration(
+        (
+          state.resultCycle.finishedAt ||
+          Date.now()
+        ) -
+        state.resultCycle.startedAt
+      );
+
+    const tools =
+      resultToolSummaryText();
+
+    summary.textContent =
+      duration +
+      (
+        state.resultCycle.toolTotal > 0
+          ? ' · ' +
+            state.resultCycle.toolTotal +
+            ' tools'
+          : ''
+      ) +
+      (
+        tools
+          ? ' · ' + tools
+          : ''
+      );
+
+    if (!existing) {
+      turn.appendChild(summary);
+    }
+  }
+
   function resultCycleStatusText() {
     if (!RESULT_ONLY_MODE) {
       return '';
@@ -2543,6 +2747,7 @@
     }
 
     clearResultCycleTimer();
+    removeResultOnlyIndicator();
 
     state.resultCycle = {
       active: false,
@@ -2574,6 +2779,8 @@
     state.resultCycle.lastActivityAt =
       state.resultCycle.finishedAt;
 
+    removeResultOnlyIndicator();
+    renderResultOnlyCompletionSummary();
     updateUI();
   }
 
@@ -2659,6 +2866,7 @@
         Object.create(null),
     };
 
+    updateResultOnlyIndicator();
     updateUI();
     scheduleResultCycleSettle(
       1800
@@ -2682,9 +2890,18 @@
         .replace(/\s+/g, ' ')
         .trim();
 
+    if (!text) {
+      return;
+    }
+
     if (
-      !text ||
-      TOOL_USER_ACTION_RE.test(text) ||
+      TOOL_USER_ACTION_RE.test(text)
+    ) {
+      updateResultOnlyIndicator();
+      return;
+    }
+
+    if (
       PROCESS_GROUP_RE.test(text)
     ) {
       return;
@@ -2745,6 +2962,7 @@
       key
     );
 
+    updateResultOnlyIndicator();
     touchResultCycle();
   }
 
@@ -5311,6 +5529,7 @@
     state.statusTimer = 0;
 
     clearResultCycleTimer();
+    removeResultOnlyIndicator();
 
     state.conversationObserver
       ?.disconnect();
