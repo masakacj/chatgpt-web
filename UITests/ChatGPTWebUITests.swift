@@ -152,6 +152,7 @@ final class ChatGPTWebUITests: XCTestCase {
             for: [panelReadyAfterDrag],
             timeout: 6
         )
+    }
 
     func testNativeEdgeSidebarGestures()
         throws
@@ -231,6 +232,5 @@ final class ChatGPTWebUITests: XCTestCase {
                 ),
             "Right-edge swipe did not close the sidebar probe"
         )
-    }
     }
 }
