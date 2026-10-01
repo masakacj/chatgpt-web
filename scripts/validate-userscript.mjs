@@ -481,63 +481,18 @@ requireText(
 );
 requireText(
   gesture,
-  'const CONFIG = Object.freeze({',
-  'gesture tuning config'
+  'window.__CHATGPT_NATIVE__',
+  'native execution gate'
 );
 requireText(
   gesture,
-  'edgeStartPx: 96',
-  'edge-based swipe start zone'
+  'nativeGestures !== true',
+  'native gesture capability gate'
 );
 requireText(
   gesture,
-  'triggerPx: 8',
-  'fast edge swipe trigger'
-);
-requireText(
-  gesture,
-  'axisRatio: 0.72',
-  'responsive horizontal intent threshold'
-);
-requireText(
-  gesture,
-  'twoFingerTriggerPx: 6',
-  'two-finger global scroll threshold'
-);
-requireText(
-  gesture,
-  'twoFingerNavTriggerPx: 42',
-  'two-finger navigation threshold'
-);
-requireText(
-  gesture,
-  "scroll.mode = 'navigation'",
-  'two-finger horizontal mode lock'
-);
-requireText(
-  gesture,
-  "if (totalDx <= -CONFIG.twoFingerNavTriggerPx) {\n          window.history.forward();",
-  'two-finger left swipe forward'
-);
-requireText(
-  gesture,
-  "} else if (totalDx >= CONFIG.twoFingerNavTriggerPx) {\n          window.history.back();",
-  'two-finger right swipe back'
-);
-requireText(
-  gesture,
-  'function globalScrollCandidates',
-  'global scroll candidate discovery'
-);
-requireText(
-  gesture,
-  'function pickScrollContainer',
-  'dynamic scroll-container selection'
-);
-requireText(
-  gesture,
-  'return null;',
-  'directional scroll boundary stop'
+  'function pickScrollContainer(',
+  'two-finger scroll-container selection'
 );
 requireText(
   gesture,
@@ -546,114 +501,70 @@ requireText(
 );
 requireText(
   gesture,
-  'function beginTwoFingerScroll',
-  'two-finger scroll start'
+  'function begin(event)',
+  'two-finger vertical scroll start'
 );
 requireText(
   gesture,
-  'function moveTwoFingerScroll',
-  'two-finger scroll movement'
+  'function move(event)',
+  'two-finger vertical scroll movement'
 );
 requireText(
   gesture,
-  "gesture.edge === 'left'",
-  'left-edge swipe semantics'
+  'CONFIG.horizontalReleaseRatio',
+  'native horizontal gesture handoff'
 );
 requireText(
   gesture,
-  "gesture.edge === 'right'",
-  'right-edge swipe semantics'
+  "window.addEventListener(\n      'touchstart',",
+  'passive two-finger activation listener'
 );
 requireText(
   gesture,
-  'function findSidebarDrawer()',
-  'robust sidebar drawer detector'
+  "passive: true",
+  'passive touchstart'
 );
 requireText(
   gesture,
-  'function dispatchEscape()',
-  'escape close fallback'
+  "window.addEventListener(\n      'touchmove',",
+  'on-demand two-finger move listener'
 );
 requireText(
   gesture,
-  'function clickSidebarBackdrop()',
-  'backdrop close fallback'
+  'event.preventDefault();',
+  'claimed vertical scroll cancellation'
 );
 requireText(
   gesture,
-  "window.addEventListener('touchstart'",
-  'window-capture touchstart listener'
-);
-requireText(
-  gesture,
-  "window.addEventListener('touchmove'",
-  'window-capture touchmove listener'
-);
-requireText(
-  gesture,
-  'function openSidebar()',
-  'sidebar opener'
-);
-requireText(
-  gesture,
-  "function openSidebar() {\n    return clickFirst([",
-  'direct sidebar open fast path'
-);
-requireText(
-  gesture,
-  'function closeSidebar()',
-  'sidebar closer'
-);
-requireText(
-  gesture,
-  'function isSidebarOpen()',
-  'sidebar state detector'
-);
-requireText(
-  gesture,
-  'event.stopImmediatePropagation();',
-  'ChatGPT gesture suppression'
-);
-requireText(
-  gesture,
-  "} else if (rightEdgeClose) {\n      closeSidebar();",
-  'unconditional right-edge close attempt'
-);
-requireText(
-  gesture,
-  'window.__CHATGPT_NATIVE__?.hotUpdate',
-  'native-only execution gate'
-);
-requireText(
-  gesture,
-  'function eventTargetsScriptControl(event)',
-  'gesture exclusion for script-owned control'
-);
-requireText(
-  gesture,
-  'function eventTargetsInteractiveControl(',
-  'gesture exclusion for interactive controls'
-);
-requireText(
-  gesture,
-  "window.addEventListener('touchstart', start, {\n      passive: true,",
-  'passive touchstart for zero-cost taps'
+  'function detachActiveListeners()',
+  'on-demand listener teardown'
 );
 
 const gestureForbidden = [
-  ['if (isSidebarOpen()) return true;', 'eager sidebar-open layout check'],
-  ["open: isSidebarOpen()", 'eager sidebar layout query on edge touchstart'],
-  ["window.addEventListener('touchstart', start, {\n      passive: false,", 'blocking touchstart listener'],
-  ['content-visibility', 'performance logic in gesture script'],
+  ['function openSidebar()', 'single-finger sidebar opener in JS'],
+  ['function closeSidebar()', 'single-finger sidebar closer in JS'],
+  ['function isSidebarOpen()', 'sidebar state detection in JS'],
+  ['edgeStartPx', 'single-finger edge gesture configuration'],
+  ['window.history.forward()', 'JS horizontal navigation'],
+  ['window.history.back()', 'JS horizontal navigation'],
+  ['twoFingerNavTriggerPx', 'legacy JS two-finger navigation'],
+  ["messageHandlers?.chatGPTNative", 'native update bridge in gesture script'],
   ['BroadcastChannel', 'conversation state logic in gesture script'],
   ['data-cgpt-tool-collapsed', 'tool compaction in gesture script'],
-  ['messageHandlers?.chatGPTNative', 'native update bridge in gesture script'],
-  ['const next = pickScrollContainer(', 'scroll chaining beyond the active container'],
+  ['content-visibility', 'performance logic in gesture script'],
 ];
 
-for (const [needle, description] of gestureForbidden) {
+for (
+  const [needle, description] of
+    gestureForbidden
+) {
   if (gesture.includes(needle)) {
-    fail('forbidden ' + description + ': ' + needle);
+    fail(
+      'forbidden ' +
+      description +
+      ': ' +
+      needle
+    );
   }
 }
 
