@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Result-Only Debug Probe",
+  "version": "0.1.0",
+  "description": "Automated regression probe for ChatGPT Result Only mode on a real logged-in conversation.",
+  "permissions": ["tabs", "debugger", "storage", "downloads"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://raw.githubusercontent.com/masakacj/chatgpt-web/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "ChatGPT Result-Only Debug Probe"
+  }
+}
