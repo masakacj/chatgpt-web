@@ -4379,7 +4379,8 @@
   function startPhaseTwoRuntime() {
     if (
       state.destroyed ||
-      state.phaseTwoStarted
+      state.phaseTwoStarted ||
+      state.nativeSuspended
     ) {
       return;
     }
@@ -4389,12 +4390,6 @@
       Date.now();
 
     setupObservers();
-
-    if (state.nativeSuspended) {
-      suspendRuntime();
-      return;
-    }
-
     invalidateTurnCache();
     turnCandidates(true);
     scheduleInitialBottomScroll(true);
@@ -4553,6 +4548,7 @@
     }
 
     if (!state.phaseTwoStarted) {
+      schedulePhaseTwoRuntime();
       return;
     }
 
