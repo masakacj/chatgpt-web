@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.12
+// @version      0.4.13
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.12';
+  const VERSION = '0.4.13';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -76,6 +76,8 @@
   const SAFE_LOAD_MIGRATION_KEY = 'cgpt-safe-load-v041';
   const CONTROL_POSITION_KEY =
     'cgpt-unified-control-position-v1';
+  const SIDEBAR_CLEANUP_MIGRATION_KEY =
+    'cgpt-sidebar-cache-cleanup-v0413';
   const NATIVE_ANCHOR_MIN_VERSION =
     '0.3.31';
   const CONVERSATION_STATE_KEY = 'cgpt-safari-conversation-state-v1';
@@ -162,6 +164,7 @@
     ui: null,
     controlResizeHandler: null,
     controlRecoveryTimer: 0,
+    pendingSidebarCleanup: false,
     metrics: {
       phaseTwoStartedAt: 0,
       observerCallbacks: 0,
@@ -4078,6 +4081,21 @@
 
     if (
       result.type === 'clear-cache' &&
+      state.pendingSidebarCleanup
+    ) {
+      state.pendingSidebarCleanup = false;
+
+      window.setTimeout(() => {
+        if (!state.destroyed) {
+          location.reload();
+        }
+      }, 120);
+
+      return;
+    }
+
+    if (
+      result.type === 'clear-cache' &&
       state.ui?.clearCache
     ) {
       const button =
@@ -4906,6 +4924,67 @@
       }, IS_NATIVE_IOS ? 220 : 80);
   }
 
+  function runOneTimeSidebarCleanup() {
+    if (
+      !IS_NATIVE_IOS ||
+      state.destroyed
+    ) {
+      return false;
+    }
+
+    try {
+      if (
+        localStorage.getItem(
+          SIDEBAR_CLEANUP_MIGRATION_KEY
+        ) === '1'
+      ) {
+        return false;
+      }
+
+      localStorage.setItem(
+        SIDEBAR_CLEANUP_MIGRATION_KEY,
+        '1'
+      );
+      localStorage.removeItem(
+        CONVERSATION_STATE_KEY
+      );
+    } catch (_) {}
+
+    state.conversationStates = {};
+    state.conversationLinks.clear();
+
+    for (
+      const item of
+        document.querySelectorAll(
+          '[data-cgpt-safari-chat-state]'
+        )
+    ) {
+      item.removeAttribute(
+        'data-cgpt-safari-chat-state'
+      );
+    }
+
+    state.pendingSidebarCleanup = true;
+
+    if (
+      requestNativeAction(
+        'clear-cache'
+      )
+    ) {
+      return true;
+    }
+
+    state.pendingSidebarCleanup = false;
+
+    window.setTimeout(() => {
+      if (!state.destroyed) {
+        location.reload();
+      }
+    }, 120);
+
+    return true;
+  }
+
   function showControl() {
     state.settings.showControl = true;
     saveSettings();
@@ -5132,7 +5211,13 @@
   installStyle();
   setupConversationStateSync();
 
-  if (document.readyState === 'loading') {
+  const sidebarCleanupStarted =
+    runOneTimeSidebarCleanup();
+
+  if (
+    !sidebarCleanupStarted &&
+    document.readyState === 'loading'
+  ) {
     document.addEventListener(
       'DOMContentLoaded',
       () => {
@@ -5141,7 +5226,7 @@
       },
       { once: true }
     );
-  } else {
+  } else if (!sidebarCleanupStarted) {
     createControl();
     schedulePhaseTwoRuntime();
   }
