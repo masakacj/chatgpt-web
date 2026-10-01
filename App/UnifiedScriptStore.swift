@@ -163,7 +163,10 @@ final class UnifiedScriptStore {
             "updateStatus": updateStatus,
             "hotUpdate": true,
             "telemetryTransport": true,
-            "nativeGestures": true
+            "nativeGestures": true,
+            "uiTesting":
+                ProcessInfo.processInfo.arguments
+                    .contains("--ui-testing")
         ]
 
         if let latestScriptVersion {
