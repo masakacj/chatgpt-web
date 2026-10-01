@@ -2141,14 +2141,6 @@ private func collapseExternalBrowserMenu() {
         }
 
         private func ensureScriptsAreRunning() {
-            guard let webView else {
-                return
-            }
-
-            if let activeScript {
-                webView.evaluateJavaScript(
-                    "typeof window.ChatGPTWeb === 'object'"
-          private func ensureScriptsAreRunning() {
             guard
                 let webView,
                 let activeScript
