@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.18
+// @version      0.4.19
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.18';
+  const VERSION = '0.4.19';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -36,10 +36,6 @@
       window.__CHATGPT_NATIVE__
         ?.nativeLifecycle
     );
-  const INITIAL_BOTTOM_SCROLL_DELAYS = [
-    0,
-    700,
-  ];
   const STATUS_INTERVAL_MS =
     IS_NATIVE_IOS ? 12000 : 7000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
@@ -123,7 +119,7 @@
     sidebarObserver: null,
     sidebarReconcileTimer: 0,
     foregroundResumeTimer: 0,
-    bottomScrollTimers: new Set(),
+    pendingBottomConversationId: '',
     lastBottomConversationId: '',
     conversationRoot: null,
     sidebarRoot: null,
@@ -1454,7 +1450,7 @@
     state.conversationStates[id] = record;
     persistConversationStates();
     renderConversationStateForId(id);
-    updateUI(currentTurnCount());
+    updateUI();
   }
 
   function registerConversationLinks(
@@ -1656,7 +1652,7 @@
 
     if (!id) {
       renderConversationStates();
-      updateUI(currentTurnCount());
+      updateUI();
       return;
     }
 
@@ -1669,7 +1665,7 @@
         settlingSince: 0,
         completedAt: 0,
       });
-      updateUI(currentTurnCount());
+      updateUI();
       return;
     }
 
@@ -1679,7 +1675,7 @@
         settlingSince: 0,
         completedAt: 0,
       });
-      updateUI(currentTurnCount());
+      updateUI();
       return;
     }
 
@@ -1690,7 +1686,7 @@
         settlingSince: 0,
         completedAt: now,
       });
-      updateUI(currentTurnCount());
+      updateUI();
       return;
     }
 
@@ -1700,7 +1696,7 @@
         settlingSince: now,
         completedAt: 0,
       });
-      updateUI(currentTurnCount());
+      updateUI();
       return;
     }
 
@@ -1713,7 +1709,7 @@
           completedAt: now,
         });
       }
-      updateUI(currentTurnCount());
+      updateUI();
       return;
     }
 
@@ -1728,7 +1724,7 @@
       }
     }
 
-    updateUI(currentTurnCount());
+    updateUI();
   }
 
   function setupConversationStateSync() {
@@ -2440,63 +2436,84 @@
   }
 
   function clearInitialBottomScroll() {
-    for (
-      const timer of
-        state.bottomScrollTimers
+    state.pendingBottomConversationId =
+      '';
+  }
+
+  function flushPendingBottomScroll() {
+    if (
+      !EXTREME_NATIVE_MODE ||
+      state.destroyed ||
+      state.nativeSuspended
     ) {
-      clearTimeout(timer);
+      return false;
     }
 
-    state.bottomScrollTimers.clear();
+    const id =
+      state.pendingBottomConversationId;
+
+    if (
+      !id ||
+      currentConversationId() !== id
+    ) {
+      return false;
+    }
+
+    state.pendingBottomConversationId =
+      '';
+
+    window.requestAnimationFrame(() => {
+      if (
+        state.destroyed ||
+        state.nativeSuspended ||
+        currentConversationId() !== id
+      ) {
+        return;
+      }
+
+      if (
+        scrollConversationToBottom()
+      ) {
+        state.lastBottomConversationId =
+          id;
+        return;
+      }
+
+      state.pendingBottomConversationId =
+        id;
+    });
+
+    return true;
   }
 
   function scheduleInitialBottomScroll(
     force = false
   ) {
     if (!EXTREME_NATIVE_MODE) {
-      return;
+      return false;
     }
 
-    const id = currentConversationId();
+    const id =
+      currentConversationId();
 
     if (!id) {
       clearInitialBottomScroll();
-      state.lastBottomConversationId = '';
-      return;
+      state.lastBottomConversationId =
+        '';
+      return false;
     }
 
     if (
       !force &&
       state.lastBottomConversationId === id
     ) {
-      return;
+      return false;
     }
 
-    clearInitialBottomScroll();
-    state.lastBottomConversationId = id;
-    for (
-      const delay of
-        INITIAL_BOTTOM_SCROLL_DELAYS
-    ) {
-      const timer =
-        window.setTimeout(() => {
-          state.bottomScrollTimers
-            .delete(timer);
+    state.pendingBottomConversationId =
+      id;
 
-          if (
-            state.destroyed ||
-            currentConversationId() !== id
-          ) {
-            return;
-          }
-
-          window.requestAnimationFrame(
-            scrollConversationToBottom
-          );
-        }, delay);
-
-      state.bottomScrollTimers.add(timer);
-    }
+    return flushPendingBottomScroll();
   }
 
   function requestNativeUpdateCheck() {
@@ -3283,7 +3300,7 @@
         if (opening) {
           mainView.hidden = false;
           settingsView.hidden = true;
-          updateUI(currentTurnCount());
+          updateUI();
         }
       }
     );
@@ -3293,7 +3310,7 @@
       () => {
         mainView.hidden = true;
         settingsView.hidden = false;
-        updateUI(currentTurnCount());
+        updateUI();
       }
     );
 
@@ -3351,7 +3368,7 @@
         }
 
         update.disabled = false;
-        updateUI(currentTurnCount());
+        updateUI();
       }
     );
 
@@ -3435,7 +3452,7 @@
         gestureInfo?.value || null,
     };
 
-    updateUI(currentTurnCount());
+    updateUI();
   }
 
   function positionNativePanel(
@@ -3740,7 +3757,7 @@
       scheduleControlRecovery(0);
     }
 
-    updateUI(currentTurnCount());
+    updateUI();
   }
 
   function updateUI() {
@@ -3749,10 +3766,12 @@
 
     const id = currentConversationId();
     const chatStatus =
-      id
-        ? state.conversationStates[id]
-            ?.status
-        : null;
+      EXTREME_NATIVE_MODE
+        ? null
+        : id
+          ? state.conversationStates[id]
+              ?.status
+          : null;
 
     if (
       chatStatus &&
@@ -3948,7 +3967,10 @@
         invalidateTurnCache();
         turnCandidates(true);
         scheduleInitialBottomScroll(true);
-        scheduleStateEvaluation(180);
+
+        if (!EXTREME_NATIVE_MODE) {
+          scheduleStateEvaluation(180);
+        }
       }, Math.max(delay, remaining));
   }
 
@@ -3984,17 +4006,19 @@
     let stateRelevant = false;
 
     for (const mutation of mutations) {
-      const target =
-        mutation.target instanceof Element
-          ? mutation.target
-          : mutation.target?.parentElement;
+      if (!EXTREME_NATIVE_MODE) {
+        const target =
+          mutation.target instanceof Element
+            ? mutation.target
+            : mutation.target?.parentElement;
 
-      if (
-        target?.closest?.(
-          TURN_ELEMENT_QUERY
-        )
-      ) {
-        stateRelevant = true;
+        if (
+          target?.closest?.(
+            TURN_ELEMENT_QUERY
+          )
+        ) {
+          stateRelevant = true;
+        }
       }
 
       for (const node of mutation.removedNodes) {
@@ -4028,6 +4052,7 @@
         processToolMutationNode(node);
 
         if (
+          !EXTREME_NATIVE_MODE &&
           node.matches?.(
             '[aria-busy="true"],' +
             '[role="progressbar"],' +
@@ -4041,9 +4066,16 @@
       }
     }
 
+    if (turnStructureChanged) {
+      flushPendingBottomScroll();
+    }
+
     if (
-      stateRelevant ||
-      turnStructureChanged
+      !EXTREME_NATIVE_MODE &&
+      (
+        stateRelevant ||
+        turnStructureChanged
+      )
     ) {
       scheduleStateEvaluation();
     }
@@ -4268,6 +4300,7 @@
     if (
       state.destroyed ||
       state.nativeSuspended ||
+      EXTREME_NATIVE_MODE ||
       state.statusTimer
     ) {
       return;
@@ -4392,8 +4425,11 @@
     invalidateTurnCache();
     turnCandidates(true);
     scheduleInitialBottomScroll(true);
-    evaluateConversationState();
-    renderConversationStates();
+
+    if (!EXTREME_NATIVE_MODE) {
+      evaluateConversationState();
+      renderConversationStates();
+    }
 
     if (state.settings.telemetryEnabled) {
       startTelemetryRuntime();
@@ -4465,9 +4501,11 @@
       scheduleRouteRebind();
     }
 
-    scheduleStateEvaluation(
-      ROUTE_SETTLE_DELAY_MS + 180
-    );
+    if (!EXTREME_NATIVE_MODE) {
+      scheduleStateEvaluation(
+        ROUTE_SETTLE_DELAY_MS + 180
+      );
+    }
 
     if (state.settings.telemetryEnabled) {
       queueTelemetrySample('route');
@@ -4488,8 +4526,6 @@
       state.foregroundResumeTimer
     );
     state.foregroundResumeTimer = 0;
-
-    clearInitialBottomScroll();
 
     clearTimeout(state.stateEvalTimer);
     state.stateEvalTimer = 0;
@@ -4568,7 +4604,10 @@
         }
 
         bindScopedObservers();
-        scheduleStateEvaluation(80);
+
+        if (!EXTREME_NATIVE_MODE) {
+          scheduleStateEvaluation(80);
+        }
       }, delay);
   }
 
