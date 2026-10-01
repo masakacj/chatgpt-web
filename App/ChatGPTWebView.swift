@@ -106,6 +106,10 @@ struct ChatGPTWebView: UIViewRepresentable {
             configuration: configuration
         )
 
+        // Developer shell: expose this WKWebView to Safari Web Inspector.
+        // The deployment target is iOS 17, where isInspectable is available.
+        webView.isInspectable = true
+
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
 
@@ -247,6 +251,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var checkingUpdate = false
         private var hasStartedInitialHotUpdate = false
         private var lifecycleObserversInstalled = false
+        private var lastForegroundHotUpdateAt =
+            Date.distantPast
         private let sendFeedbackGenerator =
             UIImpactFeedbackGenerator(
                 style: .light
@@ -386,6 +392,18 @@ struct ChatGPTWebView: UIViewRepresentable {
             sendNativeLifecycle(
                 "active"
             )
+
+            // During development, returning to the app is also a cheap
+            // script-refresh gesture. Throttle rapid foreground changes.
+            let now = Date()
+            if now.timeIntervalSince(
+                lastForegroundHotUpdateAt
+            ) >= 12 {
+                lastForegroundHotUpdateAt = now
+                startHotUpdate(
+                    injectCurrentPage: true
+                )
+            }
         }
 
         @objc
@@ -2199,8 +2217,10 @@ private func collapseExternalBrowserMenu() {
 
             if !hasStartedInitialHotUpdate {
                 hasStartedInitialHotUpdate = true
+                lastForegroundHotUpdateAt =
+                    Date()
                 startHotUpdate(
-                    injectCurrentPage: false
+                    injectCurrentPage: true
                 )
             }
         }
