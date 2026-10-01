@@ -55,6 +55,74 @@ final class UnifiedScriptStore {
         ) as? String ?? "0"
     }
 
+    private var thermalStateLabel: String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal:
+            return "nominal"
+        case .fair:
+            return "fair"
+        case .serious:
+            return "serious"
+        case .critical:
+            return "critical"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
+    private func nativeRuntimeState()
+        -> [String: Any]
+    {
+        [
+            "lowPowerMode":
+                ProcessInfo.processInfo
+                    .isLowPowerModeEnabled,
+            "thermalState":
+                thermalStateLabel,
+            "nativeLifecycle": true,
+        ]
+    }
+
+    func nativeLifecycleJavaScript(
+        phase: String
+    ) -> String {
+        var payload =
+            nativeRuntimeState()
+        payload["lifecyclePhase"] =
+            phase
+
+        guard
+            let data =
+                try? JSONSerialization.data(
+                    withJSONObject: payload
+                ),
+            let json =
+                String(
+                    data: data,
+                    encoding: .utf8
+                )
+        else {
+            return ""
+        }
+
+        return """
+        (() => {
+          const next = (json);
+          window.__CHATGPT_NATIVE__ = {
+            ...(window.__CHATGPT_NATIVE__ || {}),
+            ...next
+          };
+          const api =
+            window.ChatGPTWeb ||
+            window.ChatGPTSafari;
+          api?.nativeLifecycle?.(
+            (String(reflecting: phase)),
+            window.__CHATGPT_NATIVE__
+          );
+        })();
+        """
+    }
+
     func bestLocalScript() -> UnifiedScriptPayload? {
         newest(
             cached: loadCachedScript(),
@@ -168,6 +236,10 @@ final class UnifiedScriptStore {
                 ProcessInfo.processInfo.arguments
                     .contains("--ui-testing")
         ]
+
+        for (key, value) in nativeRuntimeState() {
+            payload[key] = value
+        }
 
         if let latestScriptVersion {
             payload["latestScriptVersion"] =
