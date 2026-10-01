@@ -195,8 +195,9 @@ struct ChatGPTWebView: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
 
-        // History navigation gestures stay disabled.
-        // Sidebar gestures are provided only by the iOS gesture userscript.
+        // Single-finger edge gestures and two-finger
+        // horizontal navigation are handled natively
+        // by Coordinator to keep normal web taps untouched.
         webView.allowsBackForwardNavigationGestures = false
 
         webView.allowsLinkPreview = true
@@ -346,7 +347,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         NSObject,
         WKNavigationDelegate,
         WKUIDelegate,
-        WKScriptMessageHandler
+        WKScriptMessageHandler,
+        UIGestureRecognizerDelegate
     {
         static let nativeMessageHandler = "chatGPTNative"
 
@@ -363,6 +365,14 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var browserControlsExpanded = false
         private var contentTerminationTimes: [Date] = []
         private var recoveryAlertPresented = false
+
+        private weak var leftSidebarEdgeGesture:
+            UIScreenEdgePanGestureRecognizer?
+        private weak var rightSidebarEdgeGesture:
+            UIScreenEdgePanGestureRecognizer?
+        private weak var twoFingerNavigationGesture:
+            UIPanGestureRecognizer?
+        private var twoFingerNavigationDidFire = false
 
         private var latestKnownVersion: String?
 
@@ -420,6 +430,264 @@ struct ChatGPTWebView: UIViewRepresentable {
                 initialGestureScript?.origin == "cached"
                 ? "cached"
                 : "bundled"
+
+            installNativeGestures(
+                in: rootView
+            )
+        }
+
+        private func installNativeGestures(
+            in rootView: UIView
+        ) {
+            guard
+                leftSidebarEdgeGesture == nil,
+                rightSidebarEdgeGesture == nil,
+                twoFingerNavigationGesture == nil
+            else {
+                return
+            }
+
+            let left =
+                UIScreenEdgePanGestureRecognizer(
+                    target: self,
+                    action:
+                        #selector(
+                            handleLeftSidebarEdge(_:)
+                        )
+                )
+            left.edges = .left
+            left.delegate = self
+            left.cancelsTouchesInView = false
+            left.delaysTouchesBegan = false
+            left.delaysTouchesEnded = false
+            rootView.addGestureRecognizer(left)
+            leftSidebarEdgeGesture = left
+
+            let right =
+                UIScreenEdgePanGestureRecognizer(
+                    target: self,
+                    action:
+                        #selector(
+                            handleRightSidebarEdge(_:)
+                        )
+                )
+            right.edges = .right
+            right.delegate = self
+            right.cancelsTouchesInView = false
+            right.delaysTouchesBegan = false
+            right.delaysTouchesEnded = false
+            rootView.addGestureRecognizer(right)
+            rightSidebarEdgeGesture = right
+
+            let navigation =
+                UIPanGestureRecognizer(
+                    target: self,
+                    action:
+                        #selector(
+                            handleTwoFingerNavigation(_:)
+                        )
+                )
+            navigation.minimumNumberOfTouches = 2
+            navigation.maximumNumberOfTouches = 2
+            navigation.delegate = self
+            navigation.cancelsTouchesInView = false
+            navigation.delaysTouchesBegan = false
+            navigation.delaysTouchesEnded = false
+            rootView.addGestureRecognizer(navigation)
+            twoFingerNavigationGesture =
+                navigation
+        }
+
+        func gestureRecognizerShouldBegin(
+            _ gestureRecognizer:
+                UIGestureRecognizer
+        ) -> Bool {
+            guard
+                gestureRecognizer ===
+                    twoFingerNavigationGesture,
+                let pan =
+                    gestureRecognizer
+                        as? UIPanGestureRecognizer,
+                let rootView
+            else {
+                return true
+            }
+
+            let velocity =
+                pan.velocity(in: rootView)
+
+            return
+                abs(velocity.x) >= 80 &&
+                abs(velocity.x) >
+                    abs(velocity.y) * 1.15
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer:
+                UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith
+                otherGestureRecognizer:
+                UIGestureRecognizer
+        ) -> Bool {
+            return true
+        }
+
+        @objc
+        private func handleLeftSidebarEdge(
+            _ gesture:
+                UIScreenEdgePanGestureRecognizer
+        ) {
+            guard gesture.state == .began else {
+                return
+            }
+
+            clickChatGPTSidebar(
+                opening: true
+            )
+        }
+
+        @objc
+        private func handleRightSidebarEdge(
+            _ gesture:
+                UIScreenEdgePanGestureRecognizer
+        ) {
+            guard gesture.state == .began else {
+                return
+            }
+
+            clickChatGPTSidebar(
+                opening: false
+            )
+        }
+
+        private func clickChatGPTSidebar(
+            opening: Bool
+        ) {
+            guard let webView else {
+                return
+            }
+
+            let selectors: [String]
+
+            if opening {
+                selectors = [
+                    "[data-testid=\"sidebar-button\"][aria-expanded=\"false\"]",
+                    "[data-testid=\"open-sidebar-button\"]",
+                    "button[aria-label*=\"Open sidebar\"]",
+                    "button[aria-label*=\"Show sidebar\"]",
+                    "button[aria-label*=\"Open navigation\"]",
+                    "button[aria-label*=\"打开侧边栏\"]",
+                    "button[aria-label*=\"显示侧边栏\"]",
+                    "button[aria-label*=\"展开侧边栏\"]",
+                    "button[aria-label*=\"打开导航\"]"
+                ]
+            } else {
+                selectors = [
+                    "[data-testid=\"close-sidebar-button\"]",
+                    "[data-testid=\"sidebar-button\"][aria-expanded=\"true\"]",
+                    "button[aria-label*=\"Close sidebar\"]",
+                    "button[aria-label*=\"Hide sidebar\"]",
+                    "button[aria-label*=\"Collapse sidebar\"]",
+                    "button[aria-label*=\"关闭侧边栏\"]",
+                    "button[aria-label*=\"隐藏侧边栏\"]",
+                    "button[aria-label*=\"收起侧边栏\"]",
+                    "button[aria-label*=\"关闭导航\"]"
+                ]
+            }
+
+            guard
+                let data =
+                    try? JSONSerialization.data(
+                        withJSONObject: selectors
+                    ),
+                let json =
+                    String(
+                        data: data,
+                        encoding: .utf8
+                    )
+            else {
+                return
+            }
+
+            webView.evaluateJavaScript(
+                """
+                (() => {
+                  const selectors = (json);
+                  for (const selector of selectors) {
+                    const button =
+                      document.querySelector(selector);
+                    if (!button) continue;
+                    button.click();
+                    return true;
+                  }
+                  return false;
+                })()
+                """
+            )
+        }
+
+        @objc
+        private func handleTwoFingerNavigation(
+            _ gesture:
+                UIPanGestureRecognizer
+        ) {
+            guard
+                let rootView,
+                let webView
+            else {
+                return
+            }
+
+            switch gesture.state {
+            case .began:
+                twoFingerNavigationDidFire = false
+
+            case .changed:
+                guard
+                    !twoFingerNavigationDidFire
+                else {
+                    return
+                }
+
+                let translation =
+                    gesture.translation(
+                        in: rootView
+                    )
+
+                guard
+                    abs(translation.x) >= 36,
+                    abs(translation.x) >
+                        abs(translation.y) * 1.15
+                else {
+                    return
+                }
+
+                twoFingerNavigationDidFire = true
+
+                if translation.x > 0 {
+                    if webView.canGoBack {
+                        webView.goBack()
+                    } else {
+                        webView.evaluateJavaScript(
+                            "history.back()"
+                        )
+                    }
+                } else {
+                    if webView.canGoForward {
+                        webView.goForward()
+                    } else {
+                        webView.evaluateJavaScript(
+                            "history.forward()"
+                        )
+                    }
+                }
+
+            case .ended, .cancelled, .failed:
+                twoFingerNavigationDidFire = false
+
+            default:
+                break
+            }
         }
 
         func installMainAnchor(
