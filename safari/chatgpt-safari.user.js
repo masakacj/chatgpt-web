@@ -1875,6 +1875,9 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = [
+      'html, body {',
+      '  overscroll-behavior-y: none !important;',
+      '}',
       '[data-cgpt-windowed="1"] {',
       '  height: var(--cgpt-window-height) !important;',
       '  min-height: var(--cgpt-window-height) !important;',
