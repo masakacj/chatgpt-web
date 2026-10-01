@@ -2249,6 +2249,30 @@ private func collapseExternalBrowserMenu() {
             )
         }
 
+        private func reloadAfterMemoryPressure(
+            _ webView: WKWebView,
+            delay: TimeInterval
+        ) {
+            URLCache.shared
+                .removeAllCachedResponses()
+
+            WKWebsiteDataStore.default()
+                .removeData(
+                    ofTypes: [
+                        WKWebsiteDataTypeMemoryCache
+                    ],
+                    modifiedSince:
+                        .distantPast
+                ) {
+                    DispatchQueue.main.asyncAfter(
+                        deadline:
+                            .now() + delay
+                    ) { [weak webView] in
+                        webView?.reload()
+                    }
+                }
+        }
+
         private func recoverFromContentProcessTermination(
             _ webView: WKWebView
         ) {
@@ -2261,17 +2285,25 @@ private func collapseExternalBrowserMenu() {
 
             contentTerminationTimes =
                 contentTerminationTimes.filter {
-                    now.timeIntervalSince($0) < 20
+                    now.timeIntervalSince($0) < 30
                 }
 
             contentTerminationTimes.append(now)
 
-            if contentTerminationTimes.count == 1 {
-                DispatchQueue.main.asyncAfter(
-                    deadline: .now() + 0.7
-                ) { [weak webView] in
-                    webView?.reload()
-                }
+            let recentCount =
+                contentTerminationTimes.count
+
+            // Result Only aggressively frees completed process DOM.
+            // Give WebKit two silent recovery attempts before stopping
+            // to ask the user, so a single memory spike does not block use.
+            if recentCount <= 2 {
+                reloadAfterMemoryPressure(
+                    webView,
+                    delay:
+                        recentCount == 1
+                        ? 0.45
+                        : 1.15
+                )
                 return
             }
 
@@ -2282,9 +2314,9 @@ private func collapseExternalBrowserMenu() {
             recoveryAlertPresented = true
 
             presentAlert(
-                title: "长对话占用过高",
+                title: "这个超长对话仍然超过内存上限",
                 message:
-                    "这个对话在短时间内连续触发了网页进程内存回收。已停止自动刷新，避免进入刷新死循环。",
+                    "已自动尝试两次轻量恢复，但 WebKit 仍连续被系统回收。可以返回首页，或再手动重载一次。",
                 actions: [
                     UIAlertAction(
                         title: "返回 ChatGPT 首页",
@@ -2307,14 +2339,22 @@ private func collapseExternalBrowserMenu() {
                         )
                     },
                     UIAlertAction(
-                        title: "重新加载一次",
+                        title: "再重载一次",
                         style: .default
                     ) { [weak self, weak webView] _ in
                         self?.recoveryAlertPresented = false
                         self?.contentTerminationTimes = [
                             Date()
                         ]
-                        webView?.reload()
+
+                        guard let webView else {
+                            return
+                        }
+
+                        self?.reloadAfterMemoryPressure(
+                            webView,
+                            delay: 0.35
+                        )
                     }
                 ]
             )
