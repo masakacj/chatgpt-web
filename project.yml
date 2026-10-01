@@ -29,8 +29,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb
         PRODUCT_NAME: ChatGPTWeb
-        MARKETING_VERSION: 0.4.27
-        CURRENT_PROJECT_VERSION: 51
+        MARKETING_VERSION: 0.4.28
+        CURRENT_PROJECT_VERSION: 52
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: ChatGPT Web
@@ -56,8 +56,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb.scriptaction
         PRODUCT_NAME: ChatGPTScriptAction
-        MARKETING_VERSION: 0.4.27
-        CURRENT_PROJECT_VERSION: 51
+        MARKETING_VERSION: 0.4.28
+        CURRENT_PROJECT_VERSION: 52
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: SafariScriptAction/Info.plist
         SKIP_INSTALL: YES
@@ -77,6 +77,19 @@ targets:
           cat > "$DEST" <<'JS'
           var ExtensionPreprocessingJS = new function() {
             this.run = function(arguments) {
+              arguments.completionFunction({
+                ready: true
+              });
+            };
+
+            this.finalize = function(arguments) {
+              if (
+                !arguments ||
+                arguments.inject !== true
+              ) {
+                return;
+              }
+
               try {
                 window.__CHATGPT_SAFARI_CONTAINER__ = true;
           JS
@@ -84,14 +97,47 @@ targets:
           cat "$SHARED_SOURCE" >> "$DEST"
 
           cat >> "$DEST" <<'JS'
-                arguments.completionFunction({
-                  ok: true
-                });
               } catch (error) {
-                arguments.completionFunction({
-                  ok: false,
-                  error: String(error)
-                });
+                try {
+                  const badge =
+                    document.createElement('div');
+
+                  badge.textContent =
+                    '优化注入失败';
+
+                  Object.assign(
+                    badge.style,
+                    {
+                      position: 'fixed',
+                      top:
+                        'max(12px, env(safe-area-inset-top))',
+                      left: '50%',
+                      transform:
+                        'translateX(-50%)',
+                      zIndex: '2147483647',
+                      pointerEvents: 'none',
+                      padding: '8px 12px',
+                      borderRadius: '999px',
+                      background:
+                        'rgba(120,24,24,.94)',
+                      color: '#fff',
+                      font:
+                        '600 12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif',
+                    }
+                  );
+
+                  (
+                    document.body ||
+                    document.documentElement
+                  )?.appendChild(
+                    badge
+                  );
+
+                  setTimeout(
+                    () => badge.remove(),
+                    1800
+                  );
+                } catch (_) {}
               }
             };
           };
