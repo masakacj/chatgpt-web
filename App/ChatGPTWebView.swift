@@ -250,8 +250,6 @@ struct ChatGPTWebView: UIViewRepresentable {
             request.cachePolicy =
                 .useProtocolCachePolicy
             webView.load(request)
-
-            context.coordinator.startHotUpdate()
         }
 
         return container
@@ -361,6 +359,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var updateStatus = "bundled"
         private var gestureUpdateStatus = "bundled"
         private var checkingUpdate = false
+        private var hasStartedInitialHotUpdate = false
 
         private var browserControlsExpanded = false
         private var contentTerminationTimes: [Date] = []
@@ -1313,9 +1312,13 @@ struct ChatGPTWebView: UIViewRepresentable {
             )
         }
 
-        func startHotUpdate() {
+        func startHotUpdate(
+            injectCurrentPage: Bool = true
+        ) {
             guard !checkingUpdate else {
-                updateRuntimeStatus()
+                if injectCurrentPage {
+                    updateRuntimeStatus()
+                }
                 return
             }
 
@@ -1347,12 +1350,12 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                     self.checkingUpdate = false
 
-                    let scriptChanged =
+                    _ =
                         self.applyScriptResult(
                             results.0
                         )
 
-                    let gestureChanged =
+                    _ =
                         self.applyGestureResult(
                             results.1
                         )
@@ -1360,20 +1363,20 @@ struct ChatGPTWebView: UIViewRepresentable {
                     self.installForFutureNavigations()
                     self.updateRuntimeStatus()
 
-                    if scriptChanged,
-                       let activeScript =
-                           self.activeScript {
-                        self.injectScriptIntoCurrentPage(
-                            activeScript
-                        )
-                    }
+                    if injectCurrentPage {
+                        if let activeScript =
+                            self.activeScript {
+                            self.injectScriptIntoCurrentPage(
+                                activeScript
+                            )
+                        }
 
-                    if gestureChanged,
-                       let activeGestureScript =
-                           self.activeGestureScript {
-                        self.injectGestureIntoCurrentPage(
-                            activeGestureScript
-                        )
+                        if let activeGestureScript =
+                            self.activeGestureScript {
+                            self.injectGestureIntoCurrentPage(
+                                activeGestureScript
+                            )
+                        }
                     }
                 }
             }
@@ -2671,6 +2674,13 @@ private func collapseExternalBrowserMenu() {
             }
 
             ensureScriptsAreRunning()
+
+            if !hasStartedInitialHotUpdate {
+                hasStartedInitialHotUpdate = true
+                startHotUpdate(
+                    injectCurrentPage: false
+                )
+            }
         }
 
         func webView(
