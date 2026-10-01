@@ -84,7 +84,10 @@ jobs:
           test "$EXTENSION_POINT" = "com.apple.services"
           test -x "$ACTION/ChatGPTScriptAction"
 
+          node --check "$SCRIPT"
           grep -q "ExtensionPreprocessingJS" "$SCRIPT"
+          grep -q "this.finalize = function(arguments)" "$SCRIPT"
+          grep -q "ready: true" "$SCRIPT"
           grep -q "__CHATGPT_SAFARI_CONTAINER__ = true" "$SCRIPT"
           grep -q "ChatGPT Web Unified" "$SCRIPT"
           grep -q "@version      $VERSION" "$SCRIPT"
