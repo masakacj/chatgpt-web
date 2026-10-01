@@ -122,11 +122,6 @@ requireText(
 );
 requireText(
   shared,
-  'data-cgpt-passive-turn',
-  'native passive historical turn rendering'
-);
-requireText(
-  shared,
   'data-cgpt-tool-hidden',
   'native static process hiding'
 );
@@ -144,6 +139,11 @@ requireText(
   shared,
   'function bindScopedObservers(',
   'scoped conversation/sidebar observers'
+);
+requireText(
+  shared,
+  'overscroll-behavior-y: none',
+  'hard vertical overscroll boundary'
 );
 requireText(
   shared,
@@ -409,6 +409,8 @@ const sharedForbidden = [
   ['开始性能诊断', 'manual debug UI in subtractive runtime'],
   ['检查 IPA 更新', 'separate IPA update action'],
   ['scheduleToolScan(', 'repeated tool rescan scheduler'],
+  ['data-cgpt-passive-turn', 'intrinsic-height passive turn virtualization'],
+  ['contain-intrinsic-size: auto 320px', 'estimated historical turn height'],
   ['conversationScroller(', 'dynamic scroll-container probing'],
 ];
 
@@ -492,6 +494,11 @@ requireText(
   gesture,
   'function pickScrollContainer',
   'dynamic scroll-container selection'
+);
+requireText(
+  gesture,
+  'return null;',
+  'directional scroll boundary stop'
 );
 requireText(
   gesture,
@@ -584,6 +591,7 @@ const gestureForbidden = [
   ['BroadcastChannel', 'conversation state logic in gesture script'],
   ['data-cgpt-tool-collapsed', 'tool compaction in gesture script'],
   ['messageHandlers?.chatGPTNative', 'native update bridge in gesture script'],
+  ['const next = pickScrollContainer(', 'scroll chaining beyond the active container'],
 ];
 
 for (const [needle, description] of gestureForbidden) {

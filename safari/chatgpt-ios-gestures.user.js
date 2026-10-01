@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.1.11
+// @version      0.1.12
 // @description  iOS-only gesture layer for the ChatGPT Web IPA shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.11';
+  const VERSION = '0.1.12';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   const HOST = location.hostname.toLowerCase();
@@ -282,7 +282,7 @@
       }
     }
 
-    return candidates.find(isScrollable) || null;
+    return null;
   }
 
   function touchCenter(touches) {
@@ -383,8 +383,7 @@
       -deltaY * CONFIG.twoFingerScrollMultiplier;
 
     if (
-      !(scroll.scroller instanceof HTMLElement) ||
-      !canScrollBy(scroll.scroller, scrollDelta)
+      !(scroll.scroller instanceof HTMLElement)
     ) {
       scroll.scroller = pickScrollContainer(
         event,
@@ -394,27 +393,22 @@
     }
 
     if (scroll.scroller instanceof HTMLElement) {
-      const before = scroll.scroller.scrollTop;
-      scroll.scroller.scrollTop += scrollDelta;
+      const max = Math.max(
+        0,
+        scroll.scroller.scrollHeight -
+          scroll.scroller.clientHeight
+      );
 
-      if (
-        Math.abs(scroll.scroller.scrollTop - before) < 0.5 &&
-        Math.abs(scrollDelta) > 0.5
-      ) {
-        const next = pickScrollContainer(
-          event,
-          point,
-          scrollDelta
-        );
+      const next = Math.min(
+        max,
+        Math.max(
+          0,
+          scroll.scroller.scrollTop +
+            scrollDelta
+        )
+      );
 
-        if (
-          next instanceof HTMLElement &&
-          next !== scroll.scroller
-        ) {
-          scroll.scroller = next;
-          scroll.scroller.scrollTop += scrollDelta;
-        }
-      }
+      scroll.scroller.scrollTop = next;
     }
 
     scroll.lastX = point.x;
