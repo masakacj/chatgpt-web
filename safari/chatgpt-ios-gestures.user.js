@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web iOS Gestures
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.2.0
+// @version      0.2.1
 // @description  iOS-only two-finger vertical scroll compatibility for the native ChatGPT Web shell.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   const GLOBAL_KEY = 'ChatGPTIOSGestures';
 
   const HOST =
@@ -160,60 +160,48 @@
 
   function pickScrollContainer(
     event,
-    point,
     delta
   ) {
     const seen = new Set();
-    const candidates = [];
-
-    const add = (node) => {
-      if (
-        !(node instanceof HTMLElement) ||
-        seen.has(node)
-      ) {
-        return;
-      }
-
-      seen.add(node);
-
-      if (isScrollable(node)) {
-        candidates.push(node);
-      }
-    };
-
-    try {
-      for (
-        const node of
-          document.elementsFromPoint(
-            point.x,
-            point.y
-          )
-      ) {
-        for (
-          const ancestor of
-            ancestorsOf(node)
-        ) {
-          add(ancestor);
-        }
-      }
-    } catch (_) {}
 
     for (
       const touch of
         Array.from(event.touches || [])
     ) {
       for (
-        const ancestor of
+        const node of
           ancestorsOf(touch.target)
       ) {
-        add(ancestor);
+        if (
+          seen.has(node)
+        ) {
+          continue;
+        }
+
+        seen.add(node);
+
+        if (
+          canScrollBy(
+            node,
+            delta
+          )
+        ) {
+          return node;
+        }
       }
     }
 
-    for (const node of candidates) {
-      if (canScrollBy(node, delta)) {
-        return node;
-      }
+    const root =
+      document.scrollingElement;
+
+    if (
+      root instanceof HTMLElement &&
+      canScrollBy(
+        root,
+        delta
+      )
+    ) {
+      return root;
     }
 
     return null;
@@ -316,7 +304,6 @@
       scroll.scroller =
         pickScrollContainer(
           event,
-          point,
           scrollDelta
         );
     }
