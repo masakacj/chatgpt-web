@@ -557,6 +557,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         private var gestureUpdateStatus = "bundled"
         private var checkingUpdate = false
         private var hasStartedInitialHotUpdate = false
+        private var lifecycleObserversInstalled = false
 
         private var browserControlsExpanded = false
         private var contentTerminationTimes: [Date] = []
@@ -601,6 +602,11 @@ struct ChatGPTWebView: UIViewRepresentable {
             self.scriptStore = scriptStore
         }
 
+        deinit {
+            NotificationCenter.default
+                .removeObserver(self)
+        }
+
         func attach(
             rootView: ChatGPTWebContainerView,
             webView: WKWebView,
@@ -629,6 +635,119 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             installNativeGestures(
                 in: rootView
+            )
+            installNativeLifecycleBridge()
+        }
+
+        private func installNativeLifecycleBridge() {
+            guard !lifecycleObserversInstalled else {
+                return
+            }
+
+            lifecycleObserversInstalled = true
+
+            let center =
+                NotificationCenter.default
+
+            center.addObserver(
+                self,
+                selector:
+                    #selector(
+                        appDidEnterBackground
+                    ),
+                name:
+                    UIApplication
+                        .didEnterBackgroundNotification,
+                object: nil
+            )
+
+            center.addObserver(
+                self,
+                selector:
+                    #selector(
+                        appDidBecomeActive
+                    ),
+                name:
+                    UIApplication
+                        .didBecomeActiveNotification,
+                object: nil
+            )
+
+            center.addObserver(
+                self,
+                selector:
+                    #selector(
+                        powerStateDidChange
+                    ),
+                name:
+                    .NSProcessInfoPowerStateDidChange,
+                object: nil
+            )
+
+            center.addObserver(
+                self,
+                selector:
+                    #selector(
+                        thermalStateDidChange
+                    ),
+                name:
+                    ProcessInfo
+                        .thermalStateDidChangeNotification,
+                object: nil
+            )
+        }
+
+        @objc
+        private func appDidEnterBackground() {
+            sendNativeLifecycle(
+                "background"
+            )
+        }
+
+        @objc
+        private func appDidBecomeActive() {
+            sendNativeLifecycle(
+                "active"
+            )
+        }
+
+        @objc
+        private func powerStateDidChange() {
+            sendNativeLifecycle(
+                "power"
+            )
+        }
+
+        @objc
+        private func thermalStateDidChange() {
+            sendNativeLifecycle(
+                "thermal"
+            )
+        }
+
+        private func sendNativeLifecycle(
+            _ phase: String
+        ) {
+            guard
+                let webView,
+                !webView.isLoading ||
+                    phase != "background"
+            else {
+                return
+            }
+
+            let source =
+                scriptStore
+                    .nativeLifecycleJavaScript(
+                        phase: phase
+                    )
+
+            guard !source.isEmpty else {
+                return
+            }
+
+            webView.evaluateJavaScript(
+                source
             )
         }
 
