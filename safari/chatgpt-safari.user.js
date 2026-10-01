@@ -1020,10 +1020,6 @@
     if (telemetry.debugId) {
       startDebugRafProbe();
     }
-
-    queueTelemetrySample(
-      'foreground'
-    );
   }
 
   function stopTelemetryRuntime(
@@ -4534,12 +4530,6 @@
     );
     state.foregroundResumeTimer = 0;
 
-    startStatusTimer();
-
-    if (wasSuspended) {
-      resumeTelemetryForLifecycle();
-    }
-
     if (
       IS_NATIVE_IOS &&
       !document.getElementById(HOST_ID)
@@ -4550,6 +4540,12 @@
     if (!state.phaseTwoStarted) {
       schedulePhaseTwoRuntime();
       return;
+    }
+
+    startStatusTimer();
+
+    if (wasSuspended) {
+      resumeTelemetryForLifecycle();
     }
 
     state.foregroundResumeTimer =
