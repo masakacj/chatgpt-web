@@ -63,9 +63,38 @@ jobs:
           xcrun simctl boot "$UDID" || true
           sleep 5
 
+      - name: Resolve host address
+        id: host
+        run: |
+          set -euo pipefail
+
+          IFACE="$(
+            route -n get default 2>/dev/null |
+            awk '/interface:/{print $2; exit}'
+          )"
+
+          HOST_IP="$(
+            ipconfig getifaddr "$IFACE" 2>/dev/null ||
+            true
+          )"
+
+          if [[ -z "$HOST_IP" ]]; then
+            HOST_IP="$(
+              ifconfig |
+              awk '/inet / && $2 !~ /^127\./ {print $2; exit}'
+            )"
+          fi
+
+          test -n "$HOST_IP"
+
+          echo "ip=$HOST_IP" >> "$GITHUB_OUTPUT"
+          echo "Benchmark host: $HOST_IP"
+
+          curl -fsS http://127.0.0.1:8765/status
+
       - name: Run Safari vs WKWebView A-B
         env:
-          CGPT_AB_BASE_URL: http://127.0.0.1:8765/fixture
+          CGPT_AB_BASE_URL: http://${{ steps.host.outputs.ip }}:8765/fixture
           UDID: ${{ steps.simulator.outputs.udid }}
         run: |
           set -euo pipefail
@@ -88,6 +117,50 @@ jobs:
           trap cleanup EXIT
 
           xcodebuild             -project ChatGPTWeb.xcodeproj             -scheme ChatGPTWeb             -configuration Debug             -sdk iphonesimulator             -destination "id=$UDID"             -derivedDataPath "$PWD/ABTestDerivedData"             -parallel-testing-enabled NO             -test-timeouts-enabled YES             -default-test-execution-time-allowance 180             -maximum-test-execution-time-allowance 240             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             -only-testing:ChatGPTWebUITests/ChatGPTWebUITests/testSafariWKABBenchmark             test
+
+      - name: Verify report count
+        if: always()
+        run: |
+          set -euo pipefail
+          REPORT="Benchmarks/AB/out/ab-reports.jsonl"
+          COUNT=0
+          if [[ -f "$REPORT" ]]; then
+            COUNT="$(grep -cve '^        if: always()
+        run: |
+          set -euo pipefail
+
+          REPORT="Benchmarks/AB/out/ab-reports.jsonl"
+
+          if [[ ! -s "$REPORT" ]]; then
+            echo "# Safari vs WKWebView A/B" > Benchmarks/AB/out/ab-summary.md
+            echo "" >> Benchmarks/AB/out/ab-summary.md
+            echo "No benchmark reports were received." >> Benchmarks/AB/out/ab-summary.md
+            cat Benchmarks/AB/out/ab-summary.md >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          python3 Benchmarks/AB/summarize.py             "$REPORT"             --json-out Benchmarks/AB/out/ab-summary.json             --md-out Benchmarks/AB/out/ab-summary.md
+
+          cat Benchmarks/AB/out/ab-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload A-B artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safari-wk-ab
+          path: |
+            Benchmarks/AB/out/ab-reports.jsonl
+            Benchmarks/AB/out/ab-summary.json
+            Benchmarks/AB/out/ab-summary.md
+            Benchmarks/AB/out/process-samples.log
+            Benchmarks/AB/out/server.log
+          if-no-files-found: warn
+ "$REPORT" || true)"
+          fi
+          echo "Received reports: $COUNT / 12"
+          if [[ "$COUNT" -ne 12 ]]; then
+            exit 1
+          fi
 
       - name: Summarize A-B results
         if: always()
