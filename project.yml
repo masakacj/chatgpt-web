@@ -20,6 +20,8 @@ targets:
         excludes:
           - SafariAutoLaunchView.swift
       - path: Resources
+      - path: safari/chatgpt-safari.user.js
+        buildPhase: resources
     dependencies:
       - target: ChatGPTScriptAction
         embed: true
@@ -27,8 +29,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb
         PRODUCT_NAME: ChatGPTWeb
-        MARKETING_VERSION: 0.4.36
-        CURRENT_PROJECT_VERSION: 59
+        MARKETING_VERSION: 0.4.37
+        CURRENT_PROJECT_VERSION: 60
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: ChatGPT Web
@@ -54,8 +56,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb.scriptaction
         PRODUCT_NAME: ChatGPTScriptAction
-        MARKETING_VERSION: 0.4.36
-        CURRENT_PROJECT_VERSION: 59
+        MARKETING_VERSION: 0.4.37
+        CURRENT_PROJECT_VERSION: 60
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: SafariScriptAction/Info.plist
         SKIP_INSTALL: YES

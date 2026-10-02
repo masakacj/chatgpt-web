@@ -64,6 +64,161 @@ final class ChatGPTWebContainerView: UIView {
 }
 
 struct ChatGPTWebView: UIViewRepresentable {
+    private static func webKitStressHTML()
+        -> String
+    {
+        var blocks: [String] = []
+
+        let mcpPayload =
+            String(
+                repeating:
+                    "<span class=\"payload\">mcp-payload</span>",
+                count: 12
+            )
+
+        for index in 0..<96 {
+            blocks.append(
+                """
+                <section class="activity-block mcp-block">
+                  <div class="group/activity-header">MCP · mcpoffice</div>
+                  <div class="group/mcp-app">
+                    <iframe
+                      title="mcp-mcpoffice"
+                      src="about:blank">
+                    </iframe>
+                    <div class="payload-grid">\(mcpPayload)</div>
+                    <div class="payload-label">mcp-\(index)</div>
+                  </div>
+                </section>
+                """
+            )
+        }
+
+        let thinkingPayload =
+            String(
+                repeating:
+                    "<span class=\"thinking-token\">reasoning-token</span>",
+                count: 120
+            )
+
+        for index in 0..<3 {
+            blocks.append(
+                """
+                <section class="activity-block thinking-block">
+                  <div class="group/activity-header">Thinking \(index + 1)s</div>
+                  <div class="thinking-body">\(thinkingPayload)</div>
+                </section>
+                """
+            )
+        }
+
+        for index in 0..<10 {
+            blocks.append(
+                """
+                <section class="activity-block keep-activity">
+                  <div class="group/activity-header">Reference event \(index)</div>
+                  <div class="keep-marker">KEEP_ACTIVITY_\(index)</div>
+                </section>
+                """
+            )
+        }
+
+        let normalPayload =
+            String(
+                repeating:
+                    "<span class=\"normal-token\">answer-token</span>",
+                count: 24
+            )
+
+        for index in 0..<28 {
+            blocks.append(
+                """
+                <section class="normal-content">
+                  <p>Normal answer block \(index)</p>
+                  <div>\(normalPayload)</div>
+                </section>
+                """
+            )
+        }
+
+        let stream =
+            blocks.joined(
+                separator: "\n"
+            )
+
+        return
+            """
+            <!doctype html>
+            <html>
+              <head>
+                <meta
+                  name="viewport"
+                  content="width=device-width,initial-scale=1">
+                <style>
+                  body {
+                    margin: 0;
+                    font-family: -apple-system, system-ui, sans-serif;
+                  }
+                  #conversation-stream {
+                    max-width: 760px;
+                    margin: 0 auto;
+                    padding: 20px;
+                  }
+                  .activity-block,
+                  .normal-content {
+                    padding: 8px 0;
+                  }
+                  .payload-grid,
+                  .thinking-body {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 2px;
+                  }
+                  iframe {
+                    width: 280px;
+                    height: 60px;
+                  }
+                </style>
+              </head>
+              <body>
+                <main class="WorkspaceContent-stress">
+                  <div id="conversation-stream">
+                    \(stream)
+                    <section id="final-answer">
+                      FINAL_ANSWER_SENTINEL · final answer must survive Result Only pruning.
+                    </section>
+                  </div>
+                </main>
+                <script>
+                  (() => {
+                    const headers = [
+                      ...document.querySelectorAll(
+                        '[class*="group/activity-header"]'
+                      )
+                    ];
+                    window.__CGPT_STRESS_BASELINE__ = {
+                      nodes:
+                        document.getElementsByTagName('*').length,
+                      activity:
+                        headers.length,
+                      mcp:
+                        document.querySelectorAll(
+                          'iframe[title*="mcp" i],iframe[aria-label*="mcp" i]'
+                        ).length,
+                      thinking:
+                        headers.filter((node) =>
+                          /^(?:Thinking|Thought for|正在思考|思考了)/i.test(
+                            String(node.textContent || '').trim()
+                          )
+                        ).length
+                    };
+                  })();
+                </script>
+              </body>
+            </html>
+            """
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(scriptStore: .shared)
     }
@@ -126,22 +281,44 @@ struct ChatGPTWebView: UIViewRepresentable {
                 webView: webView
             )
 
+        let arguments =
+            ProcessInfo.processInfo.arguments
+
+        let isUITesting =
+            arguments.contains(
+                "--ui-testing"
+            )
+
+        let isWebKitStress =
+            arguments.contains(
+                "--webkit-stress"
+            )
+
         context.coordinator.attach(
             rootView: container,
             webView: webView,
             contentController: controller,
-            initialScript: initialScript
+            initialScript: initialScript,
+            webKitStressMode:
+                isWebKitStress
         )
 
-        context.coordinator.installMainAnchor(
-            in: container
-        )
+        if !isUITesting {
+            context.coordinator
+                .installMainAnchor(
+                    in: container
+                )
+        }
 
-        let isUITesting =
-            ProcessInfo.processInfo.arguments
-                .contains("--ui-testing")
-
-        if isUITesting {
+        if isWebKitStress {
+            webView.loadHTMLString(
+                Self.webKitStressHTML(),
+                baseURL: URL(
+                    string:
+                        "https://chatgpt.com/"
+                )
+            )
+        } else if isUITesting {
             webView.loadHTMLString(
                 """
                 <!doctype html>
@@ -264,6 +441,17 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private var latestKnownVersion: String?
 
+        private var webKitStressMode =
+            false
+        private var webKitStressStartedAt =
+            Date.distantPast
+        private var webKitStressPollAttempt =
+            0
+        private var webKitStressTerminated =
+            false
+        private weak var webKitStressLabel:
+            UILabel?
+
         private weak var mainAnchorButton:
             ChatGPTFloatingAnchorButton?
 
@@ -300,7 +488,8 @@ struct ChatGPTWebView: UIViewRepresentable {
             rootView: ChatGPTWebContainerView,
             webView: WKWebView,
             contentController: WKUserContentController,
-            initialScript: UnifiedScriptPayload?
+            initialScript: UnifiedScriptPayload?,
+            webKitStressMode: Bool
         ) {
             self.rootView = rootView
             self.webView = webView
@@ -308,6 +497,16 @@ struct ChatGPTWebView: UIViewRepresentable {
             self.activeScript = initialScript
             self.latestKnownVersion =
                 initialScript?.version
+            self.webKitStressMode =
+                webKitStressMode
+
+            if webKitStressMode {
+                self.webKitStressStartedAt =
+                    Date()
+                installWebKitStressStatus(
+                    in: rootView
+                )
+            }
 
             self.updateStatus =
                 initialScript?.origin == "cached"
@@ -316,6 +515,303 @@ struct ChatGPTWebView: UIViewRepresentable {
 
             installNativeLifecycleBridge()
             sendFeedbackGenerator.prepare()
+        }
+
+        private func installWebKitStressStatus(
+            in rootView: UIView
+        ) {
+            let label = UILabel()
+            label.translatesAutoresizingMaskIntoConstraints =
+                false
+            label.text = "RUNNING"
+            label.font =
+                UIFont.monospacedSystemFont(
+                    ofSize: 11,
+                    weight: .semibold
+                )
+            label.textColor = .label
+            label.backgroundColor =
+                UIColor.systemBackground
+                    .withAlphaComponent(
+                        0.94
+                    )
+            label.numberOfLines = 3
+            label.accessibilityIdentifier =
+                "webkit.stress.result"
+            label.isAccessibilityElement =
+                true
+
+            rootView.addSubview(label)
+
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(
+                    equalTo:
+                        rootView.safeAreaLayoutGuide
+                            .leadingAnchor,
+                    constant: 8
+                ),
+                label.topAnchor.constraint(
+                    equalTo:
+                        rootView.safeAreaLayoutGuide
+                            .topAnchor,
+                    constant: 8
+                ),
+                label.widthAnchor.constraint(
+                    lessThanOrEqualToConstant:
+                        360
+                )
+            ])
+
+            webKitStressLabel = label
+            rootView.bringSubviewToFront(
+                label
+            )
+        }
+
+        private func setWebKitStressStatus(
+            _ text: String
+        ) {
+            webKitStressLabel?.text =
+                text
+            webKitStressLabel?
+                .accessibilityLabel =
+                    text
+        }
+
+        private func scheduleWebKitStressEvaluation(
+            delay: TimeInterval = 0.35
+        ) {
+            guard
+                webKitStressMode,
+                !webKitStressTerminated
+            else {
+                return
+            }
+
+            DispatchQueue.main
+                .asyncAfter(
+                    deadline:
+                        .now() + delay
+                ) { [weak self] in
+                    self?
+                        .evaluateWebKitStressResult()
+                }
+        }
+
+        private func evaluateWebKitStressResult() {
+            guard
+                webKitStressMode,
+                !webKitStressTerminated,
+                let webView
+            else {
+                return
+            }
+
+            let script =
+                """
+                (() => {
+                  const baseline =
+                    window.__CGPT_STRESS_BASELINE__ ||
+                    {};
+                  const headers = [
+                    ...document.querySelectorAll(
+                      '[class*="group/activity-header"]'
+                    )
+                  ];
+                  const thinking =
+                    headers.filter((node) =>
+                      /^(?:Thinking|Thought for|正在思考|思考了)/i.test(
+                        String(node.textContent || '').trim()
+                      )
+                    ).length;
+                  return {
+                    baselineNodes:
+                      Number(baseline.nodes || 0),
+                    baselineActivity:
+                      Number(baseline.activity || 0),
+                    baselineMcp:
+                      Number(baseline.mcp || 0),
+                    baselineThinking:
+                      Number(baseline.thinking || 0),
+                    nodes:
+                      document.getElementsByTagName('*').length,
+                    activity:
+                      headers.length,
+                    mcp:
+                      document.querySelectorAll(
+                        'iframe[title*="mcp" i],iframe[aria-label*="mcp" i]'
+                      ).length,
+                    thinking,
+                    sentinel:
+                      Boolean(
+                        document.getElementById('final-answer')
+                          ?.textContent
+                          ?.includes('FINAL_ANSWER_SENTINEL')
+                      ),
+                    runtime:
+                      document.documentElement.getAttribute(
+                        'data-cgpt-runtime-version'
+                      ) || '',
+                    pruned:
+                      document.querySelectorAll(
+                        '[data-cgpt-modern-process-pruned="1"]'
+                      ).length
+                  };
+                })()
+                """
+
+            webView.evaluateJavaScript(
+                script
+            ) { [weak self] result, error in
+                guard let self else {
+                    return
+                }
+
+                self.webKitStressPollAttempt +=
+                    1
+
+                guard
+                    error == nil,
+                    let values =
+                        result as?
+                            [String: Any]
+                else {
+                    if self
+                        .webKitStressPollAttempt <
+                        32
+                    {
+                        self.scheduleWebKitStressEvaluation()
+                    } else {
+                        self.setWebKitStressStatus(
+                            "FAIL evaluate"
+                        )
+                    }
+                    return
+                }
+
+                func integer(
+                    _ key: String
+                ) -> Int {
+                    (
+                        values[key] as?
+                            NSNumber
+                    )?.intValue ??
+                    0
+                }
+
+                let baselineNodes =
+                    integer(
+                        "baselineNodes"
+                    )
+                let nodes =
+                    integer("nodes")
+                let baselineActivity =
+                    integer(
+                        "baselineActivity"
+                    )
+                let activity =
+                    integer("activity")
+                let baselineMcp =
+                    integer(
+                        "baselineMcp"
+                    )
+                let mcp =
+                    integer("mcp")
+                let baselineThinking =
+                    integer(
+                        "baselineThinking"
+                    )
+                let thinking =
+                    integer(
+                        "thinking"
+                    )
+                let pruned =
+                    integer(
+                        "pruned"
+                    )
+                let sentinel =
+                    values["sentinel"]
+                        as? Bool ??
+                    false
+                let runtime =
+                    values["runtime"]
+                        as? String ??
+                    ""
+
+                let reduction =
+                    baselineNodes > 0
+                    ? (
+                        Double(
+                            baselineNodes -
+                            nodes
+                        ) /
+                        Double(
+                            baselineNodes
+                        )
+                    )
+                    : 0
+
+                let pass =
+                    baselineActivity >= 109 &&
+                    baselineMcp >= 96 &&
+                    baselineThinking >= 3 &&
+                    activity == 10 &&
+                    mcp == 0 &&
+                    thinking == 0 &&
+                    sentinel &&
+                    !runtime.isEmpty &&
+                    pruned >= 99 &&
+                    reduction >= 0.40
+
+                let elapsed =
+                    Date().timeIntervalSince(
+                        self
+                            .webKitStressStartedAt
+                    )
+
+                if pass {
+                    self.setWebKitStressStatus(
+                        String(
+                            format:
+                                "PASS %.2fs nodes=%d→%d activity=%d mcp=%d thinking=%d pruned=%d v%@",
+                            elapsed,
+                            baselineNodes,
+                            nodes,
+                            activity,
+                            mcp,
+                            thinking,
+                            pruned,
+                            runtime
+                        )
+                    )
+                    return
+                }
+
+                if self
+                    .webKitStressPollAttempt <
+                    32
+                {
+                    self.scheduleWebKitStressEvaluation()
+                    return
+                }
+
+                self.setWebKitStressStatus(
+                    String(
+                        format:
+                            "FAIL nodes=%d→%d activity=%d/%d mcp=%d/%d thinking=%d/%d pruned=%d v%@",
+                        baselineNodes,
+                        nodes,
+                        activity,
+                        baselineActivity,
+                        mcp,
+                        baselineMcp,
+                        thinking,
+                        baselineThinking,
+                        pruned,
+                        runtime
+                    )
+                )
+            }
         }
 
         private func installNativeLifecycleBridge() {
@@ -2215,6 +2711,13 @@ private func collapseExternalBrowserMenu() {
 
             ensureScriptsAreRunning()
 
+            if webKitStressMode {
+                scheduleWebKitStressEvaluation(
+                    delay: 0.8
+                )
+                return
+            }
+
             if !hasStartedInitialHotUpdate {
                 hasStartedInitialHotUpdate = true
                 lastForegroundHotUpdateAt =
@@ -2363,6 +2866,18 @@ private func collapseExternalBrowserMenu() {
         func webViewWebContentProcessDidTerminate(
             _ webView: WKWebView
         ) {
+            if (
+                webKitStressMode &&
+                webView === self.webView
+            ) {
+                webKitStressTerminated =
+                    true
+                setWebKitStressStatus(
+                    "TERMINATED WebContent"
+                )
+                return
+            }
+
             recoverFromContentProcessTermination(
                 webView
             )
