@@ -20,6 +20,8 @@ targets:
         excludes:
           - SafariAutoLaunchView.swift
       - path: Resources
+      - path: safari/chatgpt-safari.user.js
+        buildPhase: resources
     dependencies:
       - target: ChatGPTScriptAction
         embed: true
