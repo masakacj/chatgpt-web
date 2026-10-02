@@ -3,7 +3,7 @@ name: Safari vs WKWebView A-B
 on:
   push:
     branches:
-      - release/safari-wk-ab
+      - bench/safari-wk-ab
     paths:
       - "App/**"
       - "Benchmarks/AB/**"
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   safari-wk-ab:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 25
 
     steps:
