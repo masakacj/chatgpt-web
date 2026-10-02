@@ -9,6 +9,78 @@ enum ABBenchmarkMode: String {
     case wk
 }
 
+private enum ABBenchmarkMarker {
+    static func markURL(
+        for fixtureURL: URL
+    ) -> URL? {
+        guard
+            var components =
+                URLComponents(
+                    url: fixtureURL,
+                    resolvingAgainstBaseURL:
+                        false
+                )
+        else {
+            return nil
+        }
+
+        let run =
+            components.queryItems?
+                .first(where: {
+                    $0.name == "run"
+                })?
+                .value
+
+        components.path = "/mark"
+        components.queryItems =
+            run.map {
+                [
+                    URLQueryItem(
+                        name: "run",
+                        value: $0
+                    )
+                ]
+            } ?? []
+
+        return components.url
+    }
+
+    static func perform(
+        fixtureURL: URL,
+        completion:
+            @escaping () -> Void
+    ) {
+        guard
+            let markURL =
+                markURL(
+                    for: fixtureURL
+                )
+        else {
+            completion()
+            return
+        }
+
+        var request =
+            URLRequest(
+                url: markURL
+            )
+
+        request.cachePolicy =
+            .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 2
+
+        URLSession.shared
+            .dataTask(
+                with: request
+            ) { _, _, _ in
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+            .resume()
+    }
+}
+
 struct ABBenchmarkConfig {
     let mode: ABBenchmarkMode
     let url: URL
@@ -155,6 +227,14 @@ private final class ABBenchmarkSafariHost:
 
         didPresent = true
 
+        ABBenchmarkMarker.perform(
+            fixtureURL: url
+        ) { [weak self] in
+            self?.presentSafari()
+        }
+    }
+
+    private func presentSafari() {
         let configuration =
             SFSafariViewController
                 .Configuration()
@@ -218,13 +298,17 @@ private struct ABBenchmarkWKView:
             .contentInsetAdjustmentBehavior =
                 .automatic
 
-        var request =
-            URLRequest(url: url)
+        ABBenchmarkMarker.perform(
+            fixtureURL: url
+        ) {
+            var request =
+                URLRequest(url: url)
 
-        request.cachePolicy =
-            .reloadIgnoringLocalCacheData
+            request.cachePolicy =
+                .reloadIgnoringLocalCacheData
 
-        webView.load(request)
+            webView.load(request)
+        }
 
         return webView
     }
