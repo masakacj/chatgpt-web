@@ -1,0 +1,371 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>ChatGPT Safari/WK A-B</title>
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #fff;
+      color: #111;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    }
+    body { overflow-y: auto; }
+    #stream {
+      box-sizing: border-box;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 16px 14px 80px;
+    }
+    .activity, .normal, #final {
+      box-sizing: border-box;
+      padding: 8px 0;
+    }
+    .group\/activity-header {
+      min-height: 24px;
+      line-height: 24px;
+      font-size: 13px;
+    }
+    .payload-grid, .thinking-body {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px;
+    }
+    .payload, .thinking-token, .normal-token {
+      display: inline-block;
+      padding: 1px 2px;
+      font-size: 10px;
+    }
+    iframe {
+      display: block;
+      width: 300px;
+      height: 62px;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div id="stream"></div>
+  </main>
+  <script>
+  (() => {
+    const params = new URLSearchParams(location.search);
+    const mode = params.get("mode") || "unknown";
+    const scenario = params.get("scenario") || "raw";
+    const runId = params.get("run") || ("run-" + Date.now());
+    const stream = document.getElementById("stream");
+    const startedAt = performance.now();
+
+    const state = {
+      frameGaps: [],
+      timerGaps: [],
+      longGaps: 0,
+      observerTimer: 0
+    };
+
+    const now = () => performance.now();
+
+    const percentile = (values, p) => {
+      if (!values.length) return 0;
+      const sorted = [...values].sort((a, b) => a - b);
+      const index = Math.min(
+        sorted.length - 1,
+        Math.max(0, Math.round((sorted.length - 1) * p))
+      );
+      return +sorted[index].toFixed(2);
+    };
+
+    const stats = (values) => ({
+      samples: values.length,
+      avgMs: values.length
+        ? +(values.reduce((a, b) => a + b, 0) / values.length).toFixed(2)
+        : 0,
+      p95Ms: percentile(values, 0.95),
+      maxMs: values.length ? +Math.max(...values).toFixed(2) : 0,
+      over25ms: values.filter(v => v > 25).length,
+      over50ms: values.filter(v => v > 50).length
+    });
+
+    const makePayload = (className, prefix, count) => {
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < count; i += 1) {
+        const span = document.createElement("span");
+        span.className = className;
+        span.textContent = prefix + "-" + i;
+        frag.appendChild(span);
+      }
+      return frag;
+    };
+
+    const addMcp = index => {
+      const section = document.createElement("section");
+      section.className = "activity mcp";
+
+      const header = document.createElement("div");
+      header.className = "group/activity-header";
+      header.textContent = "MCP · mcpoffice";
+
+      const app = document.createElement("div");
+      app.className = "group/mcp-app";
+
+      const frame = document.createElement("iframe");
+      frame.title = "mcp-mcpoffice";
+      frame.src = "about:blank";
+
+      const payload = document.createElement("div");
+      payload.className = "payload-grid";
+      payload.appendChild(
+        makePayload("payload", "mcp-payload-" + index, 14)
+      );
+
+      app.append(frame, payload);
+      section.append(header, app);
+      stream.appendChild(section);
+    };
+
+    const addThinking = index => {
+      const section = document.createElement("section");
+      section.className = "activity thinking";
+
+      const header = document.createElement("div");
+      header.className = "group/activity-header";
+      header.textContent = "Thinking " + (index + 1) + "s";
+
+      const body = document.createElement("div");
+      body.className = "thinking-body";
+      body.appendChild(
+        makePayload("thinking-token", "reasoning-token-" + index, 140)
+      );
+
+      section.append(header, body);
+      stream.appendChild(section);
+    };
+
+    const addKeep = index => {
+      const section = document.createElement("section");
+      section.className = "activity keep";
+
+      const header = document.createElement("div");
+      header.className = "group/activity-header";
+      header.textContent = "Reference event " + index;
+
+      const marker = document.createElement("div");
+      marker.className = "keep-marker";
+      marker.textContent = "KEEP_" + index;
+
+      section.append(header, marker);
+      stream.appendChild(section);
+    };
+
+    const addNormal = index => {
+      const section = document.createElement("section");
+      section.className = "normal";
+
+      const title = document.createElement("p");
+      title.textContent = "Normal answer block " + index;
+
+      const body = document.createElement("div");
+      body.appendChild(
+        makePayload("normal-token", "answer-token-" + index, 26)
+      );
+
+      section.append(title, body);
+      stream.appendChild(section);
+    };
+
+    const countState = () => {
+      const headers = [
+        ...document.querySelectorAll('[class*="group/activity-header"]')
+      ];
+      return {
+        nodes: document.getElementsByTagName("*").length,
+        activity: headers.length,
+        mcp: document.querySelectorAll(
+          'iframe[title*="mcp" i],iframe[aria-label*="mcp" i]'
+        ).length,
+        thinking: headers.filter(node =>
+          /^(?:Thinking|Thought for|正在思考|思考了)/i.test(
+            String(node.textContent || "").trim()
+          )
+        ).length,
+        htmlChars: document.documentElement.outerHTML.length
+      };
+    };
+
+    const buildStarted = now();
+    for (let i = 0; i < 96; i += 1) addMcp(i);
+    for (let i = 0; i < 3; i += 1) addThinking(i);
+    for (let i = 0; i < 10; i += 1) addKeep(i);
+    for (let i = 0; i < 28; i += 1) addNormal(i);
+
+    const final = document.createElement("section");
+    final.id = "final";
+    final.textContent =
+      "FINAL_ANSWER_SENTINEL · identical content for Safari/WK comparison.";
+    stream.appendChild(final);
+
+    const buildFinished = now();
+    const baseline = countState();
+
+    let timerExpected = now() + 16;
+    state.observerTimer = setInterval(() => {
+      const t = now();
+      const drift = Math.max(0, t - timerExpected);
+      state.timerGaps.push(drift);
+      if (drift > 50) state.longGaps += 1;
+      timerExpected = t + 16;
+    }, 16);
+
+    const raf = () =>
+      new Promise(resolve => requestAnimationFrame(resolve));
+
+    async function sampleScroll(frames = 56) {
+      const gaps = [];
+      window.scrollTo(0, 0);
+      await raf();
+
+      const max = Math.max(
+        1,
+        document.documentElement.scrollHeight - window.innerHeight
+      );
+
+      let prev = now();
+
+      for (let i = 1; i <= frames; i += 1) {
+        window.scrollTo(
+          0,
+          max * i / frames
+        );
+        await raf();
+        const t = now();
+        gaps.push(t - prev);
+        prev = t;
+      }
+
+      return stats(gaps);
+    }
+
+    function pruneProcess() {
+      const start = now();
+      let removed = 0;
+
+      const headers = [
+        ...document.querySelectorAll('[class*="group/activity-header"]')
+      ];
+
+      for (const header of headers) {
+        const label = String(header.textContent || "").trim();
+        const parent = header.parentElement;
+        if (!parent) continue;
+
+        const shouldRemove =
+          /^(?:Thinking|Thought for|正在思考|思考了)/i.test(label) ||
+          Boolean(
+            parent.querySelector(
+              'iframe[title*="mcp" i],iframe[aria-label*="mcp" i],[class*="group/mcp-app"]'
+            )
+          );
+
+        if (!shouldRemove) continue;
+
+        parent.remove();
+        removed += 1;
+      }
+
+      return {
+        removed,
+        pruneMs: +(now() - start).toFixed(2)
+      };
+    }
+
+    async function postReport(report) {
+      clearInterval(state.observerTimer);
+
+      try {
+        await fetch("/report", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(report),
+          keepalive: true
+        });
+      } catch (_) {}
+    }
+
+    async function run() {
+      const loadAt = now();
+      await raf();
+      const firstFrameAt = now();
+
+      const preScroll = await sampleScroll();
+
+      let prune = {
+        removed: 0,
+        pruneMs: 0
+      };
+
+      if (scenario === "pruned") {
+        prune = pruneProcess();
+      }
+
+      await raf();
+      const afterPrune = countState();
+      const postScroll = await sampleScroll();
+
+      const navigation =
+        performance.getEntriesByType("navigation")[0];
+
+      const report = {
+        mode,
+        scenario,
+        runId,
+        timings: {
+          startedMs: +startedAt.toFixed(2),
+          buildMs: +(buildFinished - buildStarted).toFixed(2),
+          loadReachedMs: +loadAt.toFixed(2),
+          firstFrameAfterLoadMs: +(firstFrameAt - loadAt).toFixed(2),
+          totalMs: +(now() - startedAt).toFixed(2),
+          domContentLoadedMs: navigation
+            ? +navigation.domContentLoadedEventEnd.toFixed(2)
+            : 0,
+          loadEventMs: navigation
+            ? +navigation.loadEventEnd.toFixed(2)
+            : 0,
+          pruneMs: prune.pruneMs
+        },
+        baseline,
+        afterPrune,
+        preScroll,
+        postScroll,
+        timer: stats(state.timerGaps),
+        longGaps: state.longGaps,
+        removed: prune.removed,
+        viewport: {
+          width: innerWidth,
+          height: innerHeight,
+          dpr: devicePixelRatio
+        },
+        userAgent: navigator.userAgent
+      };
+
+      window.__AB_RESULT__ = report;
+      await postReport(report);
+      document.title =
+        "AB_DONE_" + mode + "_" + scenario;
+    }
+
+    if (document.readyState === "complete") {
+      run();
+    } else {
+      window.addEventListener(
+        "load",
+        run,
+        { once: true }
+      );
+    }
+  })();
+  </script>
+</body>
+</html>
