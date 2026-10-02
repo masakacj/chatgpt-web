@@ -81,119 +81,66 @@ final class ChatGPTWebUITests: XCTestCase {
     func testSafariWKABBenchmark()
         throws
     {
-        let baseURL =
-            ProcessInfo.processInfo
-                .environment[
-                    "CGPT_AB_BASE_URL"
-                ]
-                .flatMap {
-                    $0.isEmpty
-                        ? nil
-                        : $0
-                } ??
+        let app =
+            XCUIApplication()
+
+        app.launchArguments = [
+            "--ab-benchmark-sequence",
+            "--ab-benchmark-base-url",
             "http://127.0.0.1:8765/fixture"
-
-        let modes = [
-            "safari",
-            "wk"
         ]
 
-        let scenarios = [
-            "raw",
-            "pruned"
-        ]
+        app.launch()
 
-        for scenario in scenarios {
-            for mode in modes {
-                for iteration in 0..<3 {
-                    let runID =
-                        "\(mode)-\(scenario)-\(iteration)-\(Int(Date().timeIntervalSince1970 * 1000))"
+        XCTAssertTrue(
+            app.wait(
+                for: .runningForeground,
+                timeout: 10
+            ),
+            "A-B sequence app did not remain foreground"
+        )
 
-                    guard
-                        var components =
-                            URLComponents(
-                                string:
-                                    baseURL
-                            )
-                    else {
-                        XCTFail(
-                            "Invalid benchmark URL"
+        let status =
+            app.staticTexts[
+                "ab.sequence.status"
+            ]
+
+        XCTAssertTrue(
+            status.waitForExistence(
+                timeout: 10
+            ),
+            "A-B sequence status did not appear"
+        )
+
+        let deadline =
+            Date()
+                .addingTimeInterval(
+                    125
+                )
+
+        while
+            Date() < deadline &&
+            !status.label
+                .hasPrefix(
+                    "DONE"
+                )
+        {
+            RunLoop.current.run(
+                until:
+                    Date()
+                        .addingTimeInterval(
+                            0.35
                         )
-                        return
-                    }
-
-                    components.queryItems = [
-                        URLQueryItem(
-                            name: "mode",
-                            value: mode
-                        ),
-                        URLQueryItem(
-                            name: "scenario",
-                            value: scenario
-                        ),
-                        URLQueryItem(
-                            name: "run",
-                            value: runID
-                        )
-                    ]
-
-                    guard
-                        let url =
-                            components.url?
-                                .absoluteString
-                    else {
-                        XCTFail(
-                            "Failed to build benchmark URL"
-                        )
-                        return
-                    }
-
-                    XCTContext.runActivity(
-                        named:
-                            "\(mode) / \(scenario) / \(iteration + 1)"
-                    ) { _ in
-                        let app =
-                            XCUIApplication()
-
-                        app.launchArguments = [
-                            "--ab-benchmark-mode",
-                            mode,
-                            "--ab-benchmark-url",
-                            url
-                        ]
-
-                        app.launch()
-
-                        XCTAssertTrue(
-                            app.wait(
-                                for:
-                                    .runningForeground,
-                                timeout: 10
-                            ),
-                            "Benchmark app did not remain foreground"
-                        )
-
-                        RunLoop.current.run(
-                            until:
-                                Date()
-                                    .addingTimeInterval(
-                                        5.5
-                                    )
-                        )
-
-                        app.terminate()
-
-                        RunLoop.current.run(
-                            until:
-                                Date()
-                                    .addingTimeInterval(
-                                        0.35
-                                    )
-                        )
-                    }
-                }
-            }
+            )
         }
+
+        XCTAssertTrue(
+            status.label
+                .hasPrefix(
+                    "DONE"
+                ),
+            "A-B sequence did not finish: \(status.label)"
+        )
     }
 
 }
