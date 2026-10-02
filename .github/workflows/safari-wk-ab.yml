@@ -54,19 +54,6 @@ jobs:
           cat Benchmarks/AB/out/server.log
           exit 1
 
-      - name: Boot iPhone Simulator
-        id: simulator
-        run: |
-          set -euo pipefail
-
-          UDID="$(
-            xcrun simctl list devices available -j |
-            python3 -c 'import json,sys; data=json.load(sys.stdin)["devices"]; devices=[d for group in data.values() for d in group if d.get("isAvailable") and str(d.get("name","")).startswith("iPhone")]; print(devices[0]["udid"])'
-          )"
-
-          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-          echo "Selected simulator: $UDID"
-
       - name: Resolve host address
         id: host
         run: |
@@ -99,7 +86,6 @@ jobs:
       - name: Run Safari vs WKWebView A-B
         env:
           CGPT_AB_BASE_URL: http://${{ steps.host.outputs.ip }}:8765/fixture
-          UDID: ${{ steps.simulator.outputs.udid }}
         run: |
           set -euo pipefail
 
@@ -109,9 +95,8 @@ jobs:
           (
             while true; do
               echo "=== $(date +%s) ==="
-              xcrun simctl spawn "$UDID" \
-                ps -axo pid=,rss=,comm= 2>/dev/null |
-                grep -Ei 'ChatGPTWeb|SafariViewService|WebContent' || true
+              ps -axo pid=,rss=,command= 2>/dev/null |
+                grep -Ei 'ChatGPTWeb|SafariViewService|WebContent|CoreSimulator' || true
               sleep 0.25
             done
           ) > Benchmarks/AB/out/process-samples.log 2>&1 &
@@ -129,7 +114,7 @@ jobs:
             -scheme ChatGPTWeb \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination "id=$UDID" \
+            -destination "platform=iOS Simulator,name=iPhone 16 Pro,OS=latest" \
             -derivedDataPath "$PWD/ABTestDerivedData" \
             -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
