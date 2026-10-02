@@ -34,6 +34,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: ChatGPT Web
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
         INFOPLIST_KEY_NSMicrophoneUsageDescription: ChatGPT Web 需要访问麦克风用于语音输入和语音对话
         INFOPLIST_KEY_NSCameraUsageDescription: ChatGPT Web 需要访问相机用于拍照上传图片和视频
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: ChatGPT Web 需要访问照片用于从相册上传图片和视频
