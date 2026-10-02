@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.36
+// @version      0.4.37
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.36';
+  const VERSION = '0.4.37';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -183,6 +183,7 @@
     phaseTwoStarted: false,
     statusTimer: 0,
     updateWatchdogTimer: 0,
+    styleInstallTimer: 0,
     turnCache: [],
     turnCacheDirty: true,
     lastTurnScanAt: 0,
@@ -2171,12 +2172,37 @@
   function installStyle() {
     if (document.getElementById(STYLE_ID)) return;
 
+    const root =
+      document.documentElement;
+
+    if (!root) {
+      if (!state.styleInstallTimer) {
+        state.styleInstallTimer =
+          window.setTimeout(() => {
+            state.styleInstallTimer = 0;
+            installStyle();
+          }, 0);
+      }
+      return;
+    }
+
+    root.setAttribute(
+      'data-cgpt-runtime-version',
+      VERSION
+    );
+
+    if (EXTREME_NATIVE_MODE) {
+      root.setAttribute(
+        'data-cgpt-static',
+        '1'
+      );
+    }
+
     if (RESULT_ONLY_MODE) {
-      document.documentElement
-        .setAttribute(
-          'data-cgpt-result-only',
-          '1'
-        );
+      root.setAttribute(
+        'data-cgpt-result-only',
+        '1'
+      );
     }
 
     const style = document.createElement('style');
@@ -2292,7 +2318,8 @@
       '}',
     ].join('\n');
 
-    (document.head || document.documentElement).appendChild(style);
+    (document.head || root)
+      .appendChild(style);
   }
 
   function collectTurnCandidates() {
@@ -6391,6 +6418,11 @@
 
     clearInterval(state.statusTimer);
     state.statusTimer = 0;
+
+    clearTimeout(
+      state.styleInstallTimer
+    );
+    state.styleInstallTimer = 0;
 
     clearResultCycleTimer();
     removeResultOnlyIndicator();
