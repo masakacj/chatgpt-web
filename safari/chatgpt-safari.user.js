@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.34
+// @version      0.4.35
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.34';
+  const VERSION = '0.4.35';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -120,8 +120,9 @@
   const MODERN_ACTIVITY_HEADER_QUERY =
     '[class*="group/activity-header"]';
   const MODERN_MCP_FRAME_QUERY = [
-    'iframe[title^="mcp-" i]',
-    'iframe[title*="mcpoffice" i]',
+    'iframe[title*="mcp" i]',
+    'iframe[aria-label*="mcp" i]',
+    '[class*="group/mcp-app"]',
   ].join(',');
   const MODERN_MCP_STATUS_RE =
     /(?:已打开|正在打开)\s+(?:mcp-[A-Za-z0-9._-]+|mcpoffice)/i;
@@ -2249,6 +2250,7 @@
       '}',
       'html[data-cgpt-result-only="1"] [data-cgpt-tool-summary-only="1"],',
       '[data-cgpt-process-pruned="1"],',
+      '[data-cgpt-modern-process-pruned="1"],',
       '[data-cgpt-modern-process-hidden="1"],',
       '[data-cgpt-tool-hidden="1"] {',
       '  display: none !important;',
@@ -3206,44 +3208,64 @@
     return result;
   }
 
-  function findModernMcpWrapper(node) {
+  function findModernActivityBlock(node) {
     if (!(node instanceof Element)) {
       return null;
     }
 
-    let current = node;
-    let compact = null;
+    const header =
+      node.closest?.(
+        MODERN_ACTIVITY_HEADER_QUERY
+      );
+
+    if (header instanceof HTMLElement) {
+      return (
+        header.parentElement ||
+        header
+      );
+    }
+
+    let current =
+      node.parentElement;
 
     for (
       let depth = 0;
       current &&
       current !== document.body &&
-      depth < 8;
-      depth += 1
+      depth < 7;
+      depth += 1,
+      current = current.parentElement
     ) {
-      current = current.parentElement;
-
       if (!(current instanceof HTMLElement)) {
         break;
       }
 
-      const text =
-        modernProcessText(current);
+      const hasHeader =
+        Boolean(
+          current.querySelector(
+            MODERN_ACTIVITY_HEADER_QUERY
+          )
+        );
+
+      const hasMcp =
+        current.matches?.(
+          '[class*="group/mcp-app"]'
+        ) ||
+        Boolean(
+          current.querySelector(
+            MODERN_MCP_FRAME_QUERY
+          )
+        );
 
       if (
-        current.tagName === 'DIV' &&
-        text.length <= 260
+        hasHeader &&
+        hasMcp
       ) {
-        compact = current;
-        continue;
-      }
-
-      if (compact) {
-        break;
+        return current;
       }
     }
 
-    return compact;
+    return null;
   }
 
   function hideModernProcessRoot(root) {
@@ -3262,6 +3284,7 @@
   function removeModernProcessRoot(root) {
     if (
       !(root instanceof HTMLElement) ||
+      !root.isConnected ||
       groupNeedsUserAction(root)
     ) {
       return false;
@@ -3271,8 +3294,15 @@
       'data-cgpt-modern-process-pruned',
       '1'
     );
+    root.setAttribute(
+      'data-cgpt-modern-process-hidden',
+      '1'
+    );
 
-    root.remove();
+    // WSA regression proved this exact activity boundary preserves
+    // non-process content while releasing MCP iframe / thinking subtrees.
+    root.replaceChildren();
+
     return true;
   }
 
@@ -3305,111 +3335,57 @@
       isStreaming() ||
       state.resultCycle?.active;
 
-    const statuses =
-      modernProcessMatches(
-        scope,
-        '[role="status"]'
-      );
+    const seenRoots =
+      new Set();
 
-    for (const status of statuses) {
-      if (!(status instanceof HTMLElement)) {
-        continue;
-      }
-
-      const label =
-        modernProcessText(status);
-
-      if (!MODERN_MCP_STATUS_RE.test(label)) {
-        continue;
-      }
-
-      const name =
-        modernMcpName(label);
-
-      if (name) {
-        recordResultToolKey(
-          status,
-          'MCP · ' + name
-        );
-      }
-
-      const root =
-        findModernMcpWrapper(status);
-
-      if (
-        !(root instanceof HTMLElement) ||
-        groupNeedsUserAction(root)
-      ) {
-        continue;
-      }
-
-      if (
-        running &&
-        /^正在打开/i.test(label)
-      ) {
-        if (hideModernProcessRoot(root)) {
-          hidden += 1;
-        }
-        continue;
-      }
-
-      if (removeModernProcessRoot(root)) {
-        removed += 1;
-      }
-    }
-
-    const frames =
-      modernProcessMatches(
-        scope,
-        MODERN_MCP_FRAME_QUERY
-      );
-
-    for (const frame of frames) {
-      if (!(frame instanceof HTMLIFrameElement)) {
-        continue;
-      }
-
-      const name =
-        modernMcpName(
-          frame.title || ''
-        );
-
-      if (name) {
-        recordResultToolKey(
-          frame,
-          'MCP · ' + name
-        );
-      }
-
-      const root =
-        findModernMcpWrapper(frame) ||
-        frame.parentElement;
-
+    const handleRoot = (
+      root,
+      label = '',
+      kind = ''
+    ) => {
       if (
         !(root instanceof HTMLElement) ||
         !root.isConnected ||
-        groupNeedsUserAction(root)
+        seenRoots.has(root)
       ) {
-        continue;
+        return;
       }
 
-      const rootText =
-        modernProcessText(root);
+      seenRoots.add(root);
 
-      if (
-        running &&
-        /正在打开/i.test(rootText)
-      ) {
+      if (groupNeedsUserAction(root)) {
+        root.removeAttribute(
+          'data-cgpt-modern-process-hidden'
+        );
+        return;
+      }
+
+      if (kind === 'mcp') {
+        const name =
+          modernMcpName(label) ||
+          modernMcpName(
+            modernProcessText(root)
+          );
+
+        if (name) {
+          recordResultToolKey(
+            root,
+            'MCP · ' + name
+          );
+        }
+      }
+
+      if (running) {
         if (hideModernProcessRoot(root)) {
           hidden += 1;
         }
-        continue;
+        return;
       }
 
       if (removeModernProcessRoot(root)) {
         removed += 1;
       }
-    }
+    };
 
     const headers =
       modernProcessMatches(
@@ -3425,36 +3401,110 @@
       const label =
         modernProcessText(header);
 
+      if (!label || label.length > 360) {
+        continue;
+      }
+
+      const mcpName =
+        modernMcpName(label);
+
+      const isThinking =
+        MODERN_THINKING_RE.test(label) ||
+        PROCESS_GROUP_RE.test(label);
+
+      const isTool =
+        TOOL_ACTION_RE.test(label) ||
+        TOOL_GROUP_RE.test(label);
+
       if (
-        !MODERN_THINKING_RE.test(label) ||
-        label.length > 100
+        !mcpName &&
+        !isThinking &&
+        !isTool
       ) {
         continue;
       }
 
       const root =
+        findModernActivityBlock(header) ||
         header.parentElement;
 
+      handleRoot(
+        root,
+        label,
+        mcpName
+          ? 'mcp'
+          : (
+              isThinking
+                ? 'thinking'
+                : 'tool'
+            )
+      );
+    }
+
+    const frames =
+      modernProcessMatches(
+        scope,
+        MODERN_MCP_FRAME_QUERY
+      );
+
+    for (const frame of frames) {
+      if (!(frame instanceof Element)) {
+        continue;
+      }
+
+      const label = [
+        frame.getAttribute?.('title') || '',
+        frame.getAttribute?.('aria-label') || '',
+        modernProcessText(frame),
+      ]
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      const root =
+        findModernActivityBlock(frame) ||
+        frame.closest?.(
+          '[class*="group/mcp-app"]'
+        ) ||
+        frame.parentElement;
+
+      handleRoot(
+        root,
+        label,
+        'mcp'
+      );
+    }
+
+    const statuses =
+      modernProcessMatches(
+        scope,
+        '[role="status"]'
+      );
+
+    for (const status of statuses) {
+      if (!(status instanceof HTMLElement)) {
+        continue;
+      }
+
+      const label =
+        modernProcessText(status);
+
       if (
-        !(root instanceof HTMLElement) ||
-        groupNeedsUserAction(root)
+        !MODERN_MCP_STATUS_RE.test(label) &&
+        !modernMcpName(label)
       ) {
         continue;
       }
 
-      if (
-        running &&
-        /^(?:正在思考|Thinking)/i.test(label)
-      ) {
-        if (hideModernProcessRoot(root)) {
-          hidden += 1;
-        }
-        continue;
-      }
+      const root =
+        findModernActivityBlock(status) ||
+        status.parentElement;
 
-      if (removeModernProcessRoot(root)) {
-        removed += 1;
-      }
+      handleRoot(
+        root,
+        label,
+        'mcp'
+      );
     }
 
     return {
