@@ -81,18 +81,17 @@ final class ChatGPTWebUITests: XCTestCase {
     func testSafariWKABBenchmark()
         throws
     {
-        guard
-            let baseURL =
-                ProcessInfo.processInfo
-                    .environment[
-                        "CGPT_AB_BASE_URL"
-                    ],
-            !baseURL.isEmpty
-        else {
-            throw XCTSkip(
-                "CGPT_AB_BASE_URL is not set"
-            )
-        }
+        let baseURL =
+            ProcessInfo.processInfo
+                .environment[
+                    "CGPT_AB_BASE_URL"
+                ]
+                .flatMap {
+                    $0.isEmpty
+                        ? nil
+                        : $0
+                } ??
+            "http://127.0.0.1:8765/fixture"
 
         let modes = [
             "safari",
