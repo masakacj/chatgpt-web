@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.35
+// @version      0.4.36
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.35';
+  const VERSION = '0.4.36';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -167,6 +167,8 @@
     destroyed: false,
     observer: null,
     conversationObserver: null,
+    modernProcessObserver: null,
+    modernProcessRoot: null,
     sidebarObserver: null,
     sidebarReconcileTimer: 0,
     foregroundResumeTimer: 0,
@@ -215,6 +217,7 @@
       observerCallbacks: 0,
       conversationMutations: 0,
       sidebarMutations: 0,
+      modernProcessMutations: 0,
       turnRefreshes: 0,
       toolNodesProcessed: 0,
       routeChanges: 0,
@@ -3513,6 +3516,140 @@
     };
   }
 
+  function modernProcessConversationRoot() {
+    return (
+      document.querySelector(
+        '[class*="transcriptContent"]'
+      ) ||
+      document.querySelector('main') ||
+      document.body ||
+      document.documentElement
+    );
+  }
+
+  function modernProcessNodeRelevant(node) {
+    if (!(node instanceof Element)) {
+      return false;
+    }
+
+    const query = [
+      MODERN_ACTIVITY_HEADER_QUERY,
+      MODERN_MCP_FRAME_QUERY,
+      '[role="status"]',
+    ].join(',');
+
+    return Boolean(
+      node.matches?.(query) ||
+      node.querySelector?.(query)
+    );
+  }
+
+  function bindModernProcessObserver(
+    force = false
+  ) {
+    if (
+      !RESULT_ONLY_MODE ||
+      state.destroyed ||
+      state.nativeSuspended
+    ) {
+      return false;
+    }
+
+    const root =
+      modernProcessConversationRoot();
+
+    if (!(root instanceof Element)) {
+      return false;
+    }
+
+    if (
+      !force &&
+      state.modernProcessObserver &&
+      state.modernProcessRoot === root
+    ) {
+      return true;
+    }
+
+    state.modernProcessObserver
+      ?.disconnect();
+
+    state.modernProcessRoot = root;
+
+    state.modernProcessObserver =
+      new MutationObserver(
+        mutations => {
+          state.metrics
+            .modernProcessMutations +=
+            mutations.length;
+
+          if (
+            state.destroyed ||
+            state.nativeSuspended
+          ) {
+            return;
+          }
+
+          let sawRelevantNode = false;
+
+          for (const mutation of mutations) {
+            for (
+              const node of
+                mutation.addedNodes
+            ) {
+              if (
+                !(node instanceof Element) ||
+                !modernProcessNodeRelevant(
+                  node
+                )
+              ) {
+                continue;
+              }
+
+              sawRelevantNode = true;
+
+              pruneModernResultOnlyProcess(
+                node
+              );
+            }
+          }
+
+          const nextRoot =
+            modernProcessConversationRoot();
+
+          if (
+            nextRoot instanceof Element &&
+            nextRoot !==
+              state.modernProcessRoot
+          ) {
+            bindModernProcessObserver(
+              true
+            );
+            return;
+          }
+
+          if (sawRelevantNode) {
+            pruneModernResultOnlyProcess(
+              root
+            );
+          }
+        }
+      );
+
+    state.modernProcessObserver.observe(
+      root,
+      {
+        childList: true,
+        subtree: true,
+      }
+    );
+
+    pruneModernResultOnlyProcess(
+      root
+    );
+
+    return true;
+  }
+
   function pruneProcessGroup(
     group,
     turn = null
@@ -5501,6 +5638,7 @@
         }
 
         bindScopedObservers(true);
+        bindModernProcessObserver(true);
         invalidateTurnCache();
         turnCandidates(true);
         scheduleHistoricalResultOnlyPrune(
@@ -5982,6 +6120,7 @@
 
   function setupObservers() {
     bindScopedObservers(true);
+    bindModernProcessObserver(true);
     setupPerformanceDiagnostics();
 
     const root =
@@ -6202,6 +6341,10 @@
     state.conversationObserver
       ?.disconnect();
     state.conversationObserver = null;
+    state.modernProcessObserver
+      ?.disconnect();
+    state.modernProcessObserver = null;
+    state.modernProcessRoot = null;
     state.conversationRoot =
       ChatGPTDOMAdapter.conversationRoot();
 
@@ -6255,10 +6398,14 @@
 
     state.conversationObserver
       ?.disconnect();
+    state.modernProcessObserver
+      ?.disconnect();
     state.sidebarObserver
       ?.disconnect();
 
     state.conversationObserver = null;
+    state.modernProcessObserver = null;
+    state.modernProcessRoot = null;
     state.sidebarObserver = null;
 
     pauseTelemetryForLifecycle();
@@ -6325,6 +6472,7 @@
         }
 
         bindScopedObservers();
+        bindModernProcessObserver(true);
 
         if (!EXTREME_NATIVE_MODE) {
           scheduleStateEvaluation(80);
@@ -6734,11 +6882,14 @@
 
     state.observer?.disconnect();
     state.conversationObserver?.disconnect();
+    state.modernProcessObserver?.disconnect();
     state.sidebarObserver?.disconnect();
     state.longTaskObserver?.disconnect();
 
     state.observer = null;
     state.conversationObserver = null;
+    state.modernProcessObserver = null;
+    state.modernProcessRoot = null;
     state.sidebarObserver = null;
     state.longTaskObserver = null;
 
