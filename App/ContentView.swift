@@ -6,7 +6,13 @@ struct ContentView: View {
     @ViewBuilder
     var body: some View {
         #if DEBUG
-        if let benchmark =
+        if let sequence =
+            ABBenchmarkSequenceConfig.current
+        {
+            ABBenchmarkSequenceView(
+                config: sequence
+            )
+        } else if let benchmark =
             ABBenchmarkConfig.current
         {
             ABBenchmarkView(
