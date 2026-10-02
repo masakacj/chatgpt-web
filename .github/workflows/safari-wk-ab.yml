@@ -65,9 +65,7 @@ jobs:
           )"
 
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
-
-          xcrun simctl boot "$UDID" || true
-          sleep 5
+          echo "Selected simulator: $UDID"
 
       - name: Resolve host address
         id: host
