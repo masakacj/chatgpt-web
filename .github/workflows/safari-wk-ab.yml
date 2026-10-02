@@ -35,7 +35,13 @@ jobs:
           set -euo pipefail
           mkdir -p Benchmarks/AB/out
           rm -f Benchmarks/AB/out/ab-reports.jsonl
-          python3 Benchmarks/AB/server.py             --host 127.0.0.1             --port 8765             --report Benchmarks/AB/out/ab-reports.jsonl             > Benchmarks/AB/out/server.log 2>&1 &
+
+          python3 Benchmarks/AB/server.py \
+            --host 0.0.0.0 \
+            --port 8765 \
+            --report Benchmarks/AB/out/ab-reports.jsonl \
+            > Benchmarks/AB/out/server.log 2>&1 &
+
           echo $! > Benchmarks/AB/out/server.pid
 
           for i in {1..30}; do
@@ -100,64 +106,56 @@ jobs:
           set -euo pipefail
 
           rm -rf ABTestDerivedData
+          echo "CGPT_AB_BASE_URL=$CGPT_AB_BASE_URL"
 
           (
             while true; do
               echo "=== $(date +%s) ==="
-              xcrun simctl spawn "$UDID"                 ps -axo pid=,rss=,comm= 2>/dev/null |
+              xcrun simctl spawn "$UDID" \
+                ps -axo pid=,rss=,comm= 2>/dev/null |
                 grep -Ei 'ChatGPTWeb|SafariViewService|WebContent' || true
               sleep 0.25
             done
           ) > Benchmarks/AB/out/process-samples.log 2>&1 &
+
           SAMPLER_PID=$!
 
           cleanup() {
             kill "$SAMPLER_PID" >/dev/null 2>&1 || true
           }
+
           trap cleanup EXIT
 
-          xcodebuild             -project ChatGPTWeb.xcodeproj             -scheme ChatGPTWeb             -configuration Debug             -sdk iphonesimulator             -destination "id=$UDID"             -derivedDataPath "$PWD/ABTestDerivedData"             -parallel-testing-enabled NO             -test-timeouts-enabled YES             -default-test-execution-time-allowance 180             -maximum-test-execution-time-allowance 240             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             -only-testing:ChatGPTWebUITests/ChatGPTWebUITests/testSafariWKABBenchmark             test
+          xcodebuild \
+            -project ChatGPTWeb.xcodeproj \
+            -scheme ChatGPTWeb \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$UDID" \
+            -derivedDataPath "$PWD/ABTestDerivedData" \
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 180 \
+            -maximum-test-execution-time-allowance 240 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            -only-testing:ChatGPTWebUITests/ChatGPTWebUITests/testSafariWKABBenchmark \
+            test
 
       - name: Verify report count
         if: always()
         run: |
           set -euo pipefail
+
           REPORT="Benchmarks/AB/out/ab-reports.jsonl"
           COUNT=0
+
           if [[ -f "$REPORT" ]]; then
-            COUNT="$(grep -cve '^        if: always()
-        run: |
-          set -euo pipefail
-
-          REPORT="Benchmarks/AB/out/ab-reports.jsonl"
-
-          if [[ ! -s "$REPORT" ]]; then
-            echo "# Safari vs WKWebView A/B" > Benchmarks/AB/out/ab-summary.md
-            echo "" >> Benchmarks/AB/out/ab-summary.md
-            echo "No benchmark reports were received." >> Benchmarks/AB/out/ab-summary.md
-            cat Benchmarks/AB/out/ab-summary.md >> "$GITHUB_STEP_SUMMARY"
-            exit 1
+            COUNT="$(grep -cve '^$' "$REPORT" || true)"
           fi
 
-          python3 Benchmarks/AB/summarize.py             "$REPORT"             --json-out Benchmarks/AB/out/ab-summary.json             --md-out Benchmarks/AB/out/ab-summary.md
-
-          cat Benchmarks/AB/out/ab-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload A-B artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: safari-wk-ab
-          path: |
-            Benchmarks/AB/out/ab-reports.jsonl
-            Benchmarks/AB/out/ab-summary.json
-            Benchmarks/AB/out/ab-summary.md
-            Benchmarks/AB/out/process-samples.log
-            Benchmarks/AB/out/server.log
-          if-no-files-found: warn
- "$REPORT" || true)"
-          fi
           echo "Received reports: $COUNT / 12"
+
           if [[ "$COUNT" -ne 12 ]]; then
             exit 1
           fi
@@ -177,7 +175,10 @@ jobs:
             exit 1
           fi
 
-          python3 Benchmarks/AB/summarize.py             "$REPORT"             --json-out Benchmarks/AB/out/ab-summary.json             --md-out Benchmarks/AB/out/ab-summary.md
+          python3 Benchmarks/AB/summarize.py \
+            "$REPORT" \
+            --json-out Benchmarks/AB/out/ab-summary.json \
+            --md-out Benchmarks/AB/out/ab-summary.md
 
           cat Benchmarks/AB/out/ab-summary.md >> "$GITHUB_STEP_SUMMARY"
 
