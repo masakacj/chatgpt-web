@@ -148,7 +148,7 @@ jobs:
             echo "No provisioning profile currently authorizes com.masakacj.chatgptweb; keeping unsigned build only."
             exit 0
           fi
-          curl --fail-with-body --retry 3 --retry-all-errors \
+          curl --fail-with-body --retry 8 --retry-all-errors --retry-delay 8 --retry-max-time 180 \
             -X POST \
             -H "Authorization: Bearer $GH_RUN_TOKEN" \
             -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
@@ -161,6 +161,7 @@ jobs:
             | tee "$PWD/dist/remote-sign-result.json"
 
       - name: Upload workflow artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ChatGPT-Web-Unified-IPA
