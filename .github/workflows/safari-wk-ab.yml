@@ -61,7 +61,7 @@ jobs:
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
           xcrun simctl boot "$UDID" || true
-          xcrun simctl bootstatus "$UDID" -b
+          sleep 5
 
       - name: Run Safari vs WKWebView A-B
         env:
