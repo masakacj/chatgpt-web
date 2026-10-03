@@ -95,31 +95,10 @@ jobs:
             > Benchmarks/AB/out/destinations.txt
 
           DEST_ID="$(
-            python3 - <<'PY'
-import re
-from pathlib import Path
-
-text = Path("Benchmarks/AB/out/destinations.txt").read_text(
-    encoding="utf-8",
-    errors="replace",
-)
-
-matches = re.findall(
-    r"\{\s*platform:iOS Simulator,\s*arch:[^,]+,\s*id:([^,}]+),\s*OS:[^,}]+,\s*name:([^}]+)\}",
-    text,
-)
-
-preferred = [
-    item
-    for item in matches
-    if item[1].strip().startswith("iPhone")
-]
-
-if not preferred:
-    raise SystemExit("No iPhone Simulator destination found")
-
-print(preferred[0][0].strip())
-PY
+            awk -F'id: |, OS:' \
+              '/platform:iOS Simulator/ && /name:iPhone/ {print $2; exit}' \
+              Benchmarks/AB/out/destinations.txt |
+            xargs
           )"
 
           test -n "$DEST_ID"
