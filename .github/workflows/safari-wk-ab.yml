@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   safari-wk-ab:
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 25
 
     steps:
