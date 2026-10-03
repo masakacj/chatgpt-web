@@ -92,12 +92,25 @@ jobs:
             -project ChatGPTWeb.xcodeproj \
             -scheme ChatGPTWeb \
             -showdestinations \
-            > Benchmarks/AB/out/destinations.txt
+            2>&1 |
+            tee Benchmarks/AB/out/destinations.txt
+
+          LINE="$(
+            grep 'platform:iOS Simulator' Benchmarks/AB/out/destinations.txt |
+            grep 'name:iPhone' |
+            head -n 1 ||
+            true
+          )"
+
+          if [[ -z "$LINE" ]]; then
+            echo "No iPhone Simulator destination found."
+            cat Benchmarks/AB/out/destinations.txt
+            exit 1
+          fi
 
           DEST_ID="$(
-            awk -F'id: |, OS:' \
-              '/platform:iOS Simulator/ && /name:iPhone/ {print $2; exit}' \
-              Benchmarks/AB/out/destinations.txt |
+            printf '%s\n' "$LINE" |
+            sed -E 's/.*id:([^,}]+).*/\1/' |
             xargs
           )"
 
