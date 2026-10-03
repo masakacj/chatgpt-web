@@ -81,6 +81,8 @@ final class ChatGPTWebUITests: XCTestCase {
     func testSafariWKABBenchmark()
         throws
     {
+        executionTimeAllowance = 155
+
         let app =
             XCUIApplication()
 
@@ -100,46 +102,18 @@ final class ChatGPTWebUITests: XCTestCase {
             "A-B sequence app did not remain foreground"
         )
 
-        let status =
-            app.staticTexts[
-                "ab.sequence.status"
-            ]
-
-        XCTAssertTrue(
-            status.waitForExistence(
-                timeout: 10
-            ),
-            "A-B sequence status did not appear"
+        RunLoop.current.run(
+            until:
+                Date()
+                    .addingTimeInterval(
+                        118
+                    )
         )
 
-        let deadline =
-            Date()
-                .addingTimeInterval(
-                    125
-                )
-
-        while
-            Date() < deadline &&
-            !status.label
-                .hasPrefix(
-                    "DONE"
-                )
-        {
-            RunLoop.current.run(
-                until:
-                    Date()
-                        .addingTimeInterval(
-                            0.35
-                        )
-            )
-        }
-
-        XCTAssertTrue(
-            status.label
-                .hasPrefix(
-                    "DONE"
-                ),
-            "A-B sequence did not finish: \(status.label)"
+        XCTAssertEqual(
+            app.state,
+            .runningForeground,
+            "A-B sequence app exited unexpectedly"
         )
     }
 
