@@ -72,12 +72,10 @@ private enum ABBenchmarkMarker {
         URLSession.shared
             .dataTask(
                 with: request
-            ) { _, _, _ in
-                DispatchQueue.main.async {
-                    completion()
-                }
-            }
+            ) { _, _, _ in }
             .resume()
+
+        completion()
     }
 }
 
@@ -509,24 +507,11 @@ final class ABBenchmarkSequenceController:
             .prewarmConnections(
                 to: [baseURL]
             )
-    }
 
-    override func viewDidAppear(
-        _ animated: Bool
-    ) {
-        super.viewDidAppear(
-            animated
-        )
-
-        guard
-            index == 0,
-            activeSafari == nil,
-            activeWebView == nil
-        else {
-            return
+        DispatchQueue.main.async {
+            [weak self] in
+            self?.runNext()
         }
-
-        runNext()
     }
 
     private func makeURL(
