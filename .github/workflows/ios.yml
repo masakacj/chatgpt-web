@@ -10,6 +10,7 @@ on:
       - "Resources/**"
       - "SafariScriptAction/**"
       - "safari/**"
+      - "!safari/chatgpt-desktop-lite.user.js"
       - "package.json"
       - "project.yml"
       - "UITests/**"
