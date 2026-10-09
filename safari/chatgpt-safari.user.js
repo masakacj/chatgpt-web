@@ -87,6 +87,9 @@
   const SETTLE_MS = 2800;
   const READ_DWELL_MS = 1200;
   const STATE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+  const PROJECT_INDEX_KEY = 'cgpt-sidebar-projects-v1';
+  const PROJECT_LABEL_ATTR = 'data-cgpt-project-label';
+  const PROJECT_LINK_QUERY = 'a[href*="/g/g-p-"]';
 
   const TELEMETRY_ENDPOINT =
     'https://chatgpt-web-telemetry.masakacj.workers.dev/v1/telemetry';
@@ -188,6 +191,7 @@
     turnCacheDirty: true,
     lastTurnScanAt: 0,
     conversationLinks: new Map(),
+    projectIndex: loadProjectIndex(),
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
     activeRouteSince: Date.now(),
@@ -1442,6 +1446,128 @@
       return conversationIdFromPath(url.pathname);
     } catch (_) {
       return null;
+    }
+  }
+
+  // Names come from visible project links; chat association from URL or
+  // explicit DOM markers. Keep it entirely local and event driven.
+  function projectIdFromPath(path) {
+    return String(path || '')
+      .match(/(?:^|\/)g\/(g-p-[A-Za-z0-9_-]+)(?=\/|$)/)?.[1] || null;
+  }
+
+  function projectIdFromHref(href) {
+    try {
+      const url = new URL(href, location.origin);
+      return url.origin === location.origin
+        ? projectIdFromPath(url.pathname)
+        : null;
+    } catch (_) { return null; }
+  }
+
+  function cleanProjectName(value) {
+    const name = String(value || '').replace(/\s+/g, ' ')
+      .replace(/^(?:Project|项目|專案)\s*[:：]\s*/i, '').trim();
+    return name.length && name.length <= 72 ? name : '';
+  }
+
+  function loadProjectIndex() {
+    const empty = { names: Object.create(null), chats: Object.create(null) };
+    try {
+      const raw = JSON.parse(localStorage.getItem(PROJECT_INDEX_KEY) || '{}');
+      if (raw && typeof raw === 'object') {
+        for (const [id, entry] of Object.entries(raw.names || {})) {
+          if (/^g-p-[A-Za-z0-9_-]+$/.test(id) &&
+              Date.now() - Number(entry?.at || 0) < 90 * 86400000) {
+            const name = cleanProjectName(entry.name);
+            if (name) empty.names[id] = { name, at: entry.at };
+          }
+        }
+        for (const [id, entry] of Object.entries(raw.chats || {})) {
+          if (/^[A-Za-z0-9_-]{12,80}$/.test(id) &&
+              empty.names[entry?.pid] &&
+              Date.now() - Number(entry?.at || 0) < 90 * 86400000) {
+            empty.chats[id] = { pid: entry.pid, at: entry.at };
+          }
+        }
+      }
+    } catch (_) {}
+    return empty;
+  }
+
+  function saveProjectIndex() {
+    try {
+      for (const [key, limit] of [['names', 120], ['chats', 500]]) {
+        state.projectIndex[key] = Object.fromEntries(
+          Object.entries(state.projectIndex[key])
+            .sort((a, b) => b[1].at - a[1].at).slice(0, limit)
+        );
+      }
+      localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(state.projectIndex));
+    } catch (_) {}
+  }
+
+  function rememberProjectChat(id, pid) {
+    if (!id || !/^g-p-[A-Za-z0-9_-]+$/.test(pid || '')) return false;
+    if (state.projectIndex.chats[id]?.pid === pid) return false;
+    state.projectIndex.chats[id] = { pid, at: Date.now() };
+    return true;
+  }
+
+  function indexProjectNames(scope) {
+    if (!(scope instanceof Element) && !(scope instanceof Document)) return false;
+    const links = [];
+    if (scope instanceof Element && scope.matches(PROJECT_LINK_QUERY)) links.push(scope);
+    links.push(...scope.querySelectorAll(PROJECT_LINK_QUERY));
+    let changed = false;
+    for (const link of links) {
+      if (conversationIdFromHref(link.href)) continue;
+      const pid = projectIdFromHref(link.href);
+      if (!pid) continue;
+      const title = link.querySelector(
+        '[data-testid*="project-name" i],[data-testid*="project-title" i],[dir="auto"]'
+      );
+      const name = cleanProjectName(
+        title?.textContent || link.textContent ||
+        link.getAttribute('title') || link.getAttribute('aria-label')
+      );
+      if (name && state.projectIndex.names[pid]?.name !== name) {
+        state.projectIndex.names[pid] = { name, at: Date.now() };
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function projectIdForChatItem(item, id) {
+    const href = item.getAttribute('href') ||
+      item.querySelector('a[href]')?.getAttribute('href');
+    const attr = item.getAttribute('data-project-id') ||
+      item.getAttribute('data-gizmo-id');
+    return (href && projectIdFromHref(href)) ||
+      (/^g-p-[A-Za-z0-9_-]+$/.test(attr || '') ? attr : null) ||
+      (id === currentConversationId() ? projectIdFromPath(location.pathname) : null);
+  }
+
+  function rememberCurrentProjectChat() {
+    if (rememberProjectChat(
+      currentConversationId(),
+      projectIdFromPath(location.pathname)
+    )) saveProjectIndex();
+  }
+
+  function renderProjectLabel(item, id) {
+    const target = item instanceof HTMLAnchorElement
+      ? item : item.querySelector?.('a[href*="/c/"]');
+    if (!(target instanceof Element)) return;
+    const pid = state.projectIndex.chats[id]?.pid;
+    const name = pid ? state.projectIndex.names[pid]?.name : '';
+    if (name) {
+      if (target.getAttribute(PROJECT_LABEL_ATTR) !== name) {
+        target.setAttribute(PROJECT_LABEL_ATTR, name);
+      }
+    } else if (target.hasAttribute(PROJECT_LABEL_ATTR)) {
+      target.removeAttribute(PROJECT_LABEL_ATTR);
     }
   }
 
