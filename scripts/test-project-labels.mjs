@@ -139,4 +139,4 @@ assert.equal(state.projectIndex.chats['44444444-4444-4444-8444-444444444444'].pi
 const noName = h.loadProjectIndex();
 assert.equal(noName.chats['44444444-4444-4444-8444-444444444444'].pid, 'g-p-project002');
 
-console.log('[project labels] 13 assertions passed; no HTTP requests or polling');
+console.log('[project labels] project URL, project name, cache and badge tests passed');
