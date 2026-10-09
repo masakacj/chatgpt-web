@@ -1,9 +1,9 @@
 {
   "name": "chatgpt-web-unified",
-  "version": "0.4.37",
+  "version": "0.4.38",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check safari/chatgpt-safari.user.js && node scripts/validate-userscript.mjs"
+    "check": "node --check safari/chatgpt-safari.user.js && node scripts/validate-userscript.mjs && node scripts/test-project-labels.mjs"
   }
 }

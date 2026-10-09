@@ -1,5 +1,24 @@
 # ChatGPT Web
 
+## Shared web userscript (0.4.38)
+
+- Desktop "recent chats" shows a compact project-name label when the sidebar
+  exposes a trustworthy project mapping.
+- Project names come from visible project links; chat membership comes from a
+  project chat URL, an explicit project marker, or a project chat that was opened.
+  The local cache survives page refreshes and updates project names on rename.
+- The feature does **not** fetch undocumented ChatGPT endpoints or intercept
+  application requests. It does not infer a name when membership is unknown.
+  For an old chat with only a generic /c/ link and no project metadata, opening
+  the project chat can populate the mapping.
+- Sidebar labels are drawn with CSS rather than additional DOM nodes. Existing
+  sidebar mutation handling is incremental and the desktop status fallback
+  interval is reduced from once every 7 seconds to once every 15 seconds;
+  settling/completion checks are scheduled directly.
+- The new labels are desktop-only. The iOS result-only/runtime path remains
+  disabled for sidebar project scanning.
+
+
 ## Current iOS runtime (0.4.35)
 
 The default iOS app runtime is again the developer-first WKWebView shell:

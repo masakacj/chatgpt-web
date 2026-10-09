@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.37
+// @version      0.4.38
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.37';
+  const VERSION = '0.4.38';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -42,7 +42,7 @@
         ?.nativeLifecycle
     );
   const STATUS_INTERVAL_MS =
-    EXTREME_NATIVE_MODE ? 12000 : 7000;
+    EXTREME_NATIVE_MODE ? 12000 : 15000;
   const PHASE_TWO_IDLE_TIMEOUT_MS =
     EXTREME_NATIVE_MODE ? 700 : 1200;
   const ROUTE_SETTLE_DELAY_MS =
@@ -87,6 +87,9 @@
   const SETTLE_MS = 2800;
   const READ_DWELL_MS = 1200;
   const STATE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+  const PROJECT_INDEX_KEY = 'cgpt-sidebar-projects-v1';
+  const PROJECT_LABEL_ATTR = 'data-cgpt-project-label';
+  const PROJECT_LINK_QUERY = 'a[href*="/g/g-p-"]';
 
   const TELEMETRY_ENDPOINT =
     'https://chatgpt-web-telemetry.masakacj.workers.dev/v1/telemetry';
@@ -188,6 +191,9 @@
     turnCacheDirty: true,
     lastTurnScanAt: 0,
     conversationLinks: new Map(),
+    projectIndex: EXTREME_NATIVE_MODE
+      ? { names: Object.create(null), chats: Object.create(null) }
+      : loadProjectIndex(),
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
     activeRouteSince: Date.now(),
@@ -1445,6 +1451,136 @@
     }
   }
 
+  // Names come from visible project links; chat association from URL or
+  // explicit DOM markers. Keep it entirely local and event driven.
+  function projectIdFromPath(path) {
+    return String(path || '')
+      .match(/(?:^|\/)g\/(g-p-[A-Za-z0-9_-]+)(?=\/|$)/)?.[1] || null;
+  }
+
+  function projectIdFromHref(href) {
+    try {
+      const url = new URL(href, location.origin);
+      return url.origin === location.origin
+        ? projectIdFromPath(url.pathname)
+        : null;
+    } catch (_) { return null; }
+  }
+
+  function cleanProjectName(value) {
+    const name = String(value || '').replace(/\s+/g, ' ').trim()
+      .replace(/^(?:Project|项目|專案)\s*[:：]\s*/i, '').trim();
+    return name.length && name.length <= 72 ? name : '';
+  }
+
+  function loadProjectIndex() {
+    const empty = { names: Object.create(null), chats: Object.create(null) };
+    try {
+      const raw = JSON.parse(localStorage.getItem(PROJECT_INDEX_KEY) || '{}');
+      if (raw && typeof raw === 'object') {
+        for (const [id, entry] of Object.entries(raw.names || {})) {
+          if (/^g-p-[A-Za-z0-9_-]+$/.test(id) &&
+              Date.now() - Number(entry?.at || 0) < 90 * 86400000) {
+            const name = cleanProjectName(entry.name);
+            if (name) empty.names[id] = { name, at: entry.at };
+          }
+        }
+        for (const [id, entry] of Object.entries(raw.chats || {})) {
+          if (/^[A-Za-z0-9_-]{12,80}$/.test(id) &&
+              /^g-p-[A-Za-z0-9_-]+$/.test(entry?.pid || '') &&
+              Date.now() - Number(entry?.at || 0) < 90 * 86400000) {
+            empty.chats[id] = { pid: entry.pid, at: entry.at };
+          }
+        }
+      }
+    } catch (_) {}
+    return empty;
+  }
+
+  function saveProjectIndex() {
+    try {
+      for (const [key, limit] of [['names', 120], ['chats', 500]]) {
+        state.projectIndex[key] = Object.fromEntries(
+          Object.entries(state.projectIndex[key])
+            .sort((a, b) => b[1].at - a[1].at).slice(0, limit)
+        );
+      }
+      localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(state.projectIndex));
+    } catch (_) {}
+  }
+
+  function rememberProjectChat(id, pid) {
+    if (!id || !/^g-p-[A-Za-z0-9_-]+$/.test(pid || '')) return false;
+    if (state.projectIndex.chats[id]?.pid === pid) return false;
+    state.projectIndex.chats[id] = { pid, at: Date.now() };
+    return true;
+  }
+
+  function indexProjectNames(scope) {
+    if (!(scope instanceof Element) && !(scope instanceof Document)) return false;
+    const links = [];
+    if (scope instanceof Element && scope.matches(PROJECT_LINK_QUERY)) links.push(scope);
+    links.push(...scope.querySelectorAll(PROJECT_LINK_QUERY));
+    let changed = false;
+    for (const link of links) {
+      const pid = projectIdFromHref(link.href);
+      if (!pid) continue;
+      const conversationId = conversationIdFromHref(link.href);
+      if (conversationId) {
+        // Project-home chat lists can populate recent-chat membership
+        // even when the recent row itself only has a generic /c/ URL.
+        if (rememberProjectChat(conversationId, pid)) changed = true;
+        continue;
+      }
+      const title = link.querySelector(
+        '[data-testid*="project-name" i],[data-testid*="project-title" i],[dir="auto"]'
+      );
+      const name = cleanProjectName(
+        title?.textContent || link.textContent ||
+        link.getAttribute('title') || link.getAttribute('aria-label')
+      );
+      if (name && state.projectIndex.names[pid]?.name !== name) {
+        state.projectIndex.names[pid] = { name, at: Date.now() };
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function projectIdForChatItem(item, id) {
+    const href = item.getAttribute('href') ||
+      item.querySelector('a[href]')?.getAttribute('href');
+    const marker = item.getAttribute('data-project-id') ||
+      item.getAttribute('data-gizmo-id') ||
+      item.querySelector('[data-project-id]')?.getAttribute('data-project-id') ||
+      item.querySelector('[data-gizmo-id]')?.getAttribute('data-gizmo-id');
+    return (href && projectIdFromHref(href)) ||
+      (/^g-p-[A-Za-z0-9_-]+$/.test(marker || '') ? marker : null) ||
+      (id === currentConversationId() ? projectIdFromPath(location.pathname) : null);
+  }
+
+  function rememberCurrentProjectChat() {
+    if (rememberProjectChat(
+      currentConversationId(),
+      projectIdFromPath(location.pathname)
+    )) saveProjectIndex();
+  }
+
+  function renderProjectLabel(item, id) {
+    const target = item instanceof HTMLAnchorElement
+      ? item : item.querySelector?.('a[href*="/c/"]');
+    if (!(target instanceof Element)) return;
+    const pid = state.projectIndex.chats[id]?.pid;
+    const name = pid ? state.projectIndex.names[pid]?.name : '';
+    if (name) {
+      if (target.getAttribute(PROJECT_LABEL_ATTR) !== name) {
+        target.setAttribute(PROJECT_LABEL_ATTR, name);
+      }
+    } else if (target.hasAttribute(PROJECT_LABEL_ATTR)) {
+      target.removeAttribute(PROJECT_LABEL_ATTR);
+    }
+  }
+
   function currentConversationId() {
     return conversationIdFromPath(location.pathname);
   }
@@ -1596,37 +1732,29 @@
     updateUI();
   }
 
-  function registerConversationLinks(
-    scope = document
-  ) {
+  function registerConversationLinks(scope = document) {
     if (EXTREME_NATIVE_MODE) {
-      return;
+      return { ids: new Set(), indexChanged: false };
     }
 
-    for (
-      const item of
-        ChatGPTDOMAdapter
-          .conversationItems(scope)
-    ) {
-      const id =
-        ChatGPTDOMAdapter
-          .conversationIdForItem(item);
-
+    let indexChanged = indexProjectNames(scope);
+    const ids = new Set();
+    for (const item of ChatGPTDOMAdapter.conversationItems(scope)) {
+      const id = ChatGPTDOMAdapter.conversationIdForItem(item);
       if (!id) continue;
-
-      let links =
-        state.conversationLinks.get(id);
-
+      ids.add(id);
+      if (rememberProjectChat(id, projectIdForChatItem(item, id))) {
+        indexChanged = true;
+      }
+      let links = state.conversationLinks.get(id);
       if (!links) {
         links = new Set();
-        state.conversationLinks.set(
-          id,
-          links
-        );
+        state.conversationLinks.set(id, links);
       }
-
       links.add(item);
     }
+    if (indexChanged) saveProjectIndex();
+    return { ids, indexChanged };
   }
 
   function renderConversationStateForId(id) {
@@ -1669,6 +1797,7 @@
           'data-cgpt-safari-chat-state'
         );
       }
+      renderProjectLabel(item, id);
     }
 
     if (!links.size) {
@@ -1676,28 +1805,20 @@
     }
   }
 
-  function renderConversationStates(
-    scope = null
-  ) {
-    if (EXTREME_NATIVE_MODE) {
-      return;
-    }
+  function renderConversationStates(scope = null) {
+    if (EXTREME_NATIVE_MODE) return;
+    let ids = null;
 
     if (scope) {
-      registerConversationLinks(scope);
-    } else if (
-      state.conversationLinks.size === 0
-    ) {
-      registerConversationLinks(
-        ChatGPTDOMAdapter.sidebarRoot() ||
-        document
-      );
+      const result = registerConversationLinks(scope);
+      ids = result.indexChanged
+        ? state.conversationLinks.keys()
+        : result.ids;
+    } else if (state.conversationLinks.size === 0) {
+      registerConversationLinks(ChatGPTDOMAdapter.sidebarRoot() || document);
     }
 
-    for (
-      const id of
-        state.conversationLinks.keys()
-    ) {
+    for (const id of ids || state.conversationLinks.keys()) {
       renderConversationStateForId(id);
     }
   }
@@ -1794,7 +1915,6 @@
     }
 
     if (!id) {
-      renderConversationStates();
       updateUI();
       return;
     }
@@ -1839,6 +1959,7 @@
         settlingSince: now,
         completedAt: 0,
       });
+      scheduleStateEvaluation(SETTLE_MS + 40);
       updateUI();
       return;
     }
@@ -1851,6 +1972,8 @@
           settlingSince: 0,
           completedAt: now,
         });
+      } else {
+        scheduleStateEvaluation(Math.max(60, SETTLE_MS - (now - since) + 40));
       }
       updateUI();
       return;
@@ -2313,6 +2436,25 @@
       '[data-cgpt-safari-chat-state="waiting_user"] { --cgpt-chat-state-color: #ff9f0a; }',
       '[data-cgpt-safari-chat-state="settling"] { --cgpt-chat-state-color: #8e8e93; }',
       '[data-cgpt-safari-chat-state="completed_unread"] { --cgpt-chat-state-color: #0a84ff; }',
+      // A CSS pseudo-label avoids DOM insertion and preserves native click targets.
+      'a[data-cgpt-project-label]::after {',
+      '  content: attr(data-cgpt-project-label);',
+      '  display: inline-block;',
+      '  flex: 0 1 auto;',
+      '  vertical-align: middle;',
+      '  max-width: 86px;',
+      '  min-width: 0;',
+      '  overflow: hidden;',
+      '  text-overflow: ellipsis;',
+      '  white-space: nowrap;',
+      '  margin-left: 5px;',
+      '  padding: 1px 5px;',
+      '  border-radius: 4px;',
+      '  background: rgba(127,127,127,.12);',
+      '  opacity: .72;',
+      '  font: 10px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;',
+      '  pointer-events: none;',
+      '}',
       '@media print {',
       '  #' + HOST_ID + ' { display: none !important; }',
       '}',
@@ -5805,15 +5947,10 @@
     );
   }
 
-  function handleSidebarMutations(
-    mutations
-  ) {
-    const observerStarted =
-      performance.now();
-
+  function handleSidebarMutations(mutations) {
+    const observerStarted = performance.now();
     state.metrics.observerCallbacks += 1;
-    state.metrics.sidebarMutations +=
-      mutations.length;
+    state.metrics.sidebarMutations += mutations.length;
 
     if (routeChanged()) {
       recordTelemetryCost(
@@ -5825,31 +5962,35 @@
     }
 
     let needsReconcile = false;
+    const itemQuery = 'a[href*="/c/"],[data-conversation-id],' +
+      PROJECT_LINK_QUERY;
 
     for (const mutation of mutations) {
       if (mutation.type === 'attributes') {
         needsReconcile = true;
         continue;
       }
-
-      if (mutation.removedNodes.length) {
-        needsReconcile = true;
-      }
-
-      for (const node of mutation.addedNodes) {
-        if (!(node instanceof Element)) {
-          continue;
+      for (const node of mutation.removedNodes) {
+        if (
+          node instanceof Element &&
+          (node.matches(itemQuery) || node.querySelector(itemQuery))
+        ) {
+          needsReconcile = true;
+          break;
         }
-
-        registerConversationLinks(node);
-        renderConversationStates(node);
+      }
+      for (const node of mutation.addedNodes) {
+        if (node instanceof Element) {
+          renderConversationStates(node);
+        } else if (mutation.target instanceof Element) {
+          // Project link text may change without replacing the anchor.
+          const projectLink = mutation.target.closest(PROJECT_LINK_QUERY);
+          if (projectLink) renderConversationStates(projectLink);
+        }
       }
     }
 
-    if (needsReconcile) {
-      scheduleSidebarReconcile(60);
-    }
-
+    if (needsReconcile) scheduleSidebarReconcile(140);
     recordTelemetryCost(
       'sidebarObserverMs',
       performance.now() - observerStarted
@@ -6276,6 +6417,9 @@
     scheduleInitialBottomScroll(true);
 
     if (!EXTREME_NATIVE_MODE) {
+      // One startup pass also finds project links outside the chat nav.
+      if (indexProjectNames(document)) saveProjectIndex();
+      rememberCurrentProjectChat();
       evaluateConversationState();
       renderConversationStates();
     }
@@ -6343,6 +6487,10 @@
     state.lastRoute =
       location.pathname +
       location.search;
+    if (!EXTREME_NATIVE_MODE) {
+      if (indexProjectNames(document)) saveProjectIndex();
+      rememberCurrentProjectChat();
+    }
     state.activeConversationId = null;
     state.activeRouteSince = Date.now();
     state.settlingSince = 0;
@@ -6854,6 +7002,10 @@
           state.phaseTwoStarted,
         conversationLinks:
           state.conversationLinks.size,
+        namedProjects:
+          Object.keys(state.projectIndex.names).length,
+        mappedProjectChats:
+          Object.keys(state.projectIndex.chats).length,
       },
       telemetry: {
         enabled: state.settings.telemetryEnabled,
@@ -6951,12 +7103,12 @@
     for (
       const item of
         document.querySelectorAll(
-          '[data-cgpt-safari-chat-state]'
+          '[data-cgpt-safari-chat-state],' +
+          '[' + PROJECT_LABEL_ATTR + ']'
         )
     ) {
-      item.removeAttribute(
-        'data-cgpt-safari-chat-state'
-      );
+      item.removeAttribute('data-cgpt-safari-chat-state');
+      item.removeAttribute(PROJECT_LABEL_ATTR);
     }
     document.documentElement
       ?.removeAttribute(
