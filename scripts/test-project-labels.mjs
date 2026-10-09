@@ -100,8 +100,11 @@ assert.equal(h.cleanProjectName(' 项目： 开发工作 '), '开发工作');
 
 const root = new FakeDocument();
 const project = new FakeAnchor('/g/g-p-project001', '开发工作');
-root.children.push(project);
+const projectChatId = '55555555-5555-4555-8555-555555555555';
+const projectChat = new FakeAnchor('/g/g-p-project001/c/' + projectChatId, '项目主页中的聊天');
+root.children.push(project, projectChat);
 assert.equal(h.indexProjectNames(root), true);
+assert.equal(state.projectIndex.chats[projectChatId]?.pid, 'g-p-project001');
 assert.equal(h.rememberProjectChat(chatId, 'g-p-project001'), true);
 
 const recent = new FakeAnchor('/c/' + chatId, '一个聊天');
