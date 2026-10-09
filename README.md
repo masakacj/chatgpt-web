@@ -1,40 +1,45 @@
 # ChatGPT Web
 
-## Desktop Lite 0.2.0 — recommended for Chrome / Tampermonkey
+## Desktop Lite 0.2.2 — minimal intervention for Chrome / Tampermonkey
 
-**Goal:** open long MCP/DevSpace conversations using ChatGPT's native renderer,
-and reliably show the conversation states we can actually observe. This is a
-separate, minimal userscript; the existing iOS runtime stays unchanged.
+**Purpose:** keep ChatGPT's native long-chat renderer and avoid adding any
+extra work while the browser is idle. The new version incorporates native
+turn-state observations from real MCP/DevSpace long conversations.
 
-- **Source:** `safari/chatgpt-desktop-lite.user.js` with independent update URLs.
-- **Install:** disable/remove the previous **ChatGPT Web Unified** userscript on
-  desktop, then install Desktop Lite in Tampermonkey or Violentmonkey. Do not
-  run the old heavy script alongside Lite. The iOS app keeps the existing
-  shared-core script and does not switch automatically.
-- **Same Chrome bridge:** `D:\workspace\chrome-extension-bridge` contains
-  the matching local extension `chatgpt-perf` v0.2.0; the original 0.1.15
-  implementation is backed up under `scripts/legacy-chatgpt-perf-0.1.15.js`.
-- **Behavior:** no message virtualization, MCP rewriting, DOM removal,
-  scroll positioning, internal API calls, or general UI overrides.
-  ChatGPT owns rendering, navigation, and content organization.
-- **States:** `进行中`, `已完成`, `等待操作`, `已停止`, `待确认`.
-  A 90-second lapse without a running-tab heartbeat becomes `待确认`,
-  **not** an invented completion. Completion normally requires seeing the
-  native Stop control followed by its disappearance and a settled answer.
-  Previously completed historical chats may be marked only after loading
-  and verifying no active generation.
-- **Overhead:** a single observer scoped to the sidebar; short status checks
-  run only while an active request is observed. No idle global polling or
-  mutation watching of the message transcript.
-- **Limitation:** the browser script cannot know authoritative server-side
-  progress for chats not open in a connected tab. Unobservable work is shown
-  as `待确认`, not silently marked complete.
+- **Install / update:** [Desktop Lite userscript](https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-desktop-lite.user.js). It uses the same GitHub raw URL for future updates.
+- **Important:** disable the legacy **ChatGPT Web Unified** desktop userscript
+  and any older **Desktop Lite / chatgpt-perf** extension in that same browser
+  profile. Running multiple optimizers at once can cause redundant observers,
+  duplicate badges or UI conflicts.
+- **Never touches:** conversation messages, DIL/Markdown, Thinking/MCP
+  content, iframe loading, fetch/XHR, React internals, scroll state, tab
+  navigation or ChatGPT's rendering hierarchy.
+- **Conservative states:** `进行中`, `已完成`, `等待操作`, `已停止`,
+  `待确认`. Prefer `data-talvt-turn-state` when available and recognize
+  the newer `data-conversation-role="assistant"` messages. Fallback to a
+  visibly active native Stop button for older markup.
+- **Minimal overhead:** **no permanent polling**. One scoped sidebar
+  observer; only one timed status check while an active chat request is
+  observed (1.8 s visible / 3.2 s hidden). No duplicate heartbeat timer.
+  Initial chat hydration checks stop early once a trustworthy native state is
+  found, with a finite final retry for very slow conversations.
+- **Safety:** a 90-second lapse without an active heartbeat is shown as
+  `待确认`, never silently converted to `已完成`. Cross-tab state is
+  broadcast and cached locally only.
+- **Scope:** Desktop Lite is separate from the iOS Safari/native-container
+  script, which is **not changed** by this update.
 
-Desktop Lite is intentionally much smaller and more resilient to frontend
-changes than the old shared desktop renderer. For the baseline and regression
-suite, the existing Chrome bridge provides `scripts/test-chatgpt-lite-deployed.mjs`
-and `scripts/test-chatgpt-lite-multitab.mjs`. They validate native-page
-injection, sidebar labels, and cross-tab transitions with simulated messages.
+**What this does not claim:** Chrome tracing found that ChatGPT itself can
+spend several seconds in script execution during startup/hydration, and a WSA
+long MCP chat displayed many historical iframe placeholders. Removing DOM or
+blocking iframe requests failed to prove faster complete-answer availability
+and can break content. Therefore 0.2.2 deliberately avoids destructive
+"optimization" and makes no unverified long-chat speedup claim.
+
+Native-state and multi-tab regression tests plus a synthetic 160-turn,
+23,232-node long-DOM test were passed on the local Chrome extension bridge.
+The user's actual ChatGPT account remains under its normal browser session;
+tests on the dedicated profile use a separate logged-out browser.
 
 ## Shared web userscript (0.4.39)
 
