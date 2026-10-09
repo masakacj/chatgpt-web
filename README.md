@@ -1,5 +1,41 @@
 # ChatGPT Web
 
+## Desktop Lite 0.2.0 — recommended for Chrome / Tampermonkey
+
+**Goal:** open long MCP/DevSpace conversations using ChatGPT's native renderer,
+and reliably show the conversation states we can actually observe. This is a
+separate, minimal userscript; the existing iOS runtime stays unchanged.
+
+- **Source:** `safari/chatgpt-desktop-lite.user.js` with independent update URLs.
+- **Install:** disable/remove the previous **ChatGPT Web Unified** userscript on
+  desktop, then install Desktop Lite in Tampermonkey or Violentmonkey. Do not
+  run the old heavy script alongside Lite. The iOS app keeps the existing
+  shared-core script and does not switch automatically.
+- **Same Chrome bridge:** `D:\workspace\chrome-extension-bridge` contains
+  the matching local extension `chatgpt-perf` v0.2.0; the original 0.1.15
+  implementation is backed up under `scripts/legacy-chatgpt-perf-0.1.15.js`.
+- **Behavior:** no message virtualization, MCP rewriting, DOM removal,
+  scroll positioning, internal API calls, or general UI overrides.
+  ChatGPT owns rendering, navigation, and content organization.
+- **States:** `进行中`, `已完成`, `等待操作`, `已停止`, `待确认`.
+  A 90-second lapse without a running-tab heartbeat becomes `待确认`,
+  **not** an invented completion. Completion normally requires seeing the
+  native Stop control followed by its disappearance and a settled answer.
+  Previously completed historical chats may be marked only after loading
+  and verifying no active generation.
+- **Overhead:** a single observer scoped to the sidebar; short status checks
+  run only while an active request is observed. No idle global polling or
+  mutation watching of the message transcript.
+- **Limitation:** the browser script cannot know authoritative server-side
+  progress for chats not open in a connected tab. Unobservable work is shown
+  as `待确认`, not silently marked complete.
+
+Desktop Lite is intentionally much smaller and more resilient to frontend
+changes than the old shared desktop renderer. For the baseline and regression
+suite, the existing Chrome bridge provides `scripts/test-chatgpt-lite-deployed.mjs`
+and `scripts/test-chatgpt-lite-multitab.mjs`. They validate native-page
+injection, sidebar labels, and cross-tab transitions with simulated messages.
+
 ## Shared web userscript (0.4.39)
 
 - Project-name labels are **Recents-only**: conversations listed inside a

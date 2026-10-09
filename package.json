@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check safari/chatgpt-safari.user.js && node scripts/validate-userscript.mjs && node scripts/test-project-labels.mjs"
+    "check": "node --check safari/chatgpt-safari.user.js && node scripts/validate-userscript.mjs && node scripts/test-project-labels.mjs && node --check safari/chatgpt-desktop-lite.user.js && node scripts/test-desktop-lite.mjs"
   }
 }
