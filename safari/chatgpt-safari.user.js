@@ -1523,9 +1523,15 @@
     links.push(...scope.querySelectorAll(PROJECT_LINK_QUERY));
     let changed = false;
     for (const link of links) {
-      if (conversationIdFromHref(link.href)) continue;
       const pid = projectIdFromHref(link.href);
       if (!pid) continue;
+      const conversationId = conversationIdFromHref(link.href);
+      if (conversationId) {
+        // Project-home chat lists can populate recent-chat membership
+        // even when the recent row itself only has a generic /c/ URL.
+        if (rememberProjectChat(conversationId, pid)) changed = true;
+        continue;
+      }
       const title = link.querySelector(
         '[data-testid*="project-name" i],[data-testid*="project-title" i],[dir="auto"]'
       );
