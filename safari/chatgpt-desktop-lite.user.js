@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Desktop Lite - Conversation Status
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.2.0
-// @description  Respect native long-chat loading; track running/completed chat state conservatively.
+// @version      0.2.2
+// @description  Minimal chat status; native rendering untouched, no idle polling or MCP pruning.
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
 // @noframes
@@ -10,16 +10,19 @@
 // @updateURL    https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-desktop-lite.user.js
 // @downloadURL  https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-desktop-lite.user.js
 // ==/UserScript==
+
 (() => {
   'use strict';
   // Minimal desktop layer: never rewrites messages, tools, network or scroll.
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.2';
   const KEY = 'cgpt-lite-states-v1';
   const CHANNEL = 'cgpt-lite-sync-v1';
   const ATTR = 'data-cgpt-lite-state';
   const STALE_MS = 90000;
-  const SETTLE_MS = 3200;
-  const POLL_ACTIVE_MS = 1300;
+  const SETTLE_MS = 2500;
+  // One self-scheduling timer only while a chat is actually running.
+  const POLL_ACTIVE_MS = 1800;
+  const POLL_HIDDEN_MS = 3200;
   const STOP = [
     'button[data-testid="stop-button"]',
     'button[aria-label*="Stop generating" i]',
@@ -49,13 +52,13 @@
   let currentId = null;
   let run = null;
   let runTick = 0;
-  let heartbeat = 0;
   let pendingNewChatAt = 0;
   let sidebarObserver = null;
   let sidebarRoot = null;
   let sidebarTimer = 0;
   const expiryTimers = new Map();
   let routeTimers = [];
+  let bootTimers = [];
   let channel = null;
   let destroyed = false;
 
@@ -88,8 +91,9 @@
     const status = effectiveStatus(state.get(id));
     for (const anchor of [...links]) {
       if (!anchor.isConnected) { links.delete(anchor); continue; }
-      if (status && status !== 'unknown') anchor.setAttribute(ATTR, status);
-      else anchor.removeAttribute(ATTR);
+      if (status && status !== 'unknown') {
+        if (anchor.getAttribute(ATTR) !== status) anchor.setAttribute(ATTR, status);
+      } else if (anchor.hasAttribute(ATTR)) anchor.removeAttribute(ATTR);
     }
     if (!links.size) sidebarLinks.delete(id);
   }
@@ -154,86 +158,149 @@
     }
     return false;
   }
+  function nativeTurnSnapshot() {
+    // The 2026 ChatGPT DOM no longer uses article or author-role wrappers.
+    // Read the last native turn only; do not walk tool/Thinking/MCP contents.
+    const root = document.querySelector('main [class*="transcriptContent"]') ||
+      document.querySelector('main');
+    const turns = root?.querySelectorAll('[data-talvt-turn-state]');
+    const last = turns?.length ? turns[turns.length - 1] : null;
+    return {
+      state: last?.getAttribute('data-talvt-turn-state') || null,
+      key: last?.closest('[data-turn-key]')?.getAttribute('data-turn-key') || null
+    };
+  }
+  function isNativeRunning(value) {
+    return value === 'in_progress' || value === 'running' ||
+      value === 'streaming';
+  }
+  function isNativeComplete(value) {
+    return value === 'complete' || value === 'completed';
+  }
+  function isNativeWaiting(value) {
+    return value === 'waiting_user' || value === 'waiting_for_user';
+  }
   function hasAssistantContent() {
-    const main = document.querySelector('main');
-    return Boolean(main?.querySelector(
+    const root = document.querySelector('main [class*="transcriptContent"]') ||
+      document.querySelector('main');
+    return Boolean(root?.querySelector(
+      '[data-conversation-role="assistant"],' +
       '[data-message-author-role="assistant"],' +
-      '[data-testid^="conversation-turn-"] [data-message-author-role="assistant"]'
+      '[data-dil-message-id]'
     ));
   }
   function clearActive() {
-    clearInterval(runTick); runTick = 0;
-    clearInterval(heartbeat); heartbeat = 0;
+    clearTimeout(runTick); runTick = 0;
     run = null;
   }
   function watchActive() {
-    if (!runTick) runTick = setInterval(checkActive, POLL_ACTIVE_MS);
-    if (!heartbeat) heartbeat = setInterval(() => {
-      if (run && run.id === currentId && state.get(run.id)?.status === 'running') {
-        mark(run.id, 'running');
-      }
-    }, 20000);
+    if (runTick || !run || destroyed) return;
+    // Hidden tabs are sampled less often. The active check also refreshes the
+    // heartbeat, so the old additional 20-second interval is unnecessary.
+    runTick = setTimeout(() => {
+      runTick = 0;
+      checkActive();
+      if (run) watchActive();
+    }, document.hidden ? POLL_HIDDEN_MS : POLL_ACTIVE_MS);
   }
   function begin(id = currentId) {
     if (!id) { pendingNewChatAt = now(); return; }
     if (run?.id === id && state.get(id)?.status === 'running') return;
     clearActive();
-    run = { id, since: now(), stopSeen: generating(), clearSince: 0, canceled: false };
+    const native = nativeTurnSnapshot();
+    const stopSeen = isNativeRunning(native.state) ? false : generating();
+    run = {
+      id, since: now(), initialTurnKey: native.key,
+      signalSeen: stopSeen || isNativeRunning(native.state),
+      clearSince: 0, canceled: false,
+    };
     mark(id, 'running');
     watchActive();
   }
   function checkActive() {
     if (!run || run.id !== currentId) { clearActive(); return; }
     const id = run.id;
-    if (generating()) {
-      run.stopSeen = true;
-      run.clearSince = 0;
-      mark(id, 'running');
-      return;
-    }
-    if (waitingForUser()) {
+    const native = nativeTurnSnapshot();
+    if (isNativeWaiting(native.state) || waitingForUser()) {
       mark(id, 'waiting');
       clearActive();
       return;
     }
+    // Native state takes priority over hidden/inert Stop buttons.
+    const stopSeen = !native.state && generating();
+    if (isNativeRunning(native.state) || stopSeen) {
+      run.signalSeen = true;
+      run.clearSince = 0;
+      mark(id, 'running');
+      return;
+    }
+    // Fast replies can transition from the previous completed turn directly
+    // to a new completed turn between our checks. Compare turn identity.
+    if (isNativeComplete(native.state) && run.initialTurnKey &&
+        native.key && native.key !== run.initialTurnKey) {
+      run.signalSeen = true;
+    }
     if (!run.clearSince) run.clearSince = now();
-    const noStopFor = now() - run.clearSince;
-    if (run.canceled && noStopFor > 1000) {
+    const quietFor = now() - run.clearSince;
+    if (run.canceled && quietFor >= 1000) {
       mark(id, 'stopped');
       clearActive();
-    } else if (run.stopSeen && noStopFor >= SETTLE_MS) {
+    } else if (run.signalSeen && quietFor >= SETTLE_MS) {
       mark(id, hasAssistantContent() ? 'completed' : 'uncertain');
       clearActive();
-    } else if (!run.stopSeen && now() - run.since > 30000) {
-      // Long MCP operations can have no visible stop control. Do not guess.
+    } else if (!run.signalSeen && now() - run.since > 30000) {
+      // An absent signal never becomes an invented completion.
       mark(id, 'uncertain');
       clearActive();
     }
+  }
+  function clearRouteTimers() {
+    for (const timer of routeTimers) clearTimeout(timer);
+    routeTimers = [];
   }
   function visit() {
     const next = chatId();
     if (next === currentId && !pendingNewChatAt) return;
     clearActive();
+    clearRouteTimers();
     currentId = next;
     if (next && pendingNewChatAt && now() - pendingNewChatAt < 20000) {
       pendingNewChatAt = 0;
       begin(next);
     }
     if (!next) return;
+    // Native long chats sometimes hydrate much later than document.complete.
+    // A finite sequence is cheaper than observing the entire transcript.
+    const delays = [250, 1200, 4500, 12000, 28000, 48000];
     let checks = 0;
     const check = () => {
       if (destroyed || currentId !== next) return;
-      if (generating()) { begin(next); return; }
-      if (waitingForUser()) { mark(next, 'waiting'); return; }
-      if (++checks === 4 && !state.get(next) && hasAssistantContent()) {
-        mark(next, 'completed');
+      checks += 1;
+      const native = nativeTurnSnapshot();
+      if (isNativeWaiting(native.state) || waitingForUser()) {
+        mark(next, 'waiting');
+        clearRouteTimers();
+        return;
+      }
+      if (isNativeRunning(native.state) ||
+          (!native.state && generating())) {
+        begin(next);
+        clearRouteTimers();
+        return;
+      }
+      if (isNativeComplete(native.state) && hasAssistantContent()) {
+        if (!run || run.id !== next) mark(next, 'completed');
+        clearRouteTimers();
+        return;
+      }
+      if (checks === delays.length && !state.get(next)) {
+        mark(next, 'uncertain');
       }
     };
-    for (const delay of [150, 700, 1800, 4000]) {
-      routeTimers.push(setTimeout(check, delay));
-    }
+    for (const delay of delays) routeTimers.push(setTimeout(check, delay));
   }
   function attachSidebar() {
+    if (destroyed) return;
     const candidates = document.querySelectorAll('nav,aside');
     const root = [...candidates].find(node =>
       node.querySelector('a[href*="/c/"],[data-conversation-id]')
@@ -292,8 +359,6 @@
     if (link) setTimeout(onRoute, 0);
   }
   function onRoute() {
-    for (const timer of routeTimers) clearTimeout(timer);
-    routeTimers = [];
     visit();
     attachSidebar();
   }
@@ -342,7 +407,9 @@
     clearTimeout(sidebarTimer);
     expiryTimers.forEach(clearTimeout);
     expiryTimers.clear();
-    routeTimers.forEach(clearTimeout);
+    clearRouteTimers();
+    bootTimers.forEach(clearTimeout);
+    bootTimers = [];
     document.removeEventListener('submit', onSubmit, true);
     document.removeEventListener('click', onClick, true);
     window.removeEventListener('popstate', onRoute);
@@ -377,8 +444,8 @@
   attachSidebar();
   visit();
   // Sidebar may mount after hydration. These are finite retries, not a poller.
-  setTimeout(attachSidebar, 500);
-  setTimeout(attachSidebar, 1800);
+  bootTimers.push(setTimeout(attachSidebar, 500));
+  bootTimers.push(setTimeout(attachSidebar, 1800));
   // Lightweight diagnostic surface; no custom panel or official UI replacement.
   window.__CGPT_LITE_INSTANCE__ = {
     destroy,
