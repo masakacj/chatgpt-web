@@ -34,12 +34,16 @@ jobs:
           rm -rf dist
           mkdir -p dist
           cp safari/chatgpt-safari.user.js dist/ChatGPT-Web-Unified.user.js
+          cp safari/chatgpt-desktop-lite.user.js dist/ChatGPT-Web-Desktop-Lite.user.js
           (
             cd dist
             sha256sum ChatGPT-Web-Unified.user.js > ChatGPT-Web-Unified.user.js.sha256
-
             zip -q ChatGPT-Web-Unified.zip ChatGPT-Web-Unified.user.js
             sha256sum ChatGPT-Web-Unified.zip > ChatGPT-Web-Unified.zip.sha256
+
+            sha256sum ChatGPT-Web-Desktop-Lite.user.js > ChatGPT-Web-Desktop-Lite.user.js.sha256
+            zip -q ChatGPT-Web-Desktop-Lite.zip ChatGPT-Web-Desktop-Lite.user.js
+            sha256sum ChatGPT-Web-Desktop-Lite.zip > ChatGPT-Web-Desktop-Lite.zip.sha256
           )
 
       - name: Upload artifact
