@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.38
+// @version      0.4.39
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.38';
+  const VERSION = '0.4.39';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1566,15 +1566,86 @@
     )) saveProjectIndex();
   }
 
+  // Only the global Recents section receives a project label. Project
+  // folder rows already communicate membership through their parent.
+  function sidebarSectionKind(label) {
+    const text = String(label || '').replace(/\s+/g, ' ').trim();
+    if (/^(?:Recents?|Recent chats?|最近|最近聊天|最近的聊天|近期聊天|近期对话|近期對話)$/i.test(text)) {
+      return 'recent';
+    }
+    if (/^(?:Projects?|Project chats?|项目|專案|項目|项目聊天|項目聊天)$/i.test(text)) {
+      return 'project';
+    }
+    if (/^(?:Pinned|Favorites?|置顶|置頂|收藏)$/i.test(text)) {
+      return 'other';
+    }
+    return '';
+  }
+
+  function sidebarContextKind(item) {
+    const sidebar = state.sidebarRoot || ChatGPTDOMAdapter.sidebarRoot();
+    if (!(item instanceof Element) ||
+        (sidebar instanceof Element && !sidebar.contains(item))) {
+      return 'other';
+    }
+
+    let insideProjectFolder = false;
+    let node = item.parentElement;
+    for (let depth = 0; node && depth < 11; depth += 1, node = node.parentElement) {
+      const marker = [
+        node.getAttribute('data-testid') || '',
+        node.getAttribute('data-sidebar-section') || '',
+        node.getAttribute('aria-label') || '',
+      ].join(' ').toLowerCase();
+
+      if (/(?:^|[\s_-])recents?(?:$|[\s_-])/.test(marker)) return 'recent';
+      if (/(?:^|[\s_-])(?:project-chats?|project-folder|project-section|project-group)(?:$|[\s_-])/.test(marker)) {
+        return 'project';
+      }
+      if (/(?:^|[\s_-])(?:pinned|favorites?)(?:$|[\s_-])/.test(marker)) {
+        return 'other';
+      }
+
+      // Check only shallow header nodes, never node.textContent (which
+      // would read every chat title and cause repeated DOM layout work).
+      const heading = node.querySelector?.(
+        ':scope > h2,:scope > h3,:scope > [role="heading"],' +
+        ':scope > header h2,:scope > header h3,' +
+        ':scope > [data-testid*="section-header" i],' +
+        ':scope > div > [role="heading"]'
+      );
+      const explicit = sidebarSectionKind(heading?.textContent);
+      if (explicit) return explicit;
+
+      if (depth < 5 && !insideProjectFolder) {
+        insideProjectFolder = Boolean(node.querySelector?.(
+          'a[href*="/g/g-p-"]:not([href*="/c/"])'
+        ));
+      }
+
+      if (node === sidebar || node.matches?.('nav,aside,[role="navigation"]')) break;
+    }
+
+    // The project folder link can have a generic /c/ href in some
+    // sidebar versions, so detecting the local group takes precedence.
+    if (insideProjectFolder) return 'project';
+    // No definite Recents container was found: a project-scoped path is
+    // conservatively treated as a project row rather than relabeled.
+    if (projectIdFromHref(item.getAttribute('href') || '')) return 'project';
+    return 'recent';
+  }
+
   function renderProjectLabel(item, id) {
     const target = item instanceof HTMLAnchorElement
       ? item : item.querySelector?.('a[href*="/c/"]');
     if (!(target instanceof Element)) return;
     const pid = state.projectIndex.chats[id]?.pid;
     const name = pid ? state.projectIndex.names[pid]?.name : '';
-    if (name) {
-      if (target.getAttribute(PROJECT_LABEL_ATTR) !== name) {
-        target.setAttribute(PROJECT_LABEL_ATTR, name);
+    const label = name && sidebarContextKind(target) === 'recent'
+      ? name : '';
+    if (label) {
+      if (target.getAttribute(PROJECT_LABEL_ATTR) !== label) {
+        target.setAttribute(PROJECT_LABEL_ATTR, label);
       }
     } else if (target.hasAttribute(PROJECT_LABEL_ATTR)) {
       target.removeAttribute(PROJECT_LABEL_ATTR);
