@@ -9,13 +9,29 @@ on:
       - "scripts/**"
       - "package.json"
       - ".github/workflows/script-smoke.yml"
+  pull_request:
+    paths:
+      - "safari/**"
+      - "scripts/**"
+      - "package.json"
+      - ".github/workflows/script-smoke.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  lightweight-script-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm run check
+
   validate-and-ui-smoke:
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     timeout-minutes: 20
 
