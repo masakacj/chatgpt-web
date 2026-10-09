@@ -191,7 +191,9 @@
     turnCacheDirty: true,
     lastTurnScanAt: 0,
     conversationLinks: new Map(),
-    projectIndex: loadProjectIndex(),
+    projectIndex: EXTREME_NATIVE_MODE
+      ? { names: Object.create(null), chats: Object.create(null) }
+      : loadProjectIndex(),
     lastRoute: location.pathname + location.search,
     activeConversationId: null,
     activeRouteSince: Date.now(),
@@ -1542,10 +1544,12 @@
   function projectIdForChatItem(item, id) {
     const href = item.getAttribute('href') ||
       item.querySelector('a[href]')?.getAttribute('href');
-    const attr = item.getAttribute('data-project-id') ||
-      item.getAttribute('data-gizmo-id');
+    const marker = item.getAttribute('data-project-id') ||
+      item.getAttribute('data-gizmo-id') ||
+      item.querySelector('[data-project-id]')?.getAttribute('data-project-id') ||
+      item.querySelector('[data-gizmo-id]')?.getAttribute('data-gizmo-id');
     return (href && projectIdFromHref(href)) ||
-      (/^g-p-[A-Za-z0-9_-]+$/.test(attr || '') ? attr : null) ||
+      (/^g-p-[A-Za-z0-9_-]+$/.test(marker || '') ? marker : null) ||
       (id === currentConversationId() ? projectIdFromPath(location.pathname) : null);
   }
 
@@ -6407,6 +6411,8 @@
     scheduleInitialBottomScroll(true);
 
     if (!EXTREME_NATIVE_MODE) {
+      // One startup pass also finds project links outside the chat nav.
+      if (indexProjectNames(document)) saveProjectIndex();
       rememberCurrentProjectChat();
       evaluateConversationState();
       renderConversationStates();
@@ -6475,7 +6481,10 @@
     state.lastRoute =
       location.pathname +
       location.search;
-    if (!EXTREME_NATIVE_MODE) rememberCurrentProjectChat();
+    if (!EXTREME_NATIVE_MODE) {
+      if (indexProjectNames(document)) saveProjectIndex();
+      rememberCurrentProjectChat();
+    }
     state.activeConversationId = null;
     state.activeRouteSince = Date.now();
     state.settlingSince = 0;
