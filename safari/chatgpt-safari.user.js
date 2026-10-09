@@ -1466,7 +1466,7 @@
   }
 
   function cleanProjectName(value) {
-    const name = String(value || '').replace(/\s+/g, ' ')
+    const name = String(value || '').replace(/\s+/g, ' ').trim()
       .replace(/^(?:Project|项目|專案)\s*[:：]\s*/i, '').trim();
     return name.length && name.length <= 72 ? name : '';
   }
