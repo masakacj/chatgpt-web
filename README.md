@@ -1,5 +1,19 @@
 # ChatGPT Web
 
+## Shared web userscript (0.4.39)
+
+- Project-name labels are **Recents-only**: conversations listed inside a
+  project folder no longer repeat the containing project's name.
+- Recents can include project conversations using ChatGPT's own setting:
+  Recents (⋯) → Show → Projects (enabled). This is a native sidebar
+  preference and is intentionally not overridden or duplicated by a script.
+  If the setting is unavailable in the current rollout, the userscript does
+  not manufacture incomplete, out-of-date recent entries.
+- Once ChatGPT renders project chats in Recents, local project membership
+  tracking annotates the rows without touching native ordering or navigation.
+- Sidebar item context is checked when rendering a known project chat only;
+  no new network fetches, polling loops, or mutation observers are introduced.
+
 ## Shared web userscript (0.4.38)
 
 - Desktop "recent chats" shows a compact project-name label when the sidebar
