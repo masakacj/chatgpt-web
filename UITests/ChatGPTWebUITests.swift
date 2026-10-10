@@ -23,6 +23,36 @@ final class ChatGPTWebUITests: XCTestCase {
         )
     }
 
+    func testNativeFloatingFallbackWhenWebKitStopsAnswering() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--ui-panel-stall"
+        ]
+        app.launch()
+
+        let anchor = app.buttons["chatgpt.web.floatingAnchor"]
+        XCTAssertTrue(anchor.waitForExistence(timeout: 15),
+                      "Native floating button must exist independently of WebKit JS")
+        anchor.tap()
+
+        let fallback = app.alerts["网页响应缓慢"]
+        XCTAssertTrue(fallback.waitForExistence(timeout: 8),
+                      "Stalled WebKit must produce a native fallback without page reload")
+        XCTAssertTrue(fallback.buttons["返回 ChatGPT 首页"].exists)
+        XCTAssertTrue(fallback.buttons["手动刷新当前页面…"].exists)
+
+        fallback.buttons["手动刷新当前页面…"].tap()
+        let confirm = app.alerts["确认刷新"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5),
+                      "Reload requires a second explicit confirmation to protect drafts")
+        XCTAssertTrue(confirm.buttons["确认刷新"].exists)
+        confirm.buttons["取消"].tap()
+
+        // The same native floating anchor remains independently touchable.
+        XCTAssertTrue(anchor.exists)
+    }
+
     func testWKWebViewResultOnlyStress()
         throws
     {
