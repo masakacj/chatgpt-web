@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.43
+// @version      0.4.44
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.43';
+  const VERSION = '0.4.44';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -34,8 +34,9 @@
   const EXTREME_NATIVE_MODE =
     IS_NATIVE_IOS ||
     IS_SAFARI_CONTAINER;
+  const NATIVE_PARITY = IS_NATIVE_IOS && window.__CHATGPT_NATIVE_PARITY__ === true;
   const RESULT_ONLY_MODE =
-    EXTREME_NATIVE_MODE;
+    EXTREME_NATIVE_MODE && !NATIVE_PARITY;
   const HAS_NATIVE_LIFECYCLE =
     Boolean(
       window.__CHATGPT_NATIVE__
@@ -1823,6 +1824,7 @@
   }
 
   function registerConversationLinks(scope = document) {
+    if (NATIVE_PARITY) return {ids:new Set(),indexChanged:false};
     if (IS_SAFARI_CONTAINER && !IS_NATIVE_IOS) {
       return { ids: new Set(), indexChanged: false };
     }
@@ -2068,6 +2070,7 @@
   }
 
   function evaluateNativeConversationState() {
+    if (NATIVE_PARITY) return;
     if (!IS_NATIVE_IOS || state.destroyed || state.nativeSuspended) return;
     const id = currentConversationId();
     if (!id) return;
@@ -2209,6 +2212,7 @@
   }
 
   function setupConversationStateSync() {
+    if (NATIVE_PARITY) return;
     try {
       state.channel = new BroadcastChannel(STATE_CHANNEL);
       state.channel.addEventListener('message', (event) => {
@@ -4592,6 +4596,7 @@
   function scheduleInitialBottomScroll(
     force = false
   ) {
+    if (NATIVE_PARITY) return false;
     if (!EXTREME_NATIVE_MODE) {
       return false;
     }
@@ -6277,6 +6282,7 @@
   function bindScopedObservers(
     force = false
   ) {
+    if (NATIVE_PARITY) return;
     const conversationRoot =
       ChatGPTDOMAdapter.conversationRoot();
 
@@ -6691,6 +6697,14 @@
     state.phaseTwoStarted = true;
     state.metrics.phaseTwoStartedAt =
       Date.now();
+
+    if (NATIVE_PARITY) {
+      // Native state/observers own this path. Keep menu/hot update/telemetry,
+      // but do not re-enable historical pruning or duplicate state watchers.
+      scheduleControlRecovery(0);
+      if (state.settings.telemetryEnabled) startTelemetryRuntime();
+      return;
+    }
 
     setupObservers();
     invalidateTurnCache();

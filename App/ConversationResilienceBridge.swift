@@ -32,7 +32,7 @@ final class ChatGPTConversationResilience {
         // This main-world script only observes matching saved-conversation
         // reads. Original fetch arguments, Promise and Response are preserved.
         for (name, time, world) in [
-            ("NativeConversationEvidence", WKUserScriptInjectionTime.atDocumentStart, WKContentWorld.page),
+            ("NativeConversationBootstrap", WKUserScriptInjectionTime.atDocumentStart, WKContentWorld.page),
             ("NativeConversationClient", WKUserScriptInjectionTime.atDocumentEnd, Self.world)
         ] {
             guard let url = Bundle.main.url(forResource: name, withExtension: "js"),
@@ -49,7 +49,6 @@ final class ChatGPTConversationResilience {
         webView = view
         let proxy = WeakConversationHandler(self); self.proxy = proxy
         let controller = view.configuration.userContentController
-        controller.add(proxy, contentWorld: .page, name: "nativeReadEvidence")
         controller.addScriptMessageHandler(proxy, contentWorld: Self.world, name: "nativeConversation")
         Self.installScripts(on: controller)
         urlObserver = view.observe(\.url, options: [.new]) { [weak self] _, _ in
@@ -87,21 +86,7 @@ final class ChatGPTConversationResilience {
         guard let webView, webView.url?.host == "chatgpt.com" else { return }
         webView.evaluateJavaScript("globalThis.__IOS_NATIVE_RESILIENCE__?.wake?.()", in: nil, in: Self.world) { _ in }
     }
-    fileprivate func readEvidence(_ message: WKScriptMessage) {
-        guard trusted(message), let body = message.body as? [String: Any],
-              body["method"] as? String == "GET", body["type"] as? String == "saved-read",
-              let id = body["id"] as? String,
-              id == ConversationResilienceStore.conversationID(webView?.url),
-              let doc = body["document"] as? String, doc == document,
-              let code = body["status"] as? Int, (0...599).contains(code) else { return }
-        let category = ConversationResilienceStore.failureCategory(code: code,
-            networkError: body["networkError"] as? Bool == true)
-        failureCode = code
-        if let category {
-            failure = .init(id: id, category: category, at: store.now(), document: doc)
-        } else { failure = nil }
-        wake()
-    }
+    fileprivate func readEvidence(_ message: WKScriptMessage) { /* not installed */ }
     fileprivate func handle(_ message: WKScriptMessage, reply: @escaping (Any?, String?) -> Void) {
         guard trusted(message), let body = message.body as? [String: Any],
               let type = body["type"] as? String,
@@ -123,9 +108,9 @@ final class ChatGPTConversationResilience {
         } else if type == "refresh" {
             reply(["ok":true,"states":store.exported()],nil)
         } else if type == "recover", let snapshot = body["snapshot"] as? [String: Any] {
-            let delay = store.reserveRetry(snapshot,failure:failure,currentID:current,document:doc,
-                appActive:UIApplication.shared.applicationState == .active)
-            reply(["ok":true,"retryAfter":delay ?? -1,"category":failure?.category ?? "no_read_failure"],nil)
+            _ = snapshot
+            // Unknown network evidence is NOT a license to replay requests.
+            reply(["ok":true,"retryAfter":-1,"category":"native_read_evidence_unavailable"],nil)
         } else if type == "audit" {
             reply(["ok":true,"version":Self.version,"storage":"native UserDefaults",
                    "stateCount":store.records.count,"budgetCount":store.budgets.count,

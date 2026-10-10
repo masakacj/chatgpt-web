@@ -109,7 +109,8 @@
   }
   function submit(){
     if(!current)return;submitUntil=Date.now()+30000;
-    call('observe',{observation:{...snapshot(),kind:'submit'}}).then(r=>{if(r?.record?.status){records.set(current,r.record);paint(current)}});
+    const submittedID=current;
+    call('observe',{observation:{...snapshot(),kind:'submit'}}).then(r=>{if(r?.record?.status){records.set(submittedID,r.record);paint(submittedID)}});
     if(!activeTimer)activeTimer=later(()=>{activeTimer=0;check()},1800);
   }
   function clicked(e){
