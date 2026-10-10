@@ -2400,14 +2400,14 @@
       VERSION
     );
 
-    if (EXTREME_NATIVE_MODE) {
+    if (EXTREME_NATIVE_MODE && state.settings.enabled) {
       root.setAttribute(
         'data-cgpt-static',
         '1'
       );
     }
 
-    if (RESULT_ONLY_MODE) {
+    if (RESULT_ONLY_MODE && state.settings.enabled) {
       root.setAttribute(
         'data-cgpt-result-only',
         '1'
@@ -3578,6 +3578,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !scope
     ) {
       return {
@@ -3804,6 +3805,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       state.destroyed ||
       state.nativeSuspended
     ) {
@@ -3911,6 +3913,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !(group instanceof HTMLElement) ||
       group.hasAttribute(
         'data-cgpt-process-pruned'
@@ -3970,6 +3973,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !(scope instanceof Element)
     ) {
       return 0;
@@ -4012,6 +4016,7 @@
   function pruneCompletedTurn(turn) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !(turn instanceof HTMLElement)
     ) {
       return false;
@@ -4053,6 +4058,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       state.destroyed ||
       state.nativeSuspended
     ) {
@@ -6357,6 +6363,7 @@
   function onSendPointerDown(event) {
     if (
       !EXTREME_NATIVE_MODE ||
+      !state.settings.enabled ||
       state.destroyed ||
       state.nativeSuspended
     ) {
@@ -7109,8 +7116,28 @@
     }
 
     if (!state.settings.enabled) {
+      // The previous OFF switch only affected button annotations: the
+      // Result Only observers kept deleting MCP / Thinking content anyway.
+      // OFF now genuinely suspends these extra native optimizations.
+      // Already-pruned historical DOM can be fully restored by the user's
+      // existing 'Reload ChatGPT' command, not by regenerating content here.
+      cancelHistoricalResultOnlyPrune();
+      state.modernProcessObserver?.disconnect();
+      state.modernProcessObserver = null;
+      state.modernProcessRoot = null;
+      document.documentElement?.removeAttribute('data-cgpt-static');
+      document.documentElement?.removeAttribute('data-cgpt-result-only');
       restoreToolGroups();
       return;
+    }
+
+    if (EXTREME_NATIVE_MODE) {
+      document.documentElement?.setAttribute('data-cgpt-static', '1');
+    }
+    if (RESULT_ONLY_MODE) {
+      document.documentElement?.setAttribute('data-cgpt-result-only', '1');
+      bindModernProcessObserver(true);
+      scheduleHistoricalResultOnlyPrune(40);
     }
 
     const activeTurn =
