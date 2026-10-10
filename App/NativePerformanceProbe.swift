@@ -47,8 +47,12 @@ final class ChatGPTNativePerformanceProbe {
     }
 
     func setEnabled(_ enabled: Bool) {
+        let changed = isEnabled != enabled
         isEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.consentKey)
+        // The hot-update userscript synchronizes consent on every navigation.
+        // Do not re-arm timers when the preference has not changed.
+        guard changed else { return }
         pendingProbes.removeAll()
         if allowedToCollect, let view = currentWebView {
             send("ios_opt_in", for: view)
@@ -61,7 +65,9 @@ final class ChatGPTNativePerformanceProbe {
         navigationSerial += 1
         navigationStartedAt = CACurrentMediaTime()
         pendingProbes.removeAll()
-        guard allowedToCollect, isChatGPT(webView) else { return }
+        guard allowedToCollect else { return }
+        // didStart may run before WKWebView.url resolves to the new URL.
+        // Individual probes check the origin after navigation commits.
         send("ios_nav_start", for: webView)
         scheduleProbes(for: webView, serial: navigationSerial)
     }
