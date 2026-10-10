@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const script = fs.readFileSync('safari/chatgpt-desktop-lite.user.js', 'utf8');
-assert.match(script, /^\/\/ @version\s+0\.2\.2$/m);
-assert.match(script, /const VERSION = '0\.2\.2'/);
+assert.match(script, /^\/\/ @version\s+0\.2\.3$/m);
+assert.match(script, /const VERSION = '0\.2\.3'/);
 new vm.Script(script, {filename: 'chatgpt-desktop-lite.user.js'});
 
 const prohibited = [
@@ -24,6 +24,8 @@ assert.equal((script.match(/new MutationObserver\(/g) || []).length, 1,
   'only one scoped sidebar mutation observer is allowed');
 assert.equal((script.match(/setInterval\(/g) || []).length, 0,
   'no permanent polling interval is allowed');
+assert.match(script, /\[500, 1800, 4500, 9000, 16000, 30000, 48000\]/,
+  'a late-mounting sidebar must get finite recovery attempts');
 assert.match(script,/document\.querySelector\('nav,aside'\)|document\.querySelectorAll\('nav,aside'\)/);
 assert.match(script,/window\.navigation\?\.addEventListener\('navigatesuccess', onRoute\)/);
 assert.match(script,/const STALE_MS = 90000/);
