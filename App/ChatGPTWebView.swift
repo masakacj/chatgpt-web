@@ -1557,7 +1557,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                     self.checkingUpdate = false
 
-                    _ =
+                    let didChange =
                         self.applyScriptResult(
                             result
                         )
@@ -1565,8 +1565,13 @@ struct ChatGPTWebView: UIViewRepresentable {
                     self.installForFutureNavigations()
                     self.updateRuntimeStatus()
 
+                    // Reinjection destroys and recreates observers and
+                    // Result Only presentation. It is only appropriate for
+                    // a genuinely changed script; returning from background
+                    // should NOT cause another full long-chat DOM pass.
                     if
                         injectCurrentPage,
+                        didChange,
                         let activeScript =
                             self.activeScript
                     {
@@ -2769,24 +2774,18 @@ private func collapseExternalBrowserMenu() {
             _ webView: WKWebView,
             delay: TimeInterval
         ) {
-            URLCache.shared
-                .removeAllCachedResponses()
-
-            WKWebsiteDataStore.default()
-                .removeData(
-                    ofTypes: [
-                        WKWebsiteDataTypeMemoryCache
-                    ],
-                    modifiedSince:
-                        .distantPast
-                ) {
-                    DispatchQueue.main.asyncAfter(
-                        deadline:
-                            .now() + delay
-                    ) { [weak webView] in
-                        webView?.reload()
-                    }
-                }
+            // Preserve website cache and login/session data. Emptying the
+            // global cache before every recovery makes the same huge chat
+            // hydrate from scratch and can encourage a reload loop.
+            let expectedURL = webView.url
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + delay
+            ) { [weak webView] in
+                guard let webView,
+                      webView.url == expectedURL
+                else { return }
+                webView.reload()
+            }
         }
 
         private func recoverFromContentProcessTermination(
@@ -2801,7 +2800,7 @@ private func collapseExternalBrowserMenu() {
 
             contentTerminationTimes =
                 contentTerminationTimes.filter {
-                    now.timeIntervalSince($0) < 30
+                    now.timeIntervalSince($0) < 180
                 }
 
             contentTerminationTimes.append(now)
@@ -2809,16 +2808,13 @@ private func collapseExternalBrowserMenu() {
             let recentCount =
                 contentTerminationTimes.count
 
-            // Result Only aggressively frees completed process DOM.
-            // Give WebKit two silent recovery attempts before stopping
-            // to ask the user, so a single memory spike does not block use.
-            if recentCount <= 2 {
+            // One automatic recovery only within a three-minute window.
+            // Repeated silent reloads make a heavy conversation flicker
+            // indefinitely while also moving the scroll position.
+            if recentCount == 1 {
                 reloadAfterMemoryPressure(
                     webView,
-                    delay:
-                        recentCount == 1
-                        ? 0.45
-                        : 1.15
+                    delay: 0.6
                 )
                 return
             }
@@ -2830,9 +2826,9 @@ private func collapseExternalBrowserMenu() {
             recoveryAlertPresented = true
 
             presentAlert(
-                title: "这个超长对话仍然超过内存上限",
+                title: "网页内容进程反复退出",
                 message:
-                    "已自动尝试两次轻量恢复，但 WebKit 仍连续被系统回收。可以返回首页，或再手动重载一次。",
+                    "已经自动恢复过一次。继续自动重载可能造成页面反复闪烁或滚动位置错乱。可以返回首页，或选择手动再试一次。",
                 actions: [
                     UIAlertAction(
                         title: "返回 ChatGPT 首页",

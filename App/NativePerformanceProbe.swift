@@ -154,6 +154,8 @@ final class ChatGPTNativePerformanceProbe {
             textReady,
             inViewport: !!(textReady && rect && rect.height > 0 &&
               rect.width > 0 && rect.bottom > 0 && rect.top < innerHeight),
+            aboveViewport: !!(textReady && rect && rect.bottom < -20),
+            belowViewport: !!(textReady && rect && rect.top > innerHeight + 20),
             streaming: state === 'in_progress' || state === 'running'
           };
         })()
@@ -190,7 +192,14 @@ final class ChatGPTNativePerformanceProbe {
 
             let ready = snapshot["textReady"] as? Bool == true
             let visible = snapshot["inViewport"] as? Bool == true
-            let stage = visible ? "visible" : (ready ? "text" : "empty")
+            let above = snapshot["aboveViewport"] as? Bool == true
+            let below = snapshot["belowViewport"] as? Bool == true
+            // Distinguishes an actual blank/missing answer from the previous
+            // bug where turn.scrollIntoView positioned the final reply
+            // above an oversized virtual spacer.
+            let stage = visible ? "visible"
+                : (ready ? (above ? "above" : (below ? "below" : "text"))
+                         : "empty")
             self.send(
                 "ios_\(label)_\(stage)",
                 for: webView,
