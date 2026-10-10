@@ -420,6 +420,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         static let nativeMessageHandler = "chatGPTNative"
 
         private let scriptStore: UnifiedScriptStore
+        private let nativePerformance = ChatGPTNativePerformanceProbe()
         private var contentController: WKUserContentController?
 
         private var activeScript: UnifiedScriptPayload?
@@ -1670,6 +1671,15 @@ struct ChatGPTWebView: UIViewRepresentable {
                     )
                 sendFeedbackGenerator.prepare()
 
+            case "perf-debug-opt-in":
+                // Only the authenticated ChatGPT top frame may change
+                // native telemetry consent. No session information is read.
+                if message.frameInfo.isMainFrame,
+                   message.frameInfo.securityOrigin.host.lowercased() == "chatgpt.com",
+                   let enabled = body["enabled"] as? Bool {
+                    nativePerformance.setEnabled(enabled)
+                }
+
             case "telemetry":
                 if
                     let batchId =
@@ -2687,7 +2697,9 @@ private func collapseExternalBrowserMenu() {
         ) {
             if webView === externalWebView {
                 updateExternalBrowserControls()
+                return
             }
+            nativePerformance.navigationStarted(webView)
         }
 
         func webView(
@@ -2695,9 +2707,9 @@ private func collapseExternalBrowserMenu() {
             didCommit navigation: WKNavigation!
         ) {
             if webView === externalWebView {
-                    return
+                return
             }
-
+            nativePerformance.navigationCommitted(webView)
         }
 
         func webView(
@@ -2709,6 +2721,7 @@ private func collapseExternalBrowserMenu() {
                 return
             }
 
+            nativePerformance.navigationFinished(webView)
             ensureScriptsAreRunning()
 
             if webKitStressMode {
@@ -2866,6 +2879,10 @@ private func collapseExternalBrowserMenu() {
         func webViewWebContentProcessDidTerminate(
             _ webView: WKWebView
         ) {
+            if webView === self.webView {
+                nativePerformance.webContentTerminated(webView)
+            }
+
             if (
                 webKitStressMode &&
                 webView === self.webView
