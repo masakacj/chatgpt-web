@@ -209,6 +209,8 @@
     sendAckControl: null,
     pendingSidebarCleanup: false,
     nativeSuspended: false,
+    nativeActiveCheckTimer: 0,
+    nativePriorTurnKey: '',
     historicalPruneTimer: 0,
     historicalPruneGeneration: 0,
     resultCycle: {
@@ -1760,6 +1762,8 @@
     }
 
     const unchanged =
+      !(IS_NATIVE_IOS && status === 'running' &&
+        now - Number(previous.updatedAt || 0) > 18000) &&
       previous.status === next.status &&
       Number(previous.settlingSince || 0) === Number(next.settlingSince || 0) &&
       Number(previous.completedAt || 0) === Number(next.completedAt || 0) &&
@@ -2003,7 +2007,117 @@
     ));
   }
 
+  // Native iOS: restore only observed completion, running or waiting states.
+  // Never guess that a chat completed merely because the page rehydrated.
+  function nativeLastTurnSignal() {
+    const transcript =
+      document.querySelector('main [class*="transcriptContent"]') ||
+      document.querySelector('main');
+    if (!transcript) return { signal: null, key: null, answerReady: false };
+
+    const states = transcript.querySelectorAll('[data-talvt-turn-state]');
+    const stateNode = states.length ? states[states.length - 1] : null;
+    const turns = transcript.querySelectorAll(
+      '[data-turn-key], [data-testid^="conversation-turn-"]'
+    );
+    const lastTurn = turns.length ? turns[turns.length - 1] : null;
+    const owner = lastTurn || stateNode;
+    const roots = owner?.querySelectorAll(
+      '[class*="DilResponseRoot"], [data-dil-message-id], ' +
+      '[data-conversation-role="assistant"], [data-message-author-role="assistant"]'
+    ) || [];
+
+    // Text-only readiness check: do not parse all tool/MCP iframe content.
+    let answerReady = false;
+    for (let i = roots.length - 1; i >= 0; --i) {
+      if ((roots[i].textContent || '').trim().length >= 24) {
+        answerReady = true;
+        break;
+      }
+    }
+    return {
+      signal: stateNode?.getAttribute('data-talvt-turn-state') || null,
+      key: lastTurn?.getAttribute('data-turn-key') ||
+        stateNode?.closest('[data-turn-key]')?.getAttribute('data-turn-key') ||
+        null,
+      answerReady
+    };
+  }
+
+  function nativeScheduleActiveCheck(id) {
+    if (
+      !IS_NATIVE_IOS || state.destroyed ||
+      state.nativeSuspended || state.nativeActiveCheckTimer ||
+      !id
+    ) return;
+
+    // Only while an active run was actually observed. No idle poll.
+    state.nativeActiveCheckTimer = window.setTimeout(() => {
+      state.nativeActiveCheckTimer = 0;
+      if (
+        state.destroyed || state.nativeSuspended ||
+        currentConversationId() !== id
+      ) return;
+      evaluateNativeConversationState();
+      if (
+        ['running', 'settling'].includes(
+          state.conversationStates[id]?.status
+        )
+      ) nativeScheduleActiveCheck(id);
+    }, 2400);
+  }
+
+  function evaluateNativeConversationState() {
+    if (!IS_NATIVE_IOS || state.destroyed || state.nativeSuspended) return;
+    const id = currentConversationId();
+    if (!id) return;
+
+    const signal = nativeLastTurnSignal();
+    if (
+      state.nativePriorTurnKey &&
+      signal.key === state.nativePriorTurnKey
+    ) return; // old route's React tree, not this new conversation
+
+    if (signal.key) state.nativePriorTurnKey = '';
+
+    if (
+      signal.signal === 'in_progress' ||
+      signal.signal === 'running' ||
+      signal.signal === 'streaming'
+    ) {
+      setConversationState(id, 'running', {
+        settlingSince: 0, completedAt: 0
+      });
+      nativeScheduleActiveCheck(id);
+    } else if (
+      signal.signal === 'waiting_user' ||
+      signal.signal === 'waiting_for_user'
+    ) {
+      setConversationState(id, 'waiting_user', {
+        settlingSince: 0, completedAt: 0
+      });
+    } else if (
+      (signal.signal === 'complete' ||
+       signal.signal === 'completed') &&
+      signal.answerReady
+    ) {
+      const record = state.conversationStates[id];
+      const completedAt = Number(record?.completedAt || 0) || Date.now();
+      setConversationState(
+        id,
+        runtimeHidden() ? 'completed_unread' : 'completed_read',
+        { settlingSince: 0, completedAt }
+      );
+    }
+    // No DOM evidence: leave the previously stored state unchanged. The
+    // rendering layer marks stale active states as 'uncertain' after 90s.
+  }
+
   function evaluateConversationState() {
+    if (IS_NATIVE_IOS) {
+      evaluateNativeConversationState();
+      return;
+    }
     if (state.destroyed) return;
 
     const now = Date.now();
@@ -3081,6 +3195,7 @@
 
     removeResultOnlyIndicator();
     renderResultOnlyCompletionSummary();
+    if (IS_NATIVE_IOS) evaluateNativeConversationState();
     pruneModernResultOnlyProcess(
       document
     );
@@ -3165,6 +3280,16 @@
   function beginResultCycle() {
     if (!RESULT_ONLY_MODE) {
       return;
+    }
+
+    if (IS_NATIVE_IOS) {
+      const id = currentConversationId();
+      if (id) {
+        setConversationState(id, 'running', {
+          settlingSince: 0, completedAt: 0
+        });
+        nativeScheduleActiveCheck(id);
+      }
     }
 
     clearResultCycleTimer();
@@ -5937,7 +6062,7 @@
         );
         scheduleInitialBottomScroll(true);
 
-        if (!EXTREME_NATIVE_MODE) {
+        if (!EXTREME_NATIVE_MODE || IS_NATIVE_IOS) {
           scheduleStateEvaluation(180);
         }
       }, Math.max(delay, remaining));
@@ -6070,6 +6195,17 @@
 
     if (turnStructureChanged || answerAnchorAdded) {
       flushPendingBottomScroll();
+    }
+
+    if (
+      IS_NATIVE_IOS &&
+      !state.stateEvalTimer &&
+      currentConversationId()
+    ) {
+      // Reuse the one scoped main transcript observer. Its callback may
+      // receive hundreds of updates during hydration; only one deferred
+      // state check can be scheduled at a time.
+      scheduleStateEvaluation(500);
     }
 
     if (
@@ -6559,6 +6695,7 @@
     setupObservers();
     invalidateTurnCache();
     turnCandidates(true);
+    if (IS_NATIVE_IOS) scheduleStateEvaluation(500);
     pruneModernResultOnlyProcess(
       document
     );
@@ -6635,6 +6772,14 @@
       !previousConversationId &&
       Boolean(nextConversationId);
 
+    if (IS_NATIVE_IOS && previousConversationId !== nextConversationId) {
+      // Avoid treating the old conversation's still-mounted turn as the
+      // new conversation's state while ChatGPT swaps its React tree.
+      state.nativePriorTurnKey = nativeLastTurnSignal().key || '';
+      clearTimeout(state.nativeActiveCheckTimer);
+      state.nativeActiveCheckTimer = 0;
+    }
+
     state.lastRoute =
       location.pathname +
       location.search;
@@ -6679,6 +6824,16 @@
     invalidateTurnCache();
 
     scheduleInitialBottomScroll(true);
+
+    if (IS_NATIVE_IOS && nextConversationId) {
+      if (preserveNewChatCycle) {
+        setConversationState(nextConversationId, 'running', {
+          settlingSince: 0, completedAt: 0
+        });
+        nativeScheduleActiveCheck(nextConversationId);
+      }
+      scheduleStateEvaluation(900);
+    }
 
     state.routeSettlingUntil =
       performance.now() +
@@ -6726,6 +6881,8 @@
 
     clearTimeout(state.stateEvalTimer);
     state.stateEvalTimer = 0;
+    clearTimeout(state.nativeActiveCheckTimer);
+    state.nativeActiveCheckTimer = 0;
 
     clearTimeout(
       state.sidebarReconcileTimer
@@ -6825,8 +6982,9 @@
         bindScopedObservers();
         bindModernProcessObserver(true);
 
-        if (!EXTREME_NATIVE_MODE) {
+        if (!EXTREME_NATIVE_MODE || IS_NATIVE_IOS) {
           scheduleStateEvaluation(80);
+          nativeScheduleActiveCheck(currentConversationId());
         }
       }, delay);
   }
@@ -7055,6 +7213,7 @@
     stopTelemetryRuntime(true);
 
     clearTimeout(state.stateEvalTimer);
+    clearTimeout(state.nativeActiveCheckTimer);
     clearTimeout(state.phaseTwoTimer);
     clearTimeout(state.routeRebindTimer);
     clearTimeout(state.updateWatchdogTimer);
