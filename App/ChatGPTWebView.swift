@@ -1605,7 +1605,9 @@ struct ChatGPTWebView: UIViewRepresentable {
             ) { [weak self, weak sender] in
                 guard
                     let self,
-                    let sender
+                    let sender,
+                    self.panelRequestSerial == requestSerial,
+                    !self.nativePanelFallbackPresented
                 else {
                     return
                 }
@@ -1632,7 +1634,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                 ) { [weak self, weak sender] result, _ in
                     guard
                         let self,
-                        let sender
+                        let sender,
+                        self.panelRequestSerial == requestSerial,
+                        !self.nativePanelFallbackPresented
                     else {
                         return
                     }
