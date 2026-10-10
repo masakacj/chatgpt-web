@@ -148,6 +148,12 @@ final class ChatGPTNativePerformanceProbe {
         send(reason, for: webView)
     }
 
+    func floatingPanelUnresponsive(_ webView: WKWebView) {
+        // Opt-in only. Captures a boolean/timing category, not conversation
+        // identifiers, URLs, button content, message text or credentials.
+        send("ios_panel_js_timeout", for: webView)
+    }
+
     func webContentTerminated(_ webView: WKWebView) {
         guard allowedToCollect, isChatGPT(webView) else { return }
         send("ios_web_terminated", for: webView)

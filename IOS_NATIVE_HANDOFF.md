@@ -54,3 +54,34 @@ Use the existing iOS IPA workflow and signing center; verify the exact app versi
 Rollback code is the parent/base ref above. Revert only the iOS native parity integration, resources and shared-menu version as needed; retain the PC retirement guards. Do not restore PC userscripts. Native state is a new namespaced record and does not require deleting site data on rollback.
 
 Remaining: physical iPhone startup/side-panel speed, actual WebKit restart persistence, and long-conversation memory pressure must be measured. This is functional logic alignment and native-state hardening, not a guarantee of desktop-equivalent performance or a completed independent native answer reader.
+
+
+## 2026-10-10 晚间：偶发对话白屏与原生悬浮按钮无响应
+
+用户在 iOS 0.4.44 报告：偶有对话正文白屏，其他网页组件仍显示；右上角原生 S 按钮点击后没有展开菜单。当前 iOS 容器仍使用 WKWebView，不是 Blink Chrome。**切勿因此更新 PC 扩展或恢复油猴脚本。**
+
+### 已证实的线索与边界
+
+- 在线隐私最小诊断在台湾时间 2026-10-10 **22:51:52** 报告 `ios_web_terminated`：WebKit 网页内容进程发生终止。时间与用户反馈接近，但不代表每次白屏都是同一原因。
+- 旧原生 `ChatGPTFloatingAnchorButton` 收到 tap 后实际通过 `WKWebView.evaluateJavaScript()` 打开网页里的菜单，旧版失败时连续重试最多12次，主网页脚本无响应时原生按钮看起来像失效。
+- 用户网页会话正文没有被此问题证据证明丢失；此轮不得删除对话历史、清除 Cookie/IndexedDB、禁用 MCP 授权，或调用后台 ChatGPT POST/retry。
+- WebKit 自身已有 WebContent 终止后**最多一次/180秒**的自动页面重载保护，未在本轮提高重试次数。
+
+### 本轮修复
+
+独立分支 `fix/ios-native-panel-fallback-20261010`：
+
+1. 原生 S 按钮 tap 时立刻触觉反馈，原有网页功能菜单正常时仍优先使用。
+2. 若网页 JS 在1.6秒内未响应，或在等待时再次点击，立刻显示由 **UIKit UIAlertController** 构建的本机应急菜单，不依赖 WebKit JS：原生后退、返回ChatGPT首页，以及**二次确认后**手动重新加载。取消与等待均不刷新，不清除登录，不重发消息。
+3. 原有网页菜单注入失败时尝试次数从12缩减到3；异步回调按请求序号核对，导航/回退/原生应急菜单启动后旧回调不再能错误标记菜单准备完成。
+4. 原生 `ChatGPTNativePerformanceProbe` 新增仅在既有用户同意诊断的情况下报告 `ios_panel_js_timeout` 元信息，不采集聊天正文、URL、会话标识或请求体。没有新增自动轮询或ChatGPT API网络请求。
+5. 原生 UI 回归新增 `--ui-testing --ui-panel-stall`，故意让**测试用** WebKit 菜单调用不返回，验收按钮在不依赖 JS 的情况下弹出 UIKit 应急菜单，并检查手动刷新必须二次确认；此旗标只在测试运行有效。
+6. **IPA 应用/脚本营销版本保持 v0.4.44**，因为只修改 Swift 原生容器，不触发用户脚本热更重新注入；发布 Build 号由 GitHub CI 自增。签名前须先通过隔离分支上独立 macOS iPhone Simulator UI 测试。
+
+### Handoff 与回退
+
+- 代码：`App/ChatGPTWebView.swift`、`App/NativePerformanceProbe.swift`、`UITests/ChatGPTWebUITests.swift`；隔离测试 `.github/workflows/ios-panel-recovery-test.yml`。
+- 正式版本在合并前保留已签名 `0.4.44 (217)`；未经隔离 UI gate 通过不得声称修复已经发布。
+- 成功后验收 IPA 安装中心 `https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest` 的准确Build、签名和manifest可用性；**直接覆盖安装**，不卸载、不清数据。
+- 如果出现回归，回退此分支引入的 Swift 原生菜单/测试代码即可；历史会话本地状态属于现有原生 UserDefaults，不应被删除。
+- 该修复保证**卡住的JS不能让原生菜单一起失效**（只要iOS主线程仍响应），并提供可控恢复入口；不意味着长对话白屏/内存压力的根因已消除，须用真机日志复测是否有后续 `ios_web_terminated`。

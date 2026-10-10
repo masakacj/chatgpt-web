@@ -1,0 +1,42 @@
+name: iOS Native Floating Fallback Regression
+on:
+  push:
+    branches: [fix/ios-native-panel-fallback-20261010]
+    paths: [.github/workflows/ios-panel-recovery-test.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-fallback-ui:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify current iOS script and guard retired PC optimization
+        run: |
+          npm run check
+          node --check Resources/NativeConversationClient.js
+          grep -q 'showNativePanelFallback' App/ChatGPTWebView.swift
+          grep -q 'ios_panel_js_timeout' App/NativePerformanceProbe.swift
+      - name: Prepare XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Compile native device app without signing
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/IosPanelDeviceBuild" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Native persistence policy regression
+        run: |
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/ios-native-parity-test"
+          "$RUNNER_TEMP/ios-native-parity-test"
+      - name: iPhone Simulator real UIKit and WKWebView regression
+        timeout-minutes: 16
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; x=json.load(sys.stdin)["devices"]; a=[d for group in x.values() for d in group if d.get("isAvailable") and d.get("name","").startswith("iPhone")]; print(a[0]["udid"])')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/IosPanelUITest" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/ChatGPTWebUITests/testNativeFloatingFallbackWhenWebKitStopsAnswering -only-testing:ChatGPTWebUITests/ChatGPTWebUITests/testWKWebViewResultOnlyStress CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
