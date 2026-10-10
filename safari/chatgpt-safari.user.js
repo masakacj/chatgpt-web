@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.41
+// @version      0.4.42
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.41';
+  const VERSION = '0.4.42';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -6612,6 +6612,26 @@
     state.lastRoute =
       location.pathname +
       location.search;
+
+    // The native WKNavigationDelegate does not reliably get callbacks for
+    // ChatGPT's pushState SPA chat switches. Reuse this existing route event
+    // to mark a NEW native trace window without adding listeners or polling.
+    // Opt-in only; never send the route URL or conversation identifier.
+    if (
+      IS_NATIVE_IOS &&
+      state.settings.telemetryEnabled
+    ) {
+      try {
+        window.webkit?.messageHandlers
+          ?.chatGPTNative?.postMessage({
+            type: 'perf-route',
+            routeKind: nextConversationId
+              ? 'conversation'
+              : 'home',
+          });
+      } catch (_) {}
+    }
+
     if (!EXTREME_NATIVE_MODE) {
       if (indexProjectNames(document)) saveProjectIndex();
       rememberCurrentProjectChat();
