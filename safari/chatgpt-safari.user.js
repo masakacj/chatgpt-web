@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.41
+// @version      0.4.42
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.41';
+  const VERSION = '0.4.42';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -2401,17 +2401,19 @@
     );
 
     if (EXTREME_NATIVE_MODE) {
-      root.setAttribute(
-        'data-cgpt-static',
-        '1'
-      );
+      if (state.settings.enabled) {
+        root.setAttribute('data-cgpt-static', '1');
+      } else {
+        root.removeAttribute('data-cgpt-static');
+      }
     }
 
     if (RESULT_ONLY_MODE) {
-      root.setAttribute(
-        'data-cgpt-result-only',
-        '1'
-      );
+      if (state.settings.enabled) {
+        root.setAttribute('data-cgpt-result-only', '1');
+      } else {
+        root.removeAttribute('data-cgpt-result-only');
+      }
     }
 
     const style = document.createElement('style');
@@ -3578,6 +3580,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !scope
     ) {
       return {
@@ -3804,6 +3807,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       state.destroyed ||
       state.nativeSuspended
     ) {
@@ -3911,6 +3915,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !(group instanceof HTMLElement) ||
       group.hasAttribute(
         'data-cgpt-process-pruned'
@@ -3970,6 +3975,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !(scope instanceof Element)
     ) {
       return 0;
@@ -4012,6 +4018,7 @@
   function pruneCompletedTurn(turn) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       !(turn instanceof HTMLElement)
     ) {
       return false;
@@ -4053,6 +4060,7 @@
   ) {
     if (
       !RESULT_ONLY_MODE ||
+      !state.settings.enabled ||
       state.destroyed ||
       state.nativeSuspended
     ) {
@@ -6357,6 +6365,7 @@
   function onSendPointerDown(event) {
     if (
       !EXTREME_NATIVE_MODE ||
+      !state.settings.enabled ||
       state.destroyed ||
       state.nativeSuspended
     ) {
@@ -6612,6 +6621,26 @@
     state.lastRoute =
       location.pathname +
       location.search;
+
+    // The native WKNavigationDelegate does not reliably get callbacks for
+    // ChatGPT's pushState SPA chat switches. Reuse this existing route event
+    // to mark a NEW native trace window without adding listeners or polling.
+    // Opt-in only; never send the route URL or conversation identifier.
+    if (
+      IS_NATIVE_IOS &&
+      state.settings.telemetryEnabled
+    ) {
+      try {
+        window.webkit?.messageHandlers
+          ?.chatGPTNative?.postMessage({
+            type: 'perf-route',
+            routeKind: nextConversationId
+              ? 'conversation'
+              : 'home',
+          });
+      } catch (_) {}
+    }
+
     if (!EXTREME_NATIVE_MODE) {
       if (indexProjectNames(document)) saveProjectIndex();
       rememberCurrentProjectChat();
@@ -7089,8 +7118,28 @@
     }
 
     if (!state.settings.enabled) {
+      // The previous OFF switch only affected button annotations: the
+      // Result Only observers kept deleting MCP / Thinking content anyway.
+      // OFF now genuinely suspends these extra native optimizations.
+      // Already-pruned historical DOM can be fully restored by the user's
+      // existing 'Reload ChatGPT' command, not by regenerating content here.
+      cancelHistoricalResultOnlyPrune();
+      state.modernProcessObserver?.disconnect();
+      state.modernProcessObserver = null;
+      state.modernProcessRoot = null;
+      document.documentElement?.removeAttribute('data-cgpt-static');
+      document.documentElement?.removeAttribute('data-cgpt-result-only');
       restoreToolGroups();
       return;
+    }
+
+    if (EXTREME_NATIVE_MODE) {
+      document.documentElement?.setAttribute('data-cgpt-static', '1');
+    }
+    if (RESULT_ONLY_MODE) {
+      document.documentElement?.setAttribute('data-cgpt-result-only', '1');
+      bindModernProcessObserver(true);
+      scheduleHistoricalResultOnlyPrune(40);
     }
 
     const activeTurn =
@@ -7239,6 +7288,10 @@
       ?.removeAttribute(
         'data-cgpt-static'
       );
+    document.documentElement
+      ?.removeAttribute(
+        'data-cgpt-result-only'
+      );
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(HOST_ID)?.remove();
     state.ui = null;
@@ -7302,7 +7355,7 @@
     HAD_EXISTING_RUNTIME
   );
 
-  if (EXTREME_NATIVE_MODE) {
+  if (EXTREME_NATIVE_MODE && state.settings.enabled) {
     document.documentElement
       ?.setAttribute(
         'data-cgpt-static',
