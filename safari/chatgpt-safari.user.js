@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.42
+// @version      0.4.43
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.42';
+  const VERSION = '0.4.43';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1819,17 +1819,23 @@
   }
 
   function registerConversationLinks(scope = document) {
-    if (EXTREME_NATIVE_MODE) {
+    if (IS_SAFARI_CONTAINER && !IS_NATIVE_IOS) {
       return { ids: new Set(), indexChanged: false };
     }
 
-    let indexChanged = indexProjectNames(scope);
+    // Native iOS restores small local status badges from sidebar links
+    // without scanning the full transcript or indexing project names.
+    let indexChanged = !EXTREME_NATIVE_MODE &&
+      indexProjectNames(scope);
     const ids = new Set();
     for (const item of ChatGPTDOMAdapter.conversationItems(scope)) {
       const id = ChatGPTDOMAdapter.conversationIdForItem(item);
       if (!id) continue;
       ids.add(id);
-      if (rememberProjectChat(id, projectIdForChatItem(item, id))) {
+      if (
+        !EXTREME_NATIVE_MODE &&
+        rememberProjectChat(id, projectIdForChatItem(item, id))
+      ) {
         indexChanged = true;
       }
       let links = state.conversationLinks.get(id);
@@ -1845,7 +1851,7 @@
 
   function renderConversationStateForId(id) {
     if (
-      EXTREME_NATIVE_MODE ||
+      (IS_SAFARI_CONTAINER && !IS_NATIVE_IOS) ||
       !id
     ) {
       return;
@@ -1856,8 +1862,16 @@
 
     if (!links) return;
 
-    const status =
-      state.conversationStates[id]?.status;
+    const record = state.conversationStates[id];
+    let status = record?.status || null;
+    // If the chat was left generating when iOS closed, never silently
+    // claim that its old running state is still current.
+    if (
+      (status === 'running' ||
+       status === 'waiting_user' ||
+       status === 'settling') &&
+      Date.now() - Number(record?.updatedAt || 0) > 90000
+    ) status = 'uncertain';
 
     for (const item of Array.from(links)) {
       if (
@@ -1869,6 +1883,7 @@
       }
 
       if (
+        (IS_NATIVE_IOS && status === 'completed_read') ||
         shouldRenderConversationState(
           id,
           status
@@ -1883,7 +1898,7 @@
           'data-cgpt-safari-chat-state'
         );
       }
-      renderProjectLabel(item, id);
+      if (!EXTREME_NATIVE_MODE) renderProjectLabel(item, id);
     }
 
     if (!links.size) {
@@ -1892,7 +1907,7 @@
   }
 
   function renderConversationStates(scope = null) {
-    if (EXTREME_NATIVE_MODE) return;
+    if (IS_SAFARI_CONTAINER && !IS_NATIVE_IOS) return;
     let ids = null;
 
     if (scope) {
@@ -1912,7 +1927,7 @@
   function reconcileSidebarConversationLinks() {
     if (
       state.destroyed ||
-      EXTREME_NATIVE_MODE
+      (IS_SAFARI_CONTAINER && !IS_NATIVE_IOS)
     ) {
       state.conversationLinks.clear();
       return;
@@ -1938,7 +1953,7 @@
   ) {
     if (
       state.destroyed ||
-      EXTREME_NATIVE_MODE
+      (IS_SAFARI_CONTAINER && !IS_NATIVE_IOS)
     ) {
       return;
     }
@@ -2524,6 +2539,8 @@
       '[data-cgpt-safari-chat-state="waiting_user"] { --cgpt-chat-state-color: #ff9f0a; }',
       '[data-cgpt-safari-chat-state="settling"] { --cgpt-chat-state-color: #8e8e93; }',
       '[data-cgpt-safari-chat-state="completed_unread"] { --cgpt-chat-state-color: #0a84ff; }',
+      '[data-cgpt-safari-chat-state="completed_read"] { --cgpt-chat-state-color: #8e8e93; }',
+      '[data-cgpt-safari-chat-state="uncertain"] { --cgpt-chat-state-color: #8e8e93; }',
       // A CSS pseudo-label avoids DOM insertion and preserves native click targets.
       'a[data-cgpt-project-label]::after {',
       '  content: attr(data-cgpt-project-label);',
@@ -6184,7 +6201,7 @@
       }
     }
 
-    if (EXTREME_NATIVE_MODE) {
+    if (IS_SAFARI_CONTAINER && !IS_NATIVE_IOS) {
       state.sidebarObserver
         ?.disconnect();
       state.sidebarObserver = null;
@@ -6471,7 +6488,7 @@
             .conversationRoot() !==
             state.conversationRoot ||
           (
-            !EXTREME_NATIVE_MODE &&
+            (!EXTREME_NATIVE_MODE || IS_NATIVE_IOS) &&
             ChatGPTDOMAdapter
               .sidebarRoot() !==
               state.sidebarRoot
@@ -6904,201 +6921,11 @@
     return false;
   }
 
-  function hasCookieFlag(name) {
-    return document.cookie
-      .split(';')
-      .some(
-        (part) =>
-          part.trim() ===
-            name + '=1'
-      );
-  }
-
-  function setCookieFlag(name) {
-    try {
-      document.cookie =
-        name +
-        '=1; Max-Age=31536000; Path=/; SameSite=Lax';
-    } catch (_) {}
-  }
-
-  async function clearClientSiteState() {
-    const preserveKeys = [
-      SETTINGS_KEY,
-      CONTROL_MIGRATION_KEY,
-      CONTROL_POSITION_KEY,
-      TELEMETRY_INSTALL_KEY,
-    ];
-
-    const preserved = new Map();
-
-    try {
-      for (const key of preserveKeys) {
-        const value =
-          localStorage.getItem(key);
-
-        if (value != null) {
-          preserved.set(
-            key,
-            value
-          );
-        }
-      }
-
-      localStorage.clear();
-
-      for (
-        const [key, value] of
-          preserved
-      ) {
-        localStorage.setItem(
-          key,
-          value
-        );
-      }
-    } catch (_) {}
-
-    try {
-      sessionStorage.clear();
-    } catch (_) {}
-
-    const cleanupTasks = [];
-
-    try {
-      if (
-        window.caches &&
-        typeof caches.keys ===
-          'function'
-      ) {
-        cleanupTasks.push(
-          caches.keys().then(
-            (names) =>
-              Promise.all(
-                names.map(
-                  (name) =>
-                    caches.delete(name)
-                )
-              )
-          )
-        );
-      }
-    } catch (_) {}
-
-    try {
-      if (
-        window.indexedDB &&
-        typeof indexedDB.databases ===
-          'function'
-      ) {
-        cleanupTasks.push(
-          indexedDB.databases().then(
-            (databases) =>
-              Promise.all(
-                databases
-                  .map(
-                    (database) =>
-                      database?.name
-                  )
-                  .filter(Boolean)
-                  .map(
-                    (name) =>
-                      new Promise(
-                        (resolve) => {
-                          const request =
-                            indexedDB
-                              .deleteDatabase(
-                                name
-                              );
-
-                          request.onsuccess =
-                            () => resolve();
-                          request.onerror =
-                            () => resolve();
-                          request.onblocked =
-                            () => resolve();
-                        }
-                      )
-                  )
-              )
-          )
-        );
-      }
-    } catch (_) {}
-
-    if (cleanupTasks.length) {
-      await Promise.race([
-        Promise.allSettled(
-          cleanupTasks
-        ),
-        new Promise(
-          (resolve) =>
-            window.setTimeout(
-              resolve,
-              900
-            )
-        ),
-      ]);
-    }
-  }
-
+  // Legacy first-visit deep reset deleted ChatGPT localStorage,
+  // IndexedDB, caches and then forcibly reloaded the active conversation.
+  // Never clear authenticated site state implicitly at page startup.
   function runOneTimeSidebarCleanup() {
-    if (
-      !IS_NATIVE_IOS ||
-      state.destroyed ||
-      window.__CHATGPT_NATIVE__
-        ?.uiTesting === true ||
-      hasCookieFlag(
-        SIDEBAR_DEEP_RESET_COOKIE
-      )
-    ) {
-      return false;
-    }
-
-    setCookieFlag(
-      SIDEBAR_DEEP_RESET_COOKIE
-    );
-
-    state.conversationStates = {};
-    state.conversationLinks.clear();
-
-    for (
-      const item of
-        document.querySelectorAll(
-          '[data-cgpt-safari-chat-state]'
-        )
-    ) {
-      item.removeAttribute(
-        'data-cgpt-safari-chat-state'
-      );
-    }
-
-    state.pendingSidebarCleanup = true;
-
-    void clearClientSiteState()
-      .finally(() => {
-        if (state.destroyed) {
-          return;
-        }
-
-        if (
-          requestNativeAction(
-            'clear-cache'
-          )
-        ) {
-          return;
-        }
-
-        state.pendingSidebarCleanup =
-          false;
-
-        window.setTimeout(() => {
-          if (!state.destroyed) {
-            location.reload();
-          }
-        }, 120);
-      });
-
-    return true;
+    return false;
   }
 
   function showControl() {
@@ -7369,7 +7196,7 @@
     suppressOpenAppBanner();
   }
 
-  if (!EXTREME_NATIVE_MODE) {
+  if (!EXTREME_NATIVE_MODE || IS_NATIVE_IOS) {
     setupConversationStateSync();
   }
 
