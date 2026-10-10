@@ -267,6 +267,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
+        context.coordinator.nativeResilience.attach(to: webView)
 
         // Keep WebKit's navigation swipe gestures disabled.
         // This shell intentionally adds no custom gestures.
@@ -359,6 +360,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         _ uiView: ChatGPTWebContainerView,
         coordinator: Coordinator
     ) {
+        coordinator.nativeResilience.detach()
         uiView.webView.configuration.userContentController
             .removeScriptMessageHandler(
                 forName: Coordinator.nativeMessageHandler
@@ -371,6 +373,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         status: String
     ) {
         let store = UnifiedScriptStore.shared
+        ChatGPTConversationResilience.installScripts(on: controller)
 
         controller.addUserScript(
             WKUserScript(
@@ -421,6 +424,7 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private let scriptStore: UnifiedScriptStore
         private let nativePerformance = ChatGPTNativePerformanceProbe()
+        let nativeResilience = ChatGPTConversationResilience()
         private var contentController: WKUserContentController?
 
         private var activeScript: UnifiedScriptPayload?
@@ -2615,6 +2619,7 @@ private func collapseExternalBrowserMenu() {
             }
 
             controller.removeAllUserScripts()
+            ChatGPTConversationResilience.installScripts(on: controller)
 
             controller.addUserScript(
                 WKUserScript(
