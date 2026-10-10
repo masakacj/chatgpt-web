@@ -107,6 +107,47 @@ final class ChatGPTNativePerformanceProbe {
         send("ios_nav_finish", for: webView)
     }
 
+    func navigationFailed(_ webView: WKWebView, error: NSError) {
+        guard allowedToCollect, isChatGPT(webView),
+              error.code != NSURLErrorCancelled else { return }
+        let reason: String
+        if error.domain == NSURLErrorDomain {
+            switch error.code {
+            case NSURLErrorTimedOut:
+                reason = "ios_nav_timeout"
+            case NSURLErrorNotConnectedToInternet:
+                reason = "ios_nav_offline"
+            case NSURLErrorNetworkConnectionLost:
+                reason = "ios_nav_lost"
+            case NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost:
+                reason = "ios_nav_connect"
+            case NSURLErrorSecureConnectionFailed:
+                reason = "ios_nav_tls"
+            default:
+                reason = "ios_nav_fail"
+            }
+        } else {
+            reason = "ios_nav_fail"
+        }
+        send(reason, for: webView)
+    }
+
+    func navigationHTTPStatus(_ webView: WKWebView, statusCode: Int) {
+        guard allowedToCollect, isChatGPT(webView),
+              statusCode >= 400 else { return }
+        let reason: String
+        if statusCode == 401 || statusCode == 403 {
+            reason = "ios_http_auth"
+        } else if statusCode == 429 {
+            reason = "ios_http_limit"
+        } else if statusCode >= 500 {
+            reason = "ios_http_server"
+        } else {
+            reason = "ios_http_error"
+        }
+        send(reason, for: webView)
+    }
+
     func webContentTerminated(_ webView: WKWebView) {
         guard allowedToCollect, isChatGPT(webView) else { return }
         send("ios_web_terminated", for: webView)
@@ -188,6 +229,22 @@ final class ChatGPTNativePerformanceProbe {
             ? assistants[assistants.length - 1] : null;
           const alternateReady = !textReady &&
             (lastAssistant?.textContent || '').trim().length >= 24;
+
+          // Explicit ChatGPT error UI, not arbitrary historical MCP
+          // 'Retry' tool buttons. The probe never clicks anything.
+          const errorPanel = document.querySelector(
+            '[data-testid*="error-boundary" i],' +
+            '[data-testid*="conversation-error" i],' +
+            '[data-testid*="message-error" i]'
+          );
+          const retryButton = errorPanel?.querySelector(
+            'button[data-testid*="retry" i],' +
+            'button[aria-label*="Retry" i],' +
+            'button[aria-label*="重试"]'
+          ) || document.querySelector(
+            'main button[data-testid="retry-button"]'
+          );
+          const loadFailure = !!(!textReady && (errorPanel || retryButton));
           const lastStates = turn?.querySelectorAll('[data-talvt-turn-state]') || [];
           const state = lastStates.length
             ? lastStates[lastStates.length - 1].getAttribute('data-talvt-turn-state')
@@ -196,6 +253,7 @@ final class ChatGPTNativePerformanceProbe {
             turns: turns.length,
             textReady,
             alternateReady,
+            loadFailure,
             inViewport: !!(textReady && rect && rect.height > 0 &&
               rect.width > 0 && rect.bottom > 0 && rect.top < innerHeight),
             aboveViewport: !!(textReady && rect && rect.bottom < -20),
@@ -236,6 +294,7 @@ final class ChatGPTNativePerformanceProbe {
 
             let ready = snapshot["textReady"] as? Bool == true
             let alternateReady = snapshot["alternateReady"] as? Bool == true
+            let loadFailure = snapshot["loadFailure"] as? Bool == true
             let visible = snapshot["inViewport"] as? Bool == true
             let above = snapshot["aboveViewport"] as? Bool == true
             let below = snapshot["belowViewport"] as? Bool == true
@@ -244,7 +303,8 @@ final class ChatGPTNativePerformanceProbe {
             // above an oversized virtual spacer.
             let stage = visible ? "visible"
                 : (ready ? (above ? "above" : (below ? "below" : "text"))
-                         : (alternateReady ? "alt" : "empty"))
+                         : (loadFailure ? "retry"
+                            : (alternateReady ? "alt" : "empty")))
             self.send(
                 "ios_\(label)_\(stage)",
                 for: webView,
