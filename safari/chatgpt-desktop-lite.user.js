@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Desktop Lite - Conversation Status
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.2.2
+// @version      0.2.3
 // @description  Minimal chat status; native rendering untouched, no idle polling or MCP pruning.
 // @match        https://chatgpt.com/*
 // @run-at       document-idle
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
   // Minimal desktop layer: never rewrites messages, tools, network or scroll.
-  const VERSION = '0.2.2';
+  const VERSION = '0.2.3';
   const KEY = 'cgpt-lite-states-v1';
   const CHANNEL = 'cgpt-lite-sync-v1';
   const ATTR = 'data-cgpt-lite-state';
@@ -443,9 +443,12 @@
   } catch (_) {}
   attachSidebar();
   visit();
-  // Sidebar may mount after hydration. These are finite retries, not a poller.
-  bootTimers.push(setTimeout(attachSidebar, 500));
-  bootTimers.push(setTimeout(attachSidebar, 1800));
+  // A long chat can hydrate its sidebar several seconds after the page
+  // script starts. Without these bounded retries, saved statuses remain in
+  // localStorage but never repaint after tab close/reopen. No idle polling.
+  for (const delay of [500, 1800, 4500, 9000, 16000, 30000, 48000]) {
+    bootTimers.push(setTimeout(attachSidebar, delay));
+  }
   // Lightweight diagnostic surface; no custom panel or official UI replacement.
   window.__CGPT_LITE_INSTANCE__ = {
     destroy,
