@@ -871,6 +871,24 @@ struct ChatGPTWebView: UIViewRepresentable {
                         .thermalStateDidChangeNotification,
                 object: nil
             )
+
+            center.addObserver(
+                self,
+                selector:
+                    #selector(
+                        appDidReceiveMemoryWarning(_:)
+                    ),
+                name: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil
+            )
+        }
+
+        @objc
+        private func appDidReceiveMemoryWarning(
+            _ notification: Notification
+        ) {
+            guard let webView else { return }
+            nativePerformance.memoryWarning(webView)
         }
 
         @objc
@@ -1683,6 +1701,16 @@ struct ChatGPTWebView: UIViewRepresentable {
                    message.frameInfo.securityOrigin.host.lowercased() == "chatgpt.com",
                    let enabled = body["enabled"] as? Bool {
                     nativePerformance.setEnabled(enabled)
+                }
+
+            case "perf-route":
+                // SPA route kind is a 2-value enum. Never accept, store,
+                // or upload URLs, conversation IDs, or message contents.
+                if message.frameInfo.isMainFrame,
+                   message.frameInfo.securityOrigin.host.lowercased() == "chatgpt.com",
+                   let kind = body["routeKind"] as? String,
+                   let webView {
+                    nativePerformance.spaRouteChanged(webView, routeKind: kind)
                 }
 
             case "telemetry":
