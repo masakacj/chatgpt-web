@@ -2930,14 +2930,41 @@ private func collapseExternalBrowserMenu() {
                 navigation: WKNavigation!,
             withError error: Error
         ) {
-            let nsError = error as NSError
+            guard webView === self.webView else { return }
+            nativePerformance.navigationFailed(
+                webView, error: error as NSError
+            )
+        }
 
-            guard
-                nsError.code !=
-                    NSURLErrorCancelled
-            else {
-                return
+        func webView(
+            _ webView: WKWebView,
+            didFail navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            guard webView === self.webView else { return }
+            nativePerformance.navigationFailed(
+                webView, error: error as NSError
+            )
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationResponse: WKNavigationResponse,
+            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+        ) {
+            if
+                webView === self.webView,
+                navigationResponse.isForMainFrame,
+                let response =
+                    navigationResponse.response as? HTTPURLResponse
+            {
+                nativePerformance.navigationHTTPStatus(
+                    webView, statusCode: response.statusCode
+                )
             }
+            // Diagnostic-only delegate: never change ChatGPT routing or
+            // intercept authentication, sign-in, MCP or tool requests.
+            decisionHandler(.allow)
         }
 
         func webView(
