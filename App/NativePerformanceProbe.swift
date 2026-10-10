@@ -23,6 +23,7 @@ final class ChatGPTNativePerformanceProbe {
     private var navigationSerial = 0
     private var navigationStartedAt = CACurrentMediaTime()
     private var pendingProbes = Set<String>()
+    private var preferredRouteKind: String?
 
     init() {
         let defaults = UserDefaults.standard
@@ -62,6 +63,7 @@ final class ChatGPTNativePerformanceProbe {
 
     func navigationStarted(_ webView: WKWebView) {
         currentWebView = webView
+        preferredRouteKind = nil
         navigationSerial += 1
         navigationStartedAt = CACurrentMediaTime()
         pendingProbes.removeAll()
@@ -70,6 +72,29 @@ final class ChatGPTNativePerformanceProbe {
         // Individual probes check the origin after navigation commits.
         send("ios_nav_start", for: webView)
         scheduleProbes(for: webView, serial: navigationSerial)
+    }
+
+    func spaRouteChanged(_ webView: WKWebView, routeKind: String) {
+        guard allowedToCollect, isChatGPT(webView),
+              routeKind == "conversation" || routeKind == "home" else {
+            return
+        }
+        // WebKit's native navigation delegate can miss History API routing.
+        // Reset the existing finite sample schedule only for an actual route
+        // transition reported by the first-party userscript. Nothing is
+        // polled or retained when diagnostics are disabled.
+        currentWebView = webView
+        preferredRouteKind = routeKind
+        navigationSerial += 1
+        navigationStartedAt = CACurrentMediaTime()
+        pendingProbes.removeAll()
+        send("ios_spa_open", for: webView)
+        scheduleProbes(for: webView, serial: navigationSerial)
+    }
+
+    func memoryWarning(_ webView: WKWebView) {
+        guard allowedToCollect, isChatGPT(webView) else { return }
+        send("ios_memory_warning", for: webView)
     }
 
     func navigationCommitted(_ webView: WKWebView) {
@@ -95,6 +120,7 @@ final class ChatGPTNativePerformanceProbe {
 
     private func routeKind(for view: WKWebView) -> String {
         guard isChatGPT(view) else { return "other" }
+        if let preferredRouteKind { return preferredRouteKind }
         return view.url?.path.contains("/c/") == true ? "conversation" : "home"
     }
 
@@ -105,7 +131,7 @@ final class ChatGPTNativePerformanceProbe {
     }
 
     private func scheduleProbes(for webView: WKWebView, serial: Int) {
-        for seconds in [3, 8, 15, 30, 60] {
+        for seconds in [1, 3, 8, 15, 30, 60] {
             DispatchQueue.main.asyncAfter(
                 deadline: .now() + .seconds(seconds)
             ) { [weak self, weak webView] in
@@ -136,15 +162,32 @@ final class ChatGPTNativePerformanceProbe {
         // No text is returned, no history is mutated, no navigation is added.
         let expression = """
         (() => {
-          const transcript = document.querySelector(
-            'main [class*="transcriptContent"]'
-          );
-          const turns = transcript?.querySelectorAll('[data-turn-key]') || [];
+          const transcript =
+            document.querySelector('main [class*="transcriptContent"]') ||
+            document.querySelector('main');
+          const turns = transcript?.querySelectorAll(
+            '[data-turn-key], [data-testid^="conversation-turn-"], article[data-scroll-anchor]'
+          ) || [];
           const turn = turns.length ? turns[turns.length - 1] : null;
-          const roots = turn?.querySelectorAll('[class*="DilResponseRoot"]') || [];
-          const answer = roots.length ? roots[roots.length - 1] : null;
+          const roots = turn?.querySelectorAll(
+            '[class*="DilResponseRoot"], [data-dil-message-id], [class*="MarkdownRoot"]'
+          ) || [];
+          let answer = null;
+          for (let i = roots.length - 1; i >= 0; --i) {
+            if ((roots[i].textContent || '').trim().length >= 24) {
+              answer = roots[i];
+              break;
+            }
+          }
           const rect = answer?.getBoundingClientRect();
-          const textReady = (answer?.textContent || '').trim().length >= 24;
+          const textReady = !!answer;
+          const assistants = turn?.querySelectorAll(
+            '[data-conversation-role="assistant"], [data-message-author-role="assistant"]'
+          ) || [];
+          const lastAssistant = assistants.length
+            ? assistants[assistants.length - 1] : null;
+          const alternateReady = !textReady &&
+            (lastAssistant?.textContent || '').trim().length >= 24;
           const lastStates = turn?.querySelectorAll('[data-talvt-turn-state]') || [];
           const state = lastStates.length
             ? lastStates[lastStates.length - 1].getAttribute('data-talvt-turn-state')
@@ -152,6 +195,7 @@ final class ChatGPTNativePerformanceProbe {
           return {
             turns: turns.length,
             textReady,
+            alternateReady,
             inViewport: !!(textReady && rect && rect.height > 0 &&
               rect.width > 0 && rect.bottom > 0 && rect.top < innerHeight),
             aboveViewport: !!(textReady && rect && rect.bottom < -20),
@@ -191,6 +235,7 @@ final class ChatGPTNativePerformanceProbe {
             }
 
             let ready = snapshot["textReady"] as? Bool == true
+            let alternateReady = snapshot["alternateReady"] as? Bool == true
             let visible = snapshot["inViewport"] as? Bool == true
             let above = snapshot["aboveViewport"] as? Bool == true
             let below = snapshot["belowViewport"] as? Bool == true
@@ -199,7 +244,7 @@ final class ChatGPTNativePerformanceProbe {
             // above an oversized virtual spacer.
             let stage = visible ? "visible"
                 : (ready ? (above ? "above" : (below ? "below" : "text"))
-                         : "empty")
+                         : (alternateReady ? "alt" : "empty"))
             self.send(
                 "ios_\(label)_\(stage)",
                 for: webView,
