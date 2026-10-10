@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.39
+// @version      0.4.40
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.39';
+  const VERSION = '0.4.40';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -1209,6 +1209,19 @@
     updateTelemetryUI();
   }
 
+  function syncNativePerfConsent() {
+    // Real-device native milestones are entirely opt-in. The existing
+    // telemetry switch controls both the page-side and WKWebView probes.
+    // No tokens, URLs, messages or chat IDs cross this bridge.
+    if (!IS_NATIVE_IOS) return;
+    try {
+      window.webkit?.messageHandlers?.chatGPTNative?.postMessage({
+        type: 'perf-debug-opt-in',
+        enabled: state.settings.telemetryEnabled === true,
+      });
+    } catch (_) {}
+  }
+
   function startTelemetryRuntime() {
     if (
       !state.settings.telemetryEnabled
@@ -1243,6 +1256,7 @@
     state.settings.telemetryEnabled =
       Boolean(value);
     saveSettings();
+    syncNativePerfConsent();
 
     if (
       state.ui?.telemetrySwitch
@@ -7220,6 +7234,11 @@
 
   window[GLOBAL_KEY] = api;
   window[LEGACY_GLOBAL_KEY] = api;
+
+  // Reconcile consent on every app launch/page refresh, even when telemetry
+  // is disabled. Existing users retain their settings; nothing is enabled
+  // automatically or sent while the opt-in is off.
+  syncNativePerfConsent();
 
   window.__CHATGPT_UNIFIED_INJECTED__ = {
     active: true,
