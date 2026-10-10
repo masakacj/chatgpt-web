@@ -2400,18 +2400,20 @@
       VERSION
     );
 
-    if (EXTREME_NATIVE_MODE && state.settings.enabled) {
-      root.setAttribute(
-        'data-cgpt-static',
-        '1'
-      );
+    if (EXTREME_NATIVE_MODE) {
+      if (state.settings.enabled) {
+        root.setAttribute('data-cgpt-static', '1');
+      } else {
+        root.removeAttribute('data-cgpt-static');
+      }
     }
 
-    if (RESULT_ONLY_MODE && state.settings.enabled) {
-      root.setAttribute(
-        'data-cgpt-result-only',
-        '1'
-      );
+    if (RESULT_ONLY_MODE) {
+      if (state.settings.enabled) {
+        root.setAttribute('data-cgpt-result-only', '1');
+      } else {
+        root.removeAttribute('data-cgpt-result-only');
+      }
     }
 
     const style = document.createElement('style');
@@ -7285,6 +7287,10 @@
     document.documentElement
       ?.removeAttribute(
         'data-cgpt-static'
+      );
+    document.documentElement
+      ?.removeAttribute(
+        'data-cgpt-result-only'
       );
     document.getElementById(STYLE_ID)?.remove();
     document.getElementById(HOST_ID)?.remove();
