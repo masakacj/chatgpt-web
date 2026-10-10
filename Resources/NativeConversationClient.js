@@ -99,7 +99,7 @@
     }catch{}
     if(items.length){const migrated=await call('import',{items});for(const[id,rec]of Object.entries(migrated?.states||{}))records.set(id,rec)}
     // Do not delete legacy/site storage. Native persistence is now authoritative.
-    ready=true;route(true);
+    ready=true;document.documentElement.setAttribute('data-native-parity-ready','true');route(true);
   }
   async function wake(){
     if(!ready){boot();return}

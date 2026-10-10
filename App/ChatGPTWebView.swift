@@ -630,6 +630,10 @@ struct ChatGPTWebView: UIViewRepresentable {
                       )
                     ).length;
                   return {
+                    nativeParity: window.__CHATGPT_NATIVE_PARITY__ === true,
+                    nativeReady: document.documentElement.getAttribute(
+                      "data-native-parity-ready"
+                    ) === "true",
                     baselineNodes:
                       Number(baseline.nodes || 0),
                     baselineActivity:
@@ -756,17 +760,17 @@ struct ChatGPTWebView: UIViewRepresentable {
                     )
                     : 0
 
-                let pass =
-                    baselineActivity >= 109 &&
-                    baselineMcp >= 96 &&
-                    baselineThinking >= 3 &&
-                    activity == 10 &&
-                    mcp == 0 &&
-                    thinking == 0 &&
-                    sentinel &&
-                    !runtime.isEmpty &&
-                    pruned >= 99 &&
-                    reduction >= 0.40
+                let nativeParity = values["nativeParity"] as? Bool == true
+                let nativeReady = values["nativeReady"] as? Bool == true
+                let baselineValid = baselineActivity >= 109 && baselineMcp >= 96
+                    && baselineThinking >= 3 && sentinel && !runtime.isEmpty
+                // New native mode must preserve history and finish a real
+                // isolated-world -> Swift -> isolated-world handshake.
+                let pass = baselineValid && (nativeParity
+                    ? (nativeReady && activity == baselineActivity && mcp == baselineMcp
+                        && thinking == baselineThinking && pruned == 0)
+                    : (activity == 10 && mcp == 0 && thinking == 0
+                        && pruned >= 99 && reduction >= 0.40))
 
                 let elapsed =
                     Date().timeIntervalSince(
