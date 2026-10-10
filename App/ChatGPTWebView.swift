@@ -304,7 +304,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                 isWebKitStress
         )
 
-        if !isUITesting {
+        if !isUITesting ||
+            arguments.contains("--ui-panel-stall")
+        {
             context.coordinator
                 .installMainAnchor(
                     in: container
@@ -459,6 +461,11 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private weak var mainAnchorButton:
             ChatGPTFloatingAnchorButton?
+
+        // The visible S button is native, but the ordinary expanded panel
+        // depends on the WebKit JS process. Never let stalled JS trap it.
+        private var panelRequestSerial = 0
+        private var nativePanelFallbackPresented = false
 
         private static let mainAnchorPositionXKey =
             "ChatGPTWeb.mainAnchorPositionX"
@@ -1036,10 +1043,19 @@ struct ChatGPTWebView: UIViewRepresentable {
                     control.accessibilityValue ??
                     ""
 
+                // A second tap never queues extra work into frozen WebKit.
+                if [
+                    "panel-requested",
+                    "panel-open-not-ready",
+                    "panel-unavailable"
+                ].contains(currentState) {
+                    self.showNativePanelFallback()
+                    return
+                }
+
                 if [
                     "panel-ready",
-                    "panel-open",
-                    "panel-open-not-ready"
+                    "panel-open"
                 ].contains(currentState) {
                     self.closeScriptPanel()
                     return
@@ -1048,9 +1064,13 @@ struct ChatGPTWebView: UIViewRepresentable {
                 control.accessibilityValue =
                     "panel-requested"
 
+                self.sendFeedbackGenerator.impactOccurred(
+                    intensity: 0.40
+                )
+                self.scheduleNativePanelDeadline(from: control)
                 self.toggleScriptPanel(
                     from: control,
-                    retriesRemaining: 12
+                    retriesRemaining: 3
                 )
             }
 
@@ -1325,10 +1345,112 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
 
+        private func scheduleNativePanelDeadline(
+            from sender: UIButton
+        ) {
+            panelRequestSerial &+= 1
+            let serial = panelRequestSerial
+            nativePanelFallbackPresented = false
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + 1.6
+            ) { [weak self, weak sender] in
+                guard let self, let sender,
+                      self.panelRequestSerial == serial,
+                      !self.nativePanelFallbackPresented,
+                      ["panel-requested", "panel-open-not-ready"].contains(
+                          sender.accessibilityValue ?? ""
+                      )
+                else { return }
+                self.showNativePanelFallback()
+            }
+        }
+
+        private func showNativePanelFallback() {
+            guard !nativePanelFallbackPresented,
+                  let presenter = topViewController(),
+                  !(presenter is UIAlertController),
+                  !presenter.isBeingDismissed
+            else { return }
+
+            nativePanelFallbackPresented = true
+            panelRequestSerial &+= 1
+            mainAnchorButton?.accessibilityValue = "panel-unavailable"
+            if let webView {
+                nativePerformance.floatingPanelUnresponsive(webView)
+            }
+
+            let alert = UIAlertController(
+                title: "网页响应缓慢",
+                message: "网页内悬浮菜单没有及时响应。这些操作由 iOS 原生容器完成，不会自动刷新或清除登录。",
+                preferredStyle: .alert
+            )
+            if webView?.canGoBack == true {
+                alert.addAction(UIAlertAction(
+                    title: "后退",
+                    style: .default
+                ) { [weak self] _ in
+                    self?.nativePanelFallbackPresented = false
+                    self?.mainAnchorButton?.accessibilityValue = "panel-closed"
+                    self?.webView?.goBack()
+                })
+            }
+            alert.addAction(UIAlertAction(
+                title: "返回 ChatGPT 首页",
+                style: .default
+            ) { [weak self] _ in
+                self?.nativePanelFallbackPresented = false
+                self?.mainAnchorButton?.accessibilityValue = "panel-closed"
+                guard let url = URL(string: "https://chatgpt.com/") else { return }
+                self?.webView?.load(URLRequest(url: url))
+            })
+            alert.addAction(UIAlertAction(
+                title: "手动刷新当前页面…",
+                style: .destructive
+            ) { [weak self] _ in
+                self?.nativePanelFallbackPresented = false
+                // Unsent drafts cannot be checked while the page JS is stuck.
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + 0.25
+                ) { [weak self] in
+                    self?.presentAlert(
+                        title: "确认刷新",
+                        message: "刷新可能丢失尚未发送的文字。只有在对话确实无法显示时才刷新；不会清除登录信息。",
+                        actions: [
+                            UIAlertAction(title: "取消", style: .cancel),
+                            UIAlertAction(
+                                title: "确认刷新",
+                                style: .destructive
+                            ) { [weak self] _ in
+                                self?.mainAnchorButton?.accessibilityValue =
+                                    "panel-closed"
+                                self?.webView?.reload()
+                            }
+                        ]
+                    )
+                }
+            })
+            alert.addAction(UIAlertAction(
+                title: "取消",
+                style: .cancel
+            ) { [weak self] _ in
+                self?.nativePanelFallbackPresented = false
+                self?.mainAnchorButton?.accessibilityValue = "panel-closed"
+            })
+            presenter.present(alert, animated: true)
+        }
+
         private func toggleScriptPanel(
             from sender: UIButton,
             retriesRemaining: Int
         ) {
+            // Synthetic UI test simulates absent JS completion; production
+            // always executes the original script path.
+            if ProcessInfo.processInfo.arguments.contains("--ui-testing") &&
+                ProcessInfo.processInfo.arguments.contains("--ui-panel-stall") {
+                return
+            }
+            guard !nativePanelFallbackPresented else { return }
+
             guard let webView else {
                 return
             }
@@ -1390,6 +1512,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
+                guard !self.nativePanelFallbackPresented else { return }
                 if
                     let state =
                         result as? [String: Any],
@@ -1430,8 +1553,7 @@ struct ChatGPTWebView: UIViewRepresentable {
                 }
 
                 guard retriesRemaining > 0 else {
-                    sender.accessibilityValue =
-                        "panel-unavailable"
+                    self.showNativePanelFallback()
                     return
                 }
 
@@ -1462,6 +1584,7 @@ struct ChatGPTWebView: UIViewRepresentable {
         ) {
             guard
                 retriesRemaining > 0,
+                !nativePanelFallbackPresented,
                 let webView
             else {
                 return
@@ -1543,6 +1666,8 @@ struct ChatGPTWebView: UIViewRepresentable {
         }
 
         private func closeScriptPanel() {
+            panelRequestSerial &+= 1
+            nativePanelFallbackPresented = false
             mainAnchorButton?.accessibilityValue =
                 "panel-closed"
 
@@ -2741,6 +2866,8 @@ private func collapseExternalBrowserMenu() {
                 updateExternalBrowserControls()
                 return
             }
+            panelRequestSerial &+= 1
+            mainAnchorButton?.accessibilityValue = "panel-closed"
             nativePerformance.navigationStarted(webView)
         }
 
