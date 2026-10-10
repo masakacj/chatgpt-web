@@ -85,3 +85,15 @@ Remaining: physical iPhone startup/side-panel speed, actual WebKit restart persi
 - 成功后验收 IPA 安装中心 `https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest` 的准确Build、签名和manifest可用性；**直接覆盖安装**，不卸载、不清数据。
 - 如果出现回归，回退此分支引入的 Swift 原生菜单/测试代码即可；历史会话本地状态属于现有原生 UserDefaults，不应被删除。
 - 该修复保证**卡住的JS不能让原生菜单一起失效**（只要iOS主线程仍响应），并提供可控恢复入口；不意味着长对话白屏/内存压力的根因已消除，须用真机日志复测是否有后续 `ios_web_terminated`。
+
+
+### 发布与验证回执（2026-10-10 台湾时间 23:22）
+
+- 用户报告的旧版：iOS 0.4.44 Build 217。云端自愿诊断 22:39 和 22:51 两次 `ios_web_terminated`，与偶发白屏接近；说明该版本存在真实 WebKit 进程终止，但不能宣称所有白屏皆由它触发。
+- 合并：PR #52，main commit `cca2b3d464bca52216f8bc8cceae13eeb9e7e8d9`，没有改变 PC 扩展/旧退役脚本、WKWebView 内核或用户登录数据。
+- 修复：正常网页悬浮面板保留；JS等待1.6秒无答复或再次点击即出现 UIKit 原生应急菜单。旧网页JS注入重试上限从12降至3，并以请求序号丢弃过期回调。原生用户主动选择后退/首页；手动刷新必需二次确认，保护未发送草稿。不增加任何 ChatGPT API 自动重试/整页刷新。
+- 限制：本补丁为 **native UI escape hatch**，并不修复 WebKit 内容进程被终止的底层内存/React加载原因。iOS主线程本身如果也卡死，UIKit菜单同样不一定能显示；此时需手动关闭后重开 App。
+- 诊断：既有 opt-in 数据链路只在应急菜单触发时上报 `ios_panel_js_timeout`，只包含有限元数据，不包含 URL/会话ID/正文/Token。
+- 独立 CI：GitHub Actions `38062282710` **success**；Release设备编译成功、Swift UserDefaults原生持久化30个断言通过、真实iPhone模拟器 `testNativeFloatingFallbackWhenWebKitStopsAnswering` **passed (69.488s)** 和 `testWKWebViewResultOnlyStress` **passed (22.687s)**，2 tests / 0 failures。
+- 正式发布：GitHub Actions `38063243294` 的 **build-ipa 已success**，签名及安装中心上传成功；修复版沿用营销版本 **0.4.44**，自增 Build **218**。发布API `https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest` 已核实为 Build 218；安装清单 `https://ipa.78175132.xyz/manifest/232ed97f-b934-4150-9698-aee66b7fc048.plist` HTTP 200；安装中心主页 HTTP 200。正式 ui-smoke 独立 Job 尚在运行时记录，不能凭它宣称总体 workflow PASS。
+- 覆盖安装即可，不需卸载、清缓存或重新登录。旧 Build 217 已签名包作为回退参考；若用户真机依然频繁白屏，请对照 `ios_web_terminated`、`ios_nav_fail`、`ios_panel_js_timeout` 时间戳，继续按真实进程内存压力调查，**不要重启历史 JS 剪枝/拦截 iframe 实验**。
