@@ -7349,7 +7349,7 @@
     HAD_EXISTING_RUNTIME
   );
 
-  if (EXTREME_NATIVE_MODE) {
+  if (EXTREME_NATIVE_MODE && state.settings.enabled) {
     document.documentElement
       ?.setAttribute(
         'data-cgpt-static',
