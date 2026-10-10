@@ -1,0 +1,46 @@
+name: Native iOS Parity Prepare
+on:
+  push:
+    branches: [work/ios-native-parity-20261010]
+    paths: [.github/workflows/native-parity-prepare.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  integrate-and-build:
+    if: github.ref == 'refs/heads/work/ios-native-parity-20261010'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply exact source integration
+        run: node scripts/integrate-native-parity.mjs
+      - name: Validate existing runtime and new isolated resources
+        run: |
+          npm run check
+          node --check Resources/NativeConversationBootstrap.js
+          node --check Resources/NativeConversationClient.js
+      - name: Native storage and safety policy tests
+        run: |
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-parity-policy"
+          "$RUNNER_TEMP/native-parity-policy"
+      - name: Compile real iOS device target
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/NativeParityDerivedData" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION=0.4.44 build
+          test -f "$RUNNER_TEMP/NativeParityDerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app/NativeConversationClient.js"
+          test -f "$RUNNER_TEMP/NativeParityDerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app/NativeConversationBootstrap.js"
+      - name: Commit validated integration to same isolated branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add App/ChatGPTWebView.swift App/ConversationResilienceBridge.swift Resources/NativeConversationClient.js safari/chatgpt-safari.user.js package.json project.yml
+          if ! git diff --cached --quiet; then
+            git commit -m 'Integrate validated iOS 0.4.44 native state layer and keep PC deployment unchanged'
+            git push origin HEAD:work/ios-native-parity-20261010
+          fi
+          git rev-parse HEAD
