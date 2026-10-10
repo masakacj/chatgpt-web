@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Web Unified
 // @namespace    https://github.com/masakacj/chatgpt-web
-// @version      0.4.40
+// @version      0.4.41
 // @description  One ChatGPT userscript for desktop Tampermonkey and iOS Safari: shared performance optimization and conversation state management.
 // @author       masakacj
 // @match        https://chatgpt.com/*
@@ -14,7 +14,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.4.40';
+  const VERSION = '0.4.41';
   const GLOBAL_KEY = 'ChatGPTWeb';
 
   const HOST = location.hostname.toLowerCase();
@@ -176,6 +176,7 @@
     sidebarReconcileTimer: 0,
     foregroundResumeTimer: 0,
     pendingBottomConversationId: '',
+    bottomScrollScheduled: false,
     lastBottomConversationId: '',
     conversationRoot: null,
     sidebarRoot: null,
@@ -4348,28 +4349,53 @@
       .streamingSignal();
   }
 
-  function scrollConversationToBottom() {
-    if (!currentConversationId()) {
-      return false;
-    }
+  // Never scroll an entire long turn into view. Modern transcripts may
+  // append virtual placeholders / MCP surfaces after the actual last answer.
+  // Anchoring a huge turn's bottom sent WKWebView one or two screens into
+  // blank content during history hydration. Scroll the final visible answer
+  // element once instead; when no readable answer exists, let the official
+  // page manage its own scroll position.
+  const LAST_ANSWER_ANCHOR_QUERY = [
+    '[class*="DilResponseRoot"]',
+    '[data-dil-message-id]',
+    '[class*="MarkdownRoot"]',
+    '[data-markdown-text-style]',
+  ].join(',');
 
-    const target =
+  function scrollConversationToBottom() {
+    if (!currentConversationId()) return false;
+
+    const turn =
       ChatGPTDOMAdapter.activeTurn() ||
       lastConversationTurn();
+    if (!(turn instanceof HTMLElement)) return false;
+
+    const candidates = turn.querySelectorAll(
+      LAST_ANSWER_ANCHOR_QUERY
+    );
+    let target = null;
+
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const node = candidates[index];
+      if (
+        node instanceof HTMLElement &&
+        node.getClientRects().length > 0 &&
+        (node.textContent || '').trim().length > 0
+      ) {
+        target = node;
+        break;
+      }
+    }
+
+    if (!target) return false;
 
     try {
-      if (
-        target instanceof HTMLElement
-      ) {
-        target.scrollIntoView({
-          block: 'end',
-          inline: 'nearest',
-          behavior: 'auto',
-        });
-        return true;
-      }
-
-      return false;
+      target.scrollIntoView({
+        block: 'end',
+        inline: 'nearest',
+        behavior: 'auto',
+      });
+      return true;
     } catch (_) {
       return false;
     }
@@ -4384,45 +4410,32 @@
     if (
       !EXTREME_NATIVE_MODE ||
       state.destroyed ||
-      state.nativeSuspended
+      state.nativeSuspended ||
+      state.bottomScrollScheduled
     ) {
       return false;
     }
 
-    const id =
-      state.pendingBottomConversationId;
+    const id = state.pendingBottomConversationId;
+    if (!id || currentConversationId() !== id) return false;
 
-    if (
-      !id ||
-      currentConversationId() !== id
-    ) {
-      return false;
-    }
-
-    state.pendingBottomConversationId =
-      '';
-
+    state.bottomScrollScheduled = true;
     window.requestAnimationFrame(() => {
+      state.bottomScrollScheduled = false;
       if (
         state.destroyed ||
         state.nativeSuspended ||
-        currentConversationId() !== id
-      ) {
-        return;
-      }
+        currentConversationId() !== id ||
+        state.pendingBottomConversationId !== id
+      ) return;
 
-      if (
-        scrollConversationToBottom()
-      ) {
-        state.lastBottomConversationId =
-          id;
-        return;
+      if (scrollConversationToBottom()) {
+        state.pendingBottomConversationId = '';
+        state.lastBottomConversationId = id;
       }
-
-      state.pendingBottomConversationId =
-        id;
+      // If the answer isn't readable yet, leave pending set; the existing
+      // scoped conversation observer retries on an arriving answer node.
     });
-
     return true;
   }
 
@@ -4443,10 +4456,9 @@
       return false;
     }
 
-    if (
-      !force &&
-      state.lastBottomConversationId === id
-    ) {
+    // Forced route-rebind passes must not repeatedly snap a conversation
+    // back to the bottom after its initial visible answer was aligned.
+    if (state.lastBottomConversationId === id) {
       return false;
     }
 
@@ -5943,6 +5955,7 @@
     }
 
     let turnStructureChanged = false;
+    let answerAnchorAdded = false;
     let stateRelevant = false;
 
     for (const mutation of mutations) {
@@ -5980,7 +5993,25 @@
 
       for (const node of mutation.addedNodes) {
         if (!(node instanceof Element)) {
+          // A text node can populate a previously empty final answer.
+          if (
+            state.pendingBottomConversationId &&
+            mutation.target instanceof Element &&
+            mutation.target.closest(LAST_ANSWER_ANCHOR_QUERY)
+          ) {
+            answerAnchorAdded = true;
+          }
           continue;
+        }
+
+        if (
+          state.pendingBottomConversationId &&
+          (
+            node.matches?.(LAST_ANSWER_ANCHOR_QUERY) ||
+            node.querySelector?.(LAST_ANSWER_ANCHOR_QUERY)
+          )
+        ) {
+          answerAnchorAdded = true;
         }
 
         if (
@@ -6012,7 +6043,7 @@
       }
     }
 
-    if (turnStructureChanged) {
+    if (turnStructureChanged || answerAnchorAdded) {
       flushPendingBottomScroll();
     }
 
@@ -6330,6 +6361,15 @@
       state.nativeSuspended
     ) {
       return;
+    }
+
+    // A user's own interaction must win over any deferred auto-scroll.
+    if (
+      state.pendingBottomConversationId &&
+      event.target instanceof Element &&
+      event.target.closest('main')
+    ) {
+      clearInitialBottomScroll();
     }
 
     const control =
