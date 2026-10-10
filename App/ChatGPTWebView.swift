@@ -1070,7 +1070,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                 self.scheduleNativePanelDeadline(from: control)
                 self.toggleScriptPanel(
                     from: control,
-                    retriesRemaining: 3
+                    retriesRemaining: 3,
+                    requestSerial: self.panelRequestSerial
                 )
             }
 
@@ -1441,7 +1442,8 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private func toggleScriptPanel(
             from sender: UIButton,
-            retriesRemaining: Int
+            retriesRemaining: Int,
+            requestSerial: Int
         ) {
             // Synthetic UI test simulates absent JS completion; production
             // always executes the original script path.
@@ -1449,7 +1451,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                 ProcessInfo.processInfo.arguments.contains("--ui-panel-stall") {
                 return
             }
-            guard !nativePanelFallbackPresented else { return }
+            guard !nativePanelFallbackPresented,
+                  panelRequestSerial == requestSerial
+            else { return }
 
             guard let webView else {
                 return
@@ -1512,7 +1516,9 @@ struct ChatGPTWebView: UIViewRepresentable {
                     return
                 }
 
-                guard !self.nativePanelFallbackPresented else { return }
+                guard !self.nativePanelFallbackPresented,
+                      self.panelRequestSerial == requestSerial
+                else { return }
                 if
                     let state =
                         result as? [String: Any],
@@ -1540,7 +1546,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                         self.pollScriptPanelReady(
                             from: sender,
                             retriesRemaining:
-                                retriesRemaining
+                                retriesRemaining,
+                            requestSerial: requestSerial
                         )
                     }
                     return
@@ -1572,7 +1579,8 @@ struct ChatGPTWebView: UIViewRepresentable {
                     self.toggleScriptPanel(
                         from: sender,
                         retriesRemaining:
-                            retriesRemaining - 1
+                            retriesRemaining - 1,
+                        requestSerial: requestSerial
                     )
                 }
             }
@@ -1580,11 +1588,13 @@ struct ChatGPTWebView: UIViewRepresentable {
 
         private func pollScriptPanelReady(
             from sender: UIButton,
-            retriesRemaining: Int
+            retriesRemaining: Int,
+            requestSerial: Int
         ) {
             guard
                 retriesRemaining > 0,
                 !nativePanelFallbackPresented,
+                panelRequestSerial == requestSerial,
                 let webView
             else {
                 return
@@ -1656,10 +1666,14 @@ struct ChatGPTWebView: UIViewRepresentable {
 
                     self.ensureScriptsAreRunning()
 
+                    guard self.panelRequestSerial == requestSerial,
+                          !self.nativePanelFallbackPresented
+                    else { return }
                     self.pollScriptPanelReady(
                         from: sender,
                         retriesRemaining:
-                            retriesRemaining - 1
+                            retriesRemaining - 1,
+                        requestSerial: requestSerial
                     )
                 }
             }
