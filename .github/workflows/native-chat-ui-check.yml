@@ -2,7 +2,7 @@ name: Native Chat UI Check
 on:
   push:
     branches: [feature/native-chat-reader-20261011]
-    paths: ['App/**', 'UITests/NativeChatReaderUITests.swift', 'scripts/prepare-native-chat-ui.mjs', 'scripts/prepare-native-chat-fixtures.mjs', '.github/workflows/native-chat-ui-check.yml']
+    paths: ['App/**', 'UITests/NativeChatReaderUITests.swift', 'scripts/prepare-native-chat-ui.mjs', 'scripts/prepare-native-chat-fixtures.mjs', 'scripts/refine-native-composer.mjs', '.github/workflows/native-chat-ui-check.yml']
   workflow_dispatch:
 permissions:
   contents: write
@@ -22,6 +22,7 @@ jobs:
         run: |
           node scripts/prepare-native-chat-ui.mjs
           node scripts/prepare-native-chat-fixtures.mjs
+          node scripts/refine-native-composer.mjs
       - name: Existing source and native policy gates
         run: |
           npm run check
@@ -64,7 +65,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add App/PCCompanionView.swift App/PCCompanionTestProtocol.swift UITests/PCCompanionUITests.swift package.json project.yml safari/chatgpt-safari.user.js
+          git add App/PCCompanionView.swift App/NativeConversationScreen.swift App/PCCompanionTestProtocol.swift UITests/PCCompanionUITests.swift package.json project.yml safari/chatgpt-safari.user.js
           if ! git diff --cached --quiet; then
             git commit -m 'Validate native chat0.6.0 reader history and explicit interactions'
             git push origin HEAD:feature/native-chat-reader-20261011
