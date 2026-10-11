@@ -1,0 +1,381 @@
+import Foundation
+import SwiftUI
+import Security
+
+struct STTab: Codable, Identifiable {
+    let tabId: Int; let title: String; let conversationId: String; let active: Bool
+    var id: Int { tabId }
+}
+struct STSnapshot: Codable {
+    let schema: Int; let documentId: String; let conversationId: String; let title: String
+    let messages: [PCRemoteMessage]; let status: String; let draftHash: String
+    var sharedTab: Bool?; var route: String?; var projectId: String?; var temporary: Bool?
+    var canSend: Bool?; var pcDraftOccupied: Bool?; var composing: Bool?; var responsePhase: String?
+    var interactions: [PCInteractionCard]?; var historyCursor: String?; var hasOlder: Bool?
+}
+struct STEnvelope: Decodable {
+    let ok: Bool; let sessionId: String; let revision: Int
+    var capturedAt: Double?; var routeChanged: Bool?; var tabClosed: Bool?; var snapshot: STSnapshot?
+}
+struct STProject: Codable, Identifiable { let id: String; let title: String; let collapsed: Bool; let hasMore: Bool }
+struct STChat: Codable, Identifiable {
+    let id: String; let title: String
+    var projectId: String?; var current: Bool?; var status: String?; var readState: String?
+}
+struct STLibrary: Decodable {
+    var projects: [STProject]?; var chats: [STChat]?; var partial: Bool?; var source: String?
+    var hasMore: Bool?; var loading: Bool?; var emptyConfirmed: Bool?; var snapshot: STSnapshot?
+}
+private struct STHealth: Decodable { let capabilities: [String]? }
+private struct STTabs: Decodable { let tabs: [STTab] }
+private struct STOK: Decodable { let ok: Bool? }
+private struct STFailure: Decodable { let error: String }
+private struct STResult: Decodable { var status: String?; var error: String?; var conversationId: String?; var projectId: String? }
+private struct STReceipt: Decodable { let commandId: String; let state: String; var result: STResult? }
+private struct STHistory: Decodable { let documentId: String; let conversationId: String; let messages: [PCRemoteMessage]; var cursor: String?; let hasMore: Bool }
+struct STActionPending: Codable { let id: String; let server: String; let conversation: String }
+private struct STSaved: Codable {
+    var ledger: STDraftLedger; var tabId: Int?; var snapshot: STSnapshot?; var server: String?
+    var actionPending: STActionPending?
+}
+private struct STConnection {
+    let origin: URL; let key: String
+    var identity: String { PCCompanionPolicy.hash(origin.absoluteString + "|" + key) }
+}
+struct STError: LocalizedError {
+    let code: String; var status: Int = 0
+    var errorDescription: String? {
+        let text = [
+            "shared_bridge_required": "PC 桥接尚不支持共享标签页，请更新桥接后连接。",
+            "pc_route_changed": "PC 已切换对话，正在读取当前页面；没有重发消息。",
+            "pc_draft_conflict": "PC 输入框有未发送内容，请先在电脑处理。手机草稿已保留。",
+            "pc_draft_blocks_navigation": "PC 输入框有未发送内容，请先处理后再切换。",
+            "draft_conflict": "PC 输入已变化，手机草稿已保留。",
+            "pc_composing": "PC 正在输入，请稍后发送。",
+            "pc_busy_or_approval": "当前对话正在生成或等待确认，请稍后发送。",
+            "send_unavailable": "PC 发送按钮尚未就绪，消息未发送。",
+            "page_loading": "PC 页面正在加载。",
+            "page_not_ready": "PC 页面尚未就绪，请检查电脑上的页面。",
+            "official_search_unavailable": "当前网页没有可用的历史搜索入口。",
+            "conversation_not_observed": "该历史结果已失效，请重新搜索。",
+            "new_chat_control_unavailable": "当前网页的新聊天入口不可用。",
+            "project_navigation_unconfirmed": "未确认进入指定项目，未发送消息。",
+            "tab_already_paired": "该标签页仍有连接，请稍后重连或选择其他页面。",
+            "tab_closed": "绑定的 PC 标签页已关闭，请重新选择。",
+            "local_storage_failed": "手机草稿保存失败，未提交发送。",
+            "pairing_required": "配对失效，请重新连接 PC。",
+            "invalid_pairing": "请填写有效的配对密钥。",
+            "redirect_refused": "连接地址发生重定向，已停止请求。"
+        ]
+        return text[code] ?? (status == 401 || status == 403 ? "PC 连接未获授权，请检查配对。" : "操作未完成（\(code)），草稿已保留。")
+    }
+}
+private enum STKeychain {
+    static let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "ChatGPTWeb.PCCompanion.v1", kSecAttrAccount as String: "pairing"]
+    static func load() -> String {
+        var q = query; q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+    static func save(_ key: String) throws {
+        var q = query; let data = [kSecValueData as String: Data(key.utf8)]
+        var result = SecItemUpdate(q as CFDictionary, data as CFDictionary)
+        if result == errSecItemNotFound { q.merge(data) { _, value in value }; q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly; result = SecItemAdd(q as CFDictionary, nil) }
+        guard result == errSecSuccess else { throw STError(code: "keychain_unavailable") }
+    }
+}
+private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+}
+
+@MainActor final class SharedTabModel: ObservableObject {
+    @Published var endpoint = UserDefaults.standard.string(forKey: "PCCompanion.endpoint") ?? "https://chatgpt-pc.781751.xyz:58443"
+    @Published var pairingKey = ""
+    @Published var tabs: [STTab] = []
+    @Published var projects: [STProject] = []
+    @Published var chats: [STChat] = []
+    @Published var snapshot: STSnapshot?
+    @Published var older: [PCRemoteMessage] = []
+    @Published var text = ""
+    @Published var online = false
+    @Published var busy = false
+    @Published var loading = false
+    @Published var libraryLoading = false
+    @Published var historyLoading = false
+    @Published var searchHasMore = false
+    @Published var searchNotice = ""
+    @Published var error: String?
+    @Published var status = "未连接 PC"
+    @Published var needsSettings = false
+    @Published private(set) var ledger = STDraftLedger()
+    @Published private(set) var actionPending: STActionPending?
+    private(set) var selectedTabId: Int?
+    private var owner = ""
+    private var connection: STConnection?
+    private var sessionID: String?
+    private var revision = -1
+    private var epoch = 0
+    private var foreground = true
+    private var pollTask: Task<Void, Never>?
+    private var saveTask: Task<Void, Never>?
+    private var historyCursor: String?
+    private var historyHasMore: Bool?
+    private let redirect = STNoRedirect()
+    let fixture: Bool
+    private let clientID: String
+    private lazy var transport: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 28; config.timeoutIntervalForResource = 32
+        config.httpCookieStorage = nil; config.httpShouldSetCookies = false; config.urlCache = nil
+        config.waitsForConnectivity = false
+        #if DEBUG
+        if fixture { config.protocolClasses = [SharedTabFixtureProtocol.self] }
+        #endif
+        return URLSession(configuration: config, delegate: redirect, delegateQueue: nil)
+    }()
+    var displayMessages: [PCRemoteMessage] {
+        let recent = snapshot?.messages ?? []; let ids = Set(recent.map(\.id))
+        return older.filter { !ids.contains($0.id) } + recent
+    }
+    var canLoadHistory: Bool { online && !historyLoading && (historyHasMore ?? snapshot?.hasOlder ?? false) }
+    var currentPending: STPendingSend? { ledger.pendingFor(owner) }
+    var canSubmit: Bool { online && !busy && !loading && snapshot != nil && currentPending == nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var thinking: Bool { snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant" }
+    var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
+    private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
+
+    init() {
+        #if DEBUG
+        fixture = ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture")
+        #else
+        fixture = false
+        #endif
+        clientID = UserDefaults.standard.string(forKey: "SharedPC.clientID") ?? UUID().uuidString
+        if fixture {
+            #if DEBUG
+            SharedTabFixtureProtocol.reset()
+            #endif
+            endpoint = "https://shared-tab.invalid"; pairingKey = String(repeating: "T", count: 43); selectedTabId = 7
+            return
+        }
+        UserDefaults.standard.set(clientID, forKey: "SharedPC.clientID")
+        pairingKey = STKeychain.load()
+        if let file = stateFile, let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(STSaved.self, from: data) {
+            ledger = saved.ledger; selectedTabId = saved.tabId; actionPending = saved.actionPending
+            if let c = try? config(), saved.server == c.identity { snapshot = saved.snapshot; if let snap = snapshot { owner = ownerKey(snap, c); text = ledger.draft(owner).text }; status = "本地快照 · 正在连接 PC" }
+        } else { importLegacyDraft() }
+        if selectedTabId == nil, let data = UserDefaults.standard.data(forKey: "PCCompanion.lastTab"), let tab = try? JSONDecoder().decode(PCRemoteTab.self, from: data) { selectedTabId = tab.tabId }
+    }
+    private func importLegacyDraft() {
+        guard let c = try? config(), let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
+              let data = try? Data(contentsOf: root.appendingPathComponent("PCCompanion/draft.json")),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let draft = raw["draft"] as? [String: Any], let id = draft["owner"] as? String else { return }
+        let key = c.identity + "|" + id
+        ledger.drafts[key] = STLocalDraft(text: draft["text"] as? String ?? "", revision: draft["revision"] as? Int ?? 0)
+        if let p = raw["pending"] as? [String: Any], let command = p["id"] as? String, let server = p["server"] as? String {
+            ledger.pending[command] = STPendingSend(id: command, owner: key, text: p["text"] as? String ?? "", revision: p["revision"] as? Int ?? 0, server: server, temporary: false)
+        }
+    }
+    private func config() throws -> STConnection {
+        guard pairingKey.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw STError(code: "invalid_pairing") }
+        return STConnection(origin: try PCCompanionPolicy.origin(endpoint), key: pairingKey)
+    }
+    private func ownerKey(_ s: STSnapshot, _ c: STConnection) -> String { c.identity + "|" + (s.conversationId.isEmpty ? "new:" + (s.projectId ?? "") : s.conversationId) }
+    @discardableResult private func save() -> Bool {
+        if fixture { return true }
+        guard let file = stateFile else { return false }
+        do {
+            let parent = file.deletingLastPathComponent(); try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            var directory = parent; var values = URLResourceValues(); values.isExcludedFromBackup = true; try directory.setResourceValues(values)
+            let saved = STSaved(ledger: ledger, tabId: selectedTabId, snapshot: snapshot, server: connection?.identity ?? (try? config().identity), actionPending: actionPending)
+            try JSONEncoder().encode(saved).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]); return true
+        } catch { self.error = STError(code: "local_storage_failed").localizedDescription; return false }
+    }
+    private func saveSoon() {
+        saveTask?.cancel(); saveTask = Task { [weak self] in try? await Task.sleep(nanoseconds: 300_000_000); guard !Task.isCancelled else { return }; self?.save() }
+    }
+    func edited(_ value: String) { text = value; ledger.edit(owner, text: value); saveSoon() }
+    private func request<T: Decodable>(_ path: String, using c: STConnection, body: [String: Any]? = nil, method: String? = nil) async throws -> T {
+        guard path.hasPrefix("/v1/"), !path.contains("\\"), let url = URL(string: path, relativeTo: c.origin)?.absoluteURL, url.host == c.origin.host, url.port == c.origin.port, url.scheme == "https" else { throw URLError(.badURL) }
+        var req = URLRequest(url: url); req.httpMethod = method ?? (body == nil ? "GET" : "POST")
+        req.setValue("Bearer " + c.key, forHTTPHeaderField: "Authorization")
+        if let body { req.httpBody = try JSONSerialization.data(withJSONObject: body); req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        let (data, response) = try await transport.data(for: req)
+        guard data.count <= 800000, let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if (300...399).contains(http.statusCode) { throw STError(code: "redirect_refused", status: http.statusCode) }
+        guard (200...299).contains(http.statusCode) else {
+            let raw = (try? JSONDecoder().decode(STFailure.self, from: data))?.error ?? "http_\(http.statusCode)"
+            throw STError(code: raw.range(of: "^[a-z0-9_]{1,80}$", options: .regularExpression) != nil ? raw : "server_error", status: http.statusCode)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+    private func current(_ generation: Int) throws { guard epoch == generation, foreground, !Task.isCancelled else { throw CancellationError() } }
+    func loadTabs() async {
+        guard !busy else { return }; busy = true; defer { busy = false }; error = nil
+        do {
+            let c = try config(); let health: STHealth = try await request("/v1/health", using: c)
+            guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
+            let value: STTabs = try await request("/v1/tabs?shared=1", using: c); tabs = value.tabs
+            if !fixture { try STKeychain.save(c.key); UserDefaults.standard.set(c.origin.absoluteString, forKey: "PCCompanion.endpoint") }
+            status = tabs.isEmpty ? "PC 没有可绑定的 ChatGPT 页面" : "选择要与手机共用的 PC 标签页"
+        } catch { self.error = error.localizedDescription }
+    }
+    func bind(_ tab: STTab) async {
+        guard !busy else { return }; busy = true; defer { busy = false }; error = nil
+        ledger.edit(owner, text: text); save()
+        do { let c = try config(); await disconnectSession(); selectedTabId = tab.tabId; connection = c; foreground = true; try await subscribe(using: c); needsSettings = false; startPolling(); }
+        catch { online = false; self.error = error.localizedDescription }
+    }
+    private func subscribe(using c: STConnection) async throws {
+        guard let tab = selectedTabId else { throw STError(code: "tab_closed") }
+        let generation = epoch
+        let result: STEnvelope = try await request("/v1/sessions", using: c, body: ["tabId": tab, "followTab": true, "clientId": clientID])
+        try current(generation)
+        guard result.sessionId.range(of: "^[A-Za-z0-9_-]{16,100}$", options: .regularExpression) != nil else { throw STError(code: "schema_invalid") }
+        sessionID = result.sessionId; revision = -1; try apply(result, using: c); online = true; save()
+    }
+    private func apply(_ envelope: STEnvelope, using c: STConnection) throws {
+        guard envelope.ok, envelope.sessionId == sessionID else { throw STError(code: "schema_invalid") }
+        guard envelope.revision >= revision else { return }; revision = envelope.revision
+        if envelope.tabClosed == true { online = false; loading = false; snapshot = nil; status = "绑定标签页已关闭"; needsSettings = true; return }
+        if envelope.routeChanged == true && envelope.snapshot == nil { loading = true; snapshot = nil; older = []; status = "PC 正在切换对话"; return }
+        guard let fresh = envelope.snapshot else { return }
+        guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 24 else { throw STError(code: "schema_invalid") }
+        if snapshot?.documentId != fresh.documentId { older = []; historyCursor = nil; historyHasMore = nil }
+        let newOwner = ownerKey(fresh, c)
+        let waitingForNewReceipt = busy && currentPending?.temporary == true && !fresh.conversationId.isEmpty
+        if newOwner != owner && !waitingForNewReceipt { ledger.edit(owner, text: text); owner = newOwner; text = ledger.draft(owner).text }
+        snapshot = fresh; loading = fresh.status == "loading"
+        status = loading ? "PC 页面加载中" : fresh.pcDraftOccupied == true ? "PC 有未发送内容" : fresh.status == "running" ? "生成中" : fresh.status == "waiting" ? "需要确认" : "与 PC 共用此标签页"
+        saveSoon()
+    }
+    private func startPolling() {
+        pollTask?.cancel(); let generation = epoch
+        pollTask = Task { [weak self] in
+            guard let self else { return }; var failures = 0
+            while !Task.isCancelled && self.foreground && generation == self.epoch && self.online {
+                guard let c = self.connection, let id = self.sessionID else { break }
+                do {
+                    let value: STEnvelope = try await self.request("/v1/sessions/\(id)?after=\(self.revision)", using: c)
+                    try self.current(generation); try self.apply(value, using: c); failures = 0
+                } catch is CancellationError { return }
+                catch {
+                    if Task.isCancelled || generation != self.epoch { return }
+                    if let e = error as? STError, e.status == 410, failures < 2 { failures += 1; do { try await self.subscribe(using: c); continue } catch {} }
+                    let code = (error as? STError)?.status ?? 0
+                    if [401, 403, 429].contains(code) || failures >= 3 { self.online = false; self.status = "离线快照 · 点击重连"; self.error = error.localizedDescription; break }
+                    failures += 1; try? await Task.sleep(nanoseconds: UInt64(failures) * 1_000_000_000)
+                }
+            }
+        }
+    }
+    func resume() async {
+        foreground = true; guard !online, !busy else { return }
+        if pairingKey.isEmpty { needsSettings = true; return }
+        guard selectedTabId != nil else { needsSettings = true; await loadTabs(); return }
+        busy = true; defer { busy = false }; epoch += 1
+        do {
+            let c = try config(); connection = c
+            let health: STHealth = try await request("/v1/health", using: c)
+            guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
+            if let id = sessionID {
+                do { let result: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try apply(result, using: c); online = result.tabClosed != true }
+                catch { if (error as? STError)?.status == 410 { sessionID = nil; try await subscribe(using: c) } else { throw error } }
+            } else { try await subscribe(using: c) }
+            if online { startPolling(); await checkReceiptsInternal(using: c) }
+        } catch { online = false; self.error = error.localizedDescription; status = "离线快照 · 点击重连" }
+    }
+    func pause() { foreground = false; epoch += 1; pollTask?.cancel(); online = false; save(); status = "本地快照" }
+    private func disconnectSession() async {
+        epoch += 1; pollTask?.cancel(); online = false; revision = -1
+        let id = sessionID; sessionID = nil
+        if let id, let c = connection { let _: STOK? = try? await request("/v1/sessions/\(id)", using: c, method: "DELETE") }
+    }
+    func disconnect() async { ledger.edit(owner, text: text); save(); await disconnectSession() }
+    private func refresh(using c: STConnection) async throws {
+        guard let id = sessionID else { return }; let generation = epoch
+        let value: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try current(generation); try apply(value, using: c)
+    }
+    func catalog() async { await libraryAction("catalog") }
+    func search(_ query: String, more: Bool = false) async { await libraryAction("search", fields: ["query": query, "more": more], append: more) }
+    func expand(_ project: STProject, more: Bool = false) async { await libraryAction("project", fields: ["projectId": project.id, "more": more]) }
+    private func libraryAction(_ action: String, fields: [String: Any] = [:], append: Bool = false) async {
+        guard online, !libraryLoading, !busy, let c = connection, let id = sessionID else { return }
+        libraryLoading = true; defer { libraryLoading = false }; error = nil; let generation = epoch
+        do {
+            var body: [String: Any] = ["action": action, "commandId": UUID().uuidString, "documentId": snapshot?.documentId ?? ""]
+            body.merge(fields) { _, value in value }
+            let result: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body); try current(generation)
+            projects = result.projects ?? projects
+            if append { let ids = Set(chats.map(\.id)); chats += (result.chats ?? []).filter { !ids.contains($0.id) } } else { chats = result.chats ?? [] }
+            searchHasMore = result.hasMore == true
+            searchNotice = result.loading == true ? "官网搜索仍在加载" : result.emptyConfirmed == true ? "官网搜索未找到匹配对话" : result.source == "official_search" ? "官网历史搜索 · 按需加载" : "最近对话与项目 · 可搜索更早记录"
+        } catch { self.error = error.localizedDescription }
+    }
+    func open(_ chat: STChat) async { await navigate("open", fields: ["targetConversationId": chat.id]) }
+    func newChat(project: STProject? = nil) async { await navigate("new", fields: project.map { ["projectId": $0.id] } ?? [:]) }
+    private func navigate(_ action: String, fields: [String: Any]) async {
+        guard online, !busy, !libraryLoading, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text); save(); let generation = epoch
+        do {
+            var body: [String: Any] = ["action": action, "commandId": UUID().uuidString, "documentId": snap.documentId]; body.merge(fields) { _, value in value }
+            let _: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
+            try current(generation); try await refresh(using: c)
+        } catch { self.error = error.localizedDescription; try? await refresh(using: c) }
+    }
+    func send() async {
+        guard canSubmit, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text); let generation = epoch
+        do {
+            let command = try ledger.reserve(owner, server: c.identity, temporary: snap.conversationId.isEmpty)
+            guard save() else { ledger.definitelyNotSent(command.id); throw STError(code: "local_storage_failed") }
+            var body: [String: Any] = ["commandId": command.id, "action": "compose", "documentId": snap.documentId, "baseDraftHash": snap.draftHash, "text": command.text]
+            if let project = snap.projectId { body["projectId"] = project }
+            let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: body)
+            resolve(receipt, using: c); try current(generation); try? await refresh(using: c)
+        } catch { self.error = error.localizedDescription; if currentPending != nil { status = "发送结果待确认 · 不会自动重发" }; save() }
+    }
+    private func resolve(_ receipt: STReceipt, using c: STConnection) {
+        guard let command = ledger.pending[receipt.commandId], command.server == c.identity else { return }
+        if receipt.state == "done" && receipt.result?.status == "sent_confirmed" {
+            let actualOwner = receipt.result?.conversationId.map { c.identity + "|" + $0 }
+            ledger.confirmed(command.id, actualOwner: actualOwner)
+            if command.temporary, owner == command.owner, let actualOwner { owner = actualOwner }
+            text = ledger.draft(owner).text; status = "消息已发送"; error = nil
+        } else if receipt.state == "failed" {
+            ledger.definitelyNotSent(command.id); error = STError(code: receipt.result?.error ?? "not_sent").localizedDescription; status = "确定未发送 · 草稿已保留"
+        } else { status = "发送结果待确认 · 不会自动重发" }
+        save()
+    }
+    func checkReceipts() async { guard !busy, let c = connection else { return }; busy = true; defer { busy = false }; await checkReceiptsInternal(using: c) }
+    private func checkReceiptsInternal(using c: STConnection) async {
+        for command in Array(ledger.pending.values).filter({ $0.server == c.identity }) {
+            if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) { resolve(receipt, using: c) }
+        }
+        if let pending = actionPending, pending.server == c.identity, let receipt: STReceipt = try? await request("/v1/commands/\(pending.id)", using: c) {
+            if receipt.state == "failed" || receipt.result?.status == "interaction_clicked" { actionPending = nil; save() }
+        }
+    }
+    func interact(_ button: PCInteractionButton, document: String) async {
+        guard online, !busy, actionPending == nil, let c = connection, let id = sessionID, let snap = snapshot, snap.documentId == document else { error = STError(code: "pc_route_changed").localizedDescription; return }
+        busy = true; defer { busy = false }; let pending = STActionPending(id: UUID().uuidString, server: c.identity, conversation: snap.conversationId); actionPending = pending
+        guard save() else { actionPending = nil; return }
+        do {
+            let result: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: ["action": "interact", "commandId": pending.id, "documentId": document, "interactionId": button.id, "interactionRevision": button.revision, "confirmed": true])
+            if result.state == "failed" || result.result?.status == "interaction_clicked" { actionPending = nil; save() }
+            else { status = "操作结果待确认，请核对回执" }
+        } catch { self.error = "操作结果待确认；不会重复点击。" }
+    }
+    func loadEarlier() async {
+        guard canLoadHistory, let c = connection, let id = sessionID, let snap = snapshot, let cursor = historyCursor ?? snap.historyCursor else { return }
+        historyLoading = true; defer { historyLoading = false }; let generation = epoch
+        do {
+            var query = URLComponents(); query.queryItems = [URLQueryItem(name: "before", value: cursor), URLQueryItem(name: "documentId", value: snap.documentId)]
+            let result: STHistory = try await request("/v1/sessions/\(id)/history?\(query.percentEncodedQuery ?? "")", using: c)
+            try current(generation); guard result.documentId == snapshot?.documentId, result.conversationId == snapshot?.conversationId else { return }
+            let ids = Set(displayMessages.map(\.id)); older = result.messages.filter { !ids.contains($0.id) } + older
+            historyCursor = result.cursor; historyHasMore = result.hasMore && result.cursor != cursor
+        } catch { self.error = error.localizedDescription }
+    }
+}
