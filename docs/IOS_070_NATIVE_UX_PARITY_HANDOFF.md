@@ -13,6 +13,16 @@
 - 当前专用 API origin **https://chatgpt-pc.781751.xyz:58443**；NPM 在 192.168.233.127；实际 PC Orchestrator 在 mcpoffice 的 D:\workspace\py\chatgpt-orchestrator；PC 默认 Chrome 生产扩展 ID hkpkilpjbeneliaiafdbkaomedgkkcmi。旧独立 chrome-extension-bridge、Tampermonkey 不是生产链路。部署前必须重新检查 PC live version/health，不以旧 handoff 代替实时状态。
 - **本次只写计划/记录；未修改 iOS/PC 运行代码、未重载 Chrome/扩展、未发送真实消息、未构建/签署/上传 IPA。**
 
+## 并行项目：PC Chrome Bridge 从 Orchestrator 独立迁出（2026-10-11 新增）
+
+**权威独立迁移计划**：[\`PC_CHROME_BRIDGE_DECOUPLING_HANDOFF.md\`](./PC_CHROME_BRIDGE_DECOUPLING_HANDOFF.md)。此为 v0.7.0 的新增基础设施工作流；目前**仅完成规划，不代表独立插件已部署**。
+
+- 将现有 Chrome MV3 扩展（官方页面状态、历史/项目交互、移动端受限写命令）从 Orchestrator 内嵌的 \`extension/\` 提取为独立开发/维护/版本发布的 **ChatGPT PC Bridge** 项目；将同进程 \`src/mobile-bridge.js\` / 3211 也拆成独立 Windows Bridge Service。Orchestrator 只保留可选 adapter 调用桥接能力，不能再是 iOS 同步链路的强依赖。
+- **最终必须满足**：mcpoffice 的 Orchestrator 3210 未运行时，独立 Bridge 3211 + 唯一 Chrome 扩展仍能维持 iOS 配对、聊天读取、历史/项目能力（在官方网页支持的范围内）、手机显式一次 Send/回执；反过来 Orchestrator 正在工作时必须通过互斥租约避免冲突，不损坏现有编排功能。
+- 统一分阶段 **M0 依赖审计 → M1 独立源码仓库 → M2 服务进程拆分 → M3 可选编排 adapter/互斥 → M4 迁移/同扩展上线 → M5 iOS 真机联调 → M6 清理旧所有权**。P0/P1/P4 的 iOS 原生布局、本地草稿和 fixture 测试可与 M0-M3 并行；新协议的真实发送、新建、项目内新建和正式发布须以 M4/M5 的独立服务实证为准。
+- **原路径和稳定性**：生产扩展 ID \`hkpkilpjbeneliaiafdbkaomedgkkcmi\`、PC Default Profile、配对 Key、旧手机兼容协议、持久命令 journal、原生状态存储必须无损保留。安装目录迁移可能改变 unpacked ID，应先独立源码/稳定发布路径，再在实证可保留身份后迁移安装目录，绝不新旧双扩展并行对同一页面操作。
+- 保持 \`https://chatgpt-pc.781751.xyz:58443/v1/*\`、127.0.0.1:3211、NPM/WireGuard/AliDNS 不变。**此轮不得提前停止 Orchestrator、重新部署基础设施或将新项目计划误写为已发布**。
+
 ## 1. 产品目标与用户不可妥协的行为
 
 1. **官方 App 类似的原生布局和操作逻辑**：原生 SwiftUI 顶部导航、左侧项目/历史侧边栏、聊天正文、底部输入框、新建按钮与键盘/返回/焦点行为。以主流官方 App 体验为交互参考，不要求复制品牌资产或内部代码；暗/亮色及安全区域、VoiceOver、动态字体按 iOS 规范实现。
