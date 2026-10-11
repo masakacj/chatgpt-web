@@ -1,0 +1,60 @@
+name: Mobile Sidebar and Send Check
+on:
+  push:
+    branches: [feature/mobile-sidebar-send-20261011]
+    paths: ['App/**', 'UITests/PCSidebarUITests.swift', 'scripts/prepare-mobile-sidebar-051.mjs', 'scripts/prepare-sidebar-fixtures.mjs', '.github/workflows/mobile-sidebar-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: mobile-sidebar-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-sidebar:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare native sidebar and deterministic test fixtures
+        run: |
+          node scripts/prepare-mobile-sidebar-051.mjs
+          node scripts/prepare-sidebar-fixtures.mjs
+      - name: Existing source and native policy checks
+        run: |
+          npm run check
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/pc-policy"
+          "$RUNNER_TEMP/pc-policy"
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-policy"
+          "$RUNNER_TEMP/native-policy"
+      - name: Device compilation
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/SidebarDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Native simulator sidebar and reader regression
+        timeout-minutes: 16
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for g in d.values() for x in g if x.get("isAvailable") and x.get("name","").startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/SidebarUI" -resultBundlePath "$RUNNER_TEMP/Sidebar.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/PCSidebarUITests -only-testing:ChatGPTWebUITests/PCCompanionUITests/testDraftConflictPreservesPhoneText -only-testing:ChatGPTWebUITests/PCCompanionUITests/testUnknownSendQueriesReceiptAndRetainsNextDraft -only-testing:ChatGPTWebUITests/PCCompanionUITests/testOfflineNativeReaderDoesNotLoadWebView CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Keep test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-sidebar-tests
+          path: ${{ runner.temp }}/Sidebar.xcresult
+          if-no-files-found: ignore
+      - name: Commit tested source changes on this branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add App/PCCompanionView.swift App/PCCompanionPolicy.swift App/PCCompanionTestProtocol.swift package.json project.yml safari/chatgpt-safari.user.js
+          if ! git diff --cached --quiet; then
+            git commit -m 'Validate iOS0.5.1 project sidebar and precise not-sent receipts'
+            git push origin HEAD:feature/mobile-sidebar-send-20261011
+          fi
