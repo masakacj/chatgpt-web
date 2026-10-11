@@ -17,6 +17,15 @@ struct SharedTabScreen: View {
     @FocusState private var editing: Bool
     let returnToWeb: () -> Void
 
+    private func dismissKeyboard() {
+        editing = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+    private func openSidebar() {
+        dismissKeyboard(); query = ""
+        withAnimation(.easeOut(duration: 0.16)) { sidebar = true }
+        Task { await model.catalog() }
+    }
     var body: some View {
         NavigationStack {
             ZStack(alignment: .leading) {
@@ -32,7 +41,7 @@ struct SharedTabScreen: View {
                 .safeAreaInset(edge: .bottom, spacing: 0) { composer }
                 .background(Color(uiColor: .systemBackground))
                 if sidebar {
-                    Color.black.opacity(0.22).ignoresSafeArea().onTapGesture { sidebar = false; editing = false }
+                    Color.black.opacity(0.22).ignoresSafeArea().onTapGesture { sidebar = false; dismissKeyboard() }
                     library.frame(width: min(UIScreen.main.bounds.width * 0.88, 370)).transition(.move(edge: .leading))
                 }
             }
@@ -64,21 +73,19 @@ struct SharedTabScreen: View {
     }
     private var header: some View {
         HStack(spacing: 10) {
-            Button {
-                editing = false; withAnimation(.easeOut(duration: 0.16)) { sidebar = true }
-                Task { await model.catalog() }
-            } label: { Image(systemName: "line.3.horizontal").font(.system(size: 21)).frame(width: 44, height: 44) }
-                .accessibilityLabel("打开侧边栏").accessibilityIdentifier("shared.sidebar")
+            Button(action: openSidebar) {
+                Image(systemName: "line.3.horizontal").font(.system(size: 21)).frame(width: 44, height: 44)
+            }.accessibilityLabel("打开侧边栏").accessibilityIdentifier("shared.sidebar")
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.projectTitle ?? "ChatGPT").font(.headline).lineLimit(1)
                 Text(model.snapshot?.title ?? (model.loading ? "正在切换对话" : "PC 共享标签页"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("shared.title")
             }
             Spacer(minLength: 4)
-            Button { editing = false; Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil").font(.system(size: 20)).frame(width: 40, height: 44) }
+            Button { dismissKeyboard(); Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil").font(.system(size: 20)).frame(width: 40, height: 44) }
                 .disabled(!model.online || model.busy).accessibilityLabel("新建聊天").accessibilityIdentifier("shared.new")
             Menu {
-                Button("连接设置", systemImage: "desktopcomputer") { editing = false; model.needsSettings = true }
+                Button("连接设置", systemImage: "desktopcomputer") { dismissKeyboard(); model.needsSettings = true }
                 Button("重新连接", systemImage: "arrow.clockwise") { Task { model.pause(); await model.resume() } }
                 Button("原网页模式", systemImage: "safari") { Task { await model.disconnect(); returnToWeb() } }
             } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }.accessibilityLabel("更多")
@@ -133,16 +140,21 @@ struct SharedTabScreen: View {
                         }
                         .padding(.horizontal, 20).padding(.vertical, 14)
                         .frame(maxWidth: .infinity, minHeight: max(0, geometry.size.height), alignment: .top)
+                        .background {
+                            // A visible-color backing gives blank transcript space a hit target;
+                            // it stays behind messages/links rather than intercepting controls.
+                            Color(uiColor: .systemBackground).contentShape(Rectangle()).onTapGesture(perform: dismissKeyboard)
+                        }
                         .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("shared.transcript")
                     .scrollDismissesKeyboard(.interactively)
-                    .simultaneousGesture(TapGesture().onEnded { editing = false })
+                    .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
                     .onAppear { proxy.scrollTo("shared.bottom", anchor: .bottom) }
                     .onChange(of: model.snapshot?.conversationId) { _, _ in followLatest = true; proxy.scrollTo("shared.bottom", anchor: .bottom) }
                     .onChange(of: model.displayMessages.last?.text) { _, _ in if followLatest { proxy.scrollTo("shared.bottom", anchor: .bottom) } }
                     if !followLatest {
-                        Button { editing = false; followLatest = true; proxy.scrollTo("shared.bottom", anchor: .bottom) } label: {
+                        Button { dismissKeyboard(); followLatest = true; proxy.scrollTo("shared.bottom", anchor: .bottom) } label: {
                             Image(systemName: "arrow.down").frame(width: 40, height: 40).background(.regularMaterial, in: Circle()).overlay(Circle().stroke(.quaternary))
                         }.accessibilityLabel("回到最新消息").padding(14)
                     }
@@ -161,7 +173,7 @@ struct SharedTabScreen: View {
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
                     .accessibilityIdentifier("shared.composer")
                 Button {
-                    editing = false
+                    dismissKeyboard()
                     Task { await model.send() }
                 } label: {
                     Group { if model.busy { ProgressView().tint(Color(uiColor: .systemBackground)) } else { Image(systemName: "arrow.up").font(.system(size: 18, weight: .semibold)) } }
@@ -179,14 +191,14 @@ struct SharedTabScreen: View {
     private var library: some View {
         VStack(spacing: 0) {
             HStack {
-                Button { sidebar = false } label: { Image(systemName: "xmark").frame(width: 40, height: 44) }.accessibilityLabel("关闭侧边栏")
+                Button { sidebar = false; dismissKeyboard() } label: { Image(systemName: "xmark").frame(width: 40, height: 44) }.accessibilityLabel("关闭侧边栏")
                 Text("聊天").font(.headline); Spacer()
-                Button { sidebar = false; Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil").frame(width: 44, height: 44) }.accessibilityLabel("侧边栏新建聊天")
+                Button { sidebar = false; dismissKeyboard(); Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil").frame(width: 44, height: 44) }.accessibilityLabel("侧边栏新建聊天")
             }.padding(.horizontal, 10)
             HStack(spacing: 8) {
                 TextField("搜索全部历史", text: $query).submitLabel(.search).onSubmit { Task { if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await model.catalog() } else { await model.search(query) } } }
-                    .accessibilityIdentifier("shared.search.input")
-                Button { Task { if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await model.catalog() } else { await model.search(query) } } } label: { Image(systemName: "magnifyingglass").frame(width: 36, height: 36) }
+                    .accessibilityLabel("搜索全部历史").accessibilityIdentifier("shared.search.input")
+                Button { dismissKeyboard(); Task { if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await model.catalog() } else { await model.search(query) } } } label: { Image(systemName: "magnifyingglass").frame(width: 36, height: 36) }
                     .accessibilityLabel("搜索历史").accessibilityIdentifier("shared.search")
             }.padding(.leading, 12).padding(.trailing, 5).background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 14)
             if model.libraryLoading { ProgressView().padding(8) }
@@ -202,7 +214,7 @@ struct SharedTabScreen: View {
                             DisclosureGroup(isExpanded: Binding(get: { expanded.contains(project.id) }, set: { value in
                                 if value { expanded.insert(project.id); if project.collapsed { Task { await model.expand(project) } } } else { expanded.remove(project.id) }
                             })) {
-                                Button { sidebar = false; Task { await model.newChat(project: project) } } label: { Label("在项目中新建聊天", systemImage: "plus") }
+                                Button { sidebar = false; dismissKeyboard(); Task { await model.newChat(project: project) } } label: { Label("在项目中新建聊天", systemImage: "plus") }
                                     .accessibilityIdentifier("shared.project.new.\(project.id)")
                                 ForEach(model.chats.filter { $0.projectId == project.id }) { chat in chatRow(chat) }
                                 if project.hasMore { Button("加载更多项目对话") { Task { await model.expand(project, more: true) } } }
@@ -213,14 +225,16 @@ struct SharedTabScreen: View {
                 }
                 Section {
                     Text(model.searchNotice).font(.caption).foregroundStyle(.secondary)
-                    Button("连接设置") { sidebar = false; model.needsSettings = true }
+                    Button("连接设置") { sidebar = false; dismissKeyboard(); model.needsSettings = true }
                 }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
-        }.background(Color(uiColor: .secondarySystemBackground)).accessibilityIdentifier("shared.library")
+        }.background(Color(uiColor: .secondarySystemBackground))
+        // Do not put one identifier on this whole container: SwiftUI can propagate
+        // it to the search field and replace the field's own accessibility identity.
     }
     private func chatRow(_ chat: STChat) -> some View {
         Button {
-            editing = false; sidebar = false
+            dismissKeyboard(); sidebar = false
             Task { await model.open(chat) }
         } label: {
             HStack {
