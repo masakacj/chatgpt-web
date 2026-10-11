@@ -14,6 +14,7 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
     private static var receiptID = ""
     private static var sentText = ""
     private static var version = 1
+    private static var interactionClicks = 0
     private var work: DispatchWorkItem?
     private static let firstConversation = "11111111-1111-4111-8111-111111111111"
     private static var conversation = firstConversation
@@ -21,13 +22,13 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
 
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        draft = ""; sessions = 0; sends = 0; polls = 0; readFailed = false
+        draft = ""; sessions = 0; sends = 0; polls = 0; interactionClicks = 0; readFailed = false
         expired = false; receiptID = ""; sentText = ""; version = 1
         conversation = firstConversation; projectExpanded = false
     }
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends)；订阅：\(sessions)；读取：\(polls)"
+        return "发送请求：\(sends)；订阅：\(sessions)；读取：\(polls)；操作：\(interactionClicks)"
     }
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "pc-companion.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -47,9 +48,22 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
             "blocks":[], "links":[], "truncated":false]]
         if !sentText.isEmpty { messages.append(["id":"user1", "role":"user", "text":sentText, "blocks":[], "links":[], "truncated":false]) }
         if args.contains("--pc-fixture-unknown") && sends > 0 { messages.append(["id":"answer2", "role":"assistant", "text":"已收到一次消息", "blocks":[], "links":[], "truncated":false]) }
-        return ["schema":1, "documentId":"fixture-document", "conversationId":conversation, "title":"联调测试会话",
+        var payload: [String: Any] = ["schema":1, "documentId":"fixture-document", "conversationId":conversation, "title":"联调测试会话",
             "messages":messages, "status":"completed", "draft":draft, "draftHash":PCCompanionPolicy.hash(draft),
             "canSend":!draft.isEmpty, "composing":false, "unsupportedTools":false, "historyPartial":true]
+        if args.contains("--pc-fixture-reader") {
+            payload["historyCursor"] = "cursor-current"; payload["hasOlder"] = true
+            payload["status"] = interactionClicks == 0 ? "running" : "completed"
+            payload["responsePhase"] = interactionClicks == 0 ? "thinking" : "completed"
+            if interactionClicks == 0 {
+                payload["interactions"] = [["id":"card-1", "title":"读取指定文件", "summary":"仅允许读取本次选择的测试文件。", "buttons":[["id":"interaction-test-11111", "revision":"revision-test-111111", "label":"允许本次", "disabled":false, "requiresConfirmation":true]]]]
+            } else {
+                payload["interactions"] = []
+                payload["messages"] = [["id":"answer2", "role":"assistant", "text":"操作后正式回复", "blocks":[], "links":[], "truncated":false]]
+            }
+        }
+        if args.contains("--pc-fixture-thinking") { payload["status"] = "running"; payload["responsePhase"] = "thinking"; payload["messages"] = [["id":"user-new","role":"user","text":"等待最新回复","blocks":[],"links":[],"truncated":false]] }
+        return payload
     }
     private static func library() -> [String: Any] {
         let project = "g-p-aaaaaaaaaaaaaaaa"
@@ -83,9 +97,16 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
             Self.sessions += 1; Self.version += 1; json = Self.envelope()
         } else if path.hasPrefix("/v1/commands/") {
             json = ["ok":true,"commandId":Self.receiptID,"state":"done","result":["status":"sent_confirmed","messageId":"user1","documentId":"fixture-document"]]
+        } else if path.hasSuffix("/history") {
+            json = ["ok":true,"schema":1,"documentId":"fixture-document","conversationId":Self.conversation,
+                "messages":[["id":"older-1","role":"user","text":"历史问题","blocks":[],"links":[],"truncated":false],["id":"older-2","role":"assistant","text":"历史正式回复","blocks":[],"links":[],"truncated":false]],
+                "cursor":"cursor-oldest","hasMore":false,"source":"pc_loaded_history"]
         } else if path.hasSuffix("/commands") && method == "POST" {
             let action = payload["action"] as? String ?? "", id = payload["commandId"] as? String ?? ""
-            if action == "draft" {
+            if action == "interact" {
+                Self.interactionClicks += 1; Self.version += 1
+                json = ["ok":true,"commandId":id,"state":"done","result":["status":"interaction_clicked"]]
+            } else if action == "draft" {
                 if args.contains("--pc-fixture-conflict") {
                     code = 409; json = ["error":"draft_conflict"]; Self.draft = "电脑端新草稿"; Self.version += 1
                 } else if payload["baseDraftHash"] as? String != PCCompanionPolicy.hash(Self.draft) {

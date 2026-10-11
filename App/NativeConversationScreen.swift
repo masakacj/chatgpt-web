@@ -27,6 +27,7 @@ struct NativeConversationScreen: View {
     let openSettings: () -> Void
     let returnToWeb: () -> Void
     @State private var showLibrary = false
+    @State private var showInputOptions = false
     @State private var confirmDraft = false
     @State private var confirmReceipt = false
     @State private var interaction: PCInteractionSelection?
@@ -53,6 +54,11 @@ struct NativeConversationScreen: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showLibrary) { PCSidebarView(model: model) }
             .sheet(item: $interaction) { selected in interactionConfirmation(selected) }
+            .confirmationDialog("输入选项", isPresented: $showInputOptions, titleVisibility: .visible) {
+                Button("同步草稿") { Task { await model.syncDraft() } }.disabled(!model.canWrite)
+                Button("采用 PC 草稿") { confirmDraft = true }.disabled(model.working || model.snapshot == nil)
+                Button("取消", role: .cancel) {}
+            }
             .alert("采用 PC 草稿？", isPresented: $confirmDraft) {
                 Button("取消", role: .cancel) {}
                 Button("替换手机草稿", role: .destructive) { model.usePCDraft() }
@@ -165,6 +171,12 @@ struct NativeConversationScreen: View {
             }
         }.frame(maxWidth: .infinity, alignment: message.role == "user" ? .trailing : .leading)
     }
+    private var composerHeight: CGFloat {
+        let width = max(180, UIScreen.main.bounds.width - 72)
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let bounds = (model.draft.text as NSString).boundingRect(with: CGSize(width: width, height: 1000), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+        return min(110, max(40, ceil(bounds.height) + 16))
+    }
     private var composer: some View {
         VStack(spacing: 8) {
             if model.hasPending {
@@ -179,13 +191,12 @@ struct NativeConversationScreen: View {
             VStack(spacing: 3) {
                 TextEditor(text: Binding(get: { model.draft.text }, set: { model.edited($0) }))
                     .focused($editing).scrollContentBackground(.hidden).font(.body)
-                    .frame(minHeight: 40, maxHeight: 105).padding(.horizontal, 8).padding(.top, 5)
+                    .frame(height: composerHeight).padding(.horizontal, 8).padding(.top, 5)
                     .accessibilityIdentifier("pc.remote.composer")
                 HStack {
-                    Menu {
-                        Button("同步草稿") { Task { await model.syncDraft() } }.disabled(!model.canWrite)
-                        Button("采用 PC 草稿") { confirmDraft = true }.disabled(model.working || model.snapshot == nil)
-                    } label: { Image(systemName: "plus").font(.system(size: 22)).frame(width: 36, height: 36) }.accessibilityLabel("输入选项")
+                    Button { editing = false; showInputOptions = true } label: {
+                        Image(systemName: "plus").font(.system(size: 22)).frame(width: 36, height: 36)
+                    }.accessibilityLabel("输入选项")
                     Text(model.online ? "PC 已连接" : "未连接").font(.caption2).foregroundStyle(.tertiary)
                     Spacer()
                     Button { Task { await model.send() } } label: {
