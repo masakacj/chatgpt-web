@@ -2,7 +2,7 @@ name: PC Structured Companion Check
 on:
   push:
     branches: [feature/structured-pc-companion-20261011]
-    paths: ['App/**', 'UITests/PCCompanionUITests.swift', 'scripts/fix-pc-companion-invariants.mjs', '.github/workflows/pc-companion-check.yml']
+    paths: ['App/**', 'UITests/PCCompanionUITests.swift', 'scripts/prepare-companion-beta.mjs', 'scripts/companion-ui-test-support.mjs', 'scripts/pc-companion-policy-tests/**', '.github/workflows/pc-companion-check.yml']
   workflow_dispatch:
 permissions:
   contents: write
@@ -12,18 +12,22 @@ concurrency:
 jobs:
   native-compile:
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Align native draft invariants and deterministic offline fixture
-        run: node scripts/fix-pc-companion-invariants.mjs
-      - name: Existing script and PC-retirement guards
-        run: npm run check
-      - name: Native persistent state policy regression
+      - name: Prepare exact native beta integration
         run: |
+          node scripts/prepare-companion-beta.mjs
+          node scripts/companion-ui-test-support.mjs
+      - name: Existing script and retired PC guards
+        run: npm run check
+      - name: Native draft persistence and original state policy
+        run: |
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/companion-policy"
+          "$RUNNER_TEMP/companion-policy"
           swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-policy"
           "$RUNNER_TEMP/native-policy"
       - name: Generate project
@@ -32,21 +36,31 @@ jobs:
           xcodegen generate
       - name: Compile iPhone device app
         run: |
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PCCompanion" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-      - name: Real iPhone Simulator offline-reader UI
-        timeout-minutes: 15
+          set -o pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PCCompanion" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build | tail -100
+      - name: Real iPhone Simulator client and public TLS checks
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin)["devices"]; print(next(d["udid"] for a in data.values() for d in a if d.get("isAvailable") and d.get("name","").startswith("iPhone")))')"
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/PCCompanionUI" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/PCCompanionUITests/testOfflineNativeReaderDoesNotLoadWebView CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
-      - name: Commit validated source-only integration to this feature branch
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/PCCompanionUI" -resultBundlePath "$RUNNER_TEMP/PCCompanion.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/PCCompanionUITests -only-testing:ChatGPTWebUITests/ChatGPTWebUITests/testWKWebViewResultOnlyStress -only-testing:ChatGPTWebUITests/ChatGPTWebUITests/testNativeFloatingFallbackWhenWebKitStopsAnswering CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Retain simulator test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc-companion-test-evidence
+          path: ${{ runner.temp }}/PCCompanion.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Commit tested native sources to the same feature branch
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add App/PCCompanionView.swift App/PCCompanionRootView.swift
+          git add App/PCCompanionView.swift App/PCCompanionPolicy.swift App/PCCompanionRootView.swift package.json project.yml safari/chatgpt-safari.user.js
           if ! git diff --cached --quiet; then
-            git commit -m 'Validate native companion draft ownership and offline reader'
+            git commit -m 'Validate companion 0.5.0 HTTPS reconnect, durable draft and receipt recovery'
             git push origin HEAD:feature/structured-pc-companion-20261011
           fi
+          git rev-parse HEAD
