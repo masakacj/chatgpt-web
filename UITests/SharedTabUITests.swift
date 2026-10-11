@@ -32,7 +32,22 @@ final class SharedTabUITests: XCTestCase {
         let app = launch(); let input = composer(app)
         input.tap(); input.typeText("mobile send once")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        app.scrollViews["shared.transcript"].coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.72)).tap()
+        // The accessibility frame can extend below keyboard/composer insets.
+        // Tap actual visible blank transcript, not a point covered by the keyboard.
+        let transcript = app.scrollViews["shared.transcript"].frame
+        let keyboard = app.keyboards.firstMatch.frame
+        let editor = composer(app).frame
+        let answer = app.staticTexts["原生测试答案 A"].frame
+        let copy = app.buttons["复制消息"].firstMatch.frame
+        let top = max(transcript.minY + 12, max(answer.maxY, copy.maxY) + 16)
+        let bottom = min(transcript.maxY, min(keyboard.minY, editor.minY)) - 16
+        XCTAssertGreaterThan(bottom, top, "There must be visible blank transcript above the composer")
+        let point = CGPoint(x: transcript.midX, y: (top + bottom) / 2)
+        XCTAssertFalse(keyboard.contains(point))
+        XCTAssertFalse(editor.contains(point))
+        print("Keyboard acceptance geometry: transcript=\(transcript), keyboard=\(keyboard), editor=\(editor), tap=\(point)")
+        let before = XCTAttachment(screenshot: app.screenshot()); before.name = "shared-before-blank-tap"; before.lifetime = .keepAlways; add(before)
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x - app.frame.minX, dy: point.y - app.frame.minY)).tap()
         wait("exists == false", on: app.keyboards.firstMatch)
         XCTAssertTrue(app.buttons["shared.send"].isEnabled)
         app.buttons["shared.send"].tap()
