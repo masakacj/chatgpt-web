@@ -1,0 +1,33 @@
+name: PC Structured Companion Check
+on:
+  push:
+    branches: [feature/structured-pc-companion-20261011]
+    paths: ['App/**', '.github/workflows/pc-companion-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pc-companion-native-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-compile:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Existing script and PC-retirement guards
+        run: npm run check
+      - name: Native persistent state policy regression
+        run: |
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-policy"
+          "$RUNNER_TEMP/native-policy"
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Compile iPhone device app
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PCCompanion" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
