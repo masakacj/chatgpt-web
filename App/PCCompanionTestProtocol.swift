@@ -15,12 +15,15 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
     private static var sentText = ""
     private static var version = 1
     private var work: DispatchWorkItem?
-    private static let conversation = "11111111-1111-4111-8111-111111111111"
+    private static let firstConversation = "11111111-1111-4111-8111-111111111111"
+    private static var conversation = firstConversation
+    private static var projectExpanded = false
 
     static func reset() {
         lock.lock(); defer { lock.unlock() }
         draft = ""; sessions = 0; sends = 0; polls = 0; readFailed = false
         expired = false; receiptID = ""; sentText = ""; version = 1
+        conversation = firstConversation; projectExpanded = false
     }
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
@@ -39,7 +42,7 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
     }
     private static func snapshot() -> [String: Any] {
         let args = ProcessInfo.processInfo.arguments
-        let answer = expired ? "会话重建成功" : readFailed ? "重连后答案" : "联调初始答案"
+        let answer = conversation != firstConversation ? "目录切换成功" : expired ? "会话重建成功" : readFailed ? "重连后答案" : "联调初始答案"
         var messages: [[String: Any]] = [["id":"answer1", "role":"assistant", "text":answer,
             "blocks":[], "links":[], "truncated":false]]
         if !sentText.isEmpty { messages.append(["id":"user1", "role":"user", "text":sentText, "blocks":[], "links":[], "truncated":false]) }
@@ -47,6 +50,13 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
         return ["schema":1, "documentId":"fixture-document", "conversationId":conversation, "title":"联调测试会话",
             "messages":messages, "status":"completed", "draft":draft, "draftHash":PCCompanionPolicy.hash(draft),
             "canSend":!draft.isEmpty, "composing":false, "unsupportedTools":false, "historyPartial":true]
+    }
+    private static func library() -> [String: Any] {
+        let project = "g-p-aaaaaaaaaaaaaaaa"
+        var chats: [[String: Any]] = [["id":firstConversation,"title":"联调测试会话","current":conversation == firstConversation,"status":"completed","readState":"read","tabId":1]]
+        if projectExpanded { chats.append(["id":"22222222-2222-4222-8222-222222222222","title":"第二个项目对话","projectId":project,"current":false,"status":"completed","readState":"unread"]) }
+        return ["ok":true,"sourceTabId":1,"projects":[["id":project,"title":"Project Alpha","collapsed":!projectExpanded,"hasMore":false]],
+            "chats":chats,"tabs":[["tabId":1,"title":"联调测试会话","conversationId":conversation,"active":true]],"partial":true,"sidebarAvailable":true]
     }
     private static func envelope() -> [String: Any] {
         ["ok":true, "sessionId":"fixture-session-\(sessions)", "revision":version,
@@ -60,6 +70,13 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
         var code = 200; var json: [String: Any] = [:]; var delay = 0.04
         if request.value(forHTTPHeaderField: "Authorization") != "Bearer " + String(repeating: "T", count: 43) {
             code = 401; json = ["error":"pairing_required"]
+        } else if path == "/v1/library" { json = Self.library()
+        } else if path == "/v1/library/actions" && method == "POST" {
+            if payload["action"] as? String == "project" { Self.projectExpanded = true; json = Self.library() }
+            else {
+                Self.conversation = payload["conversationId"] as? String ?? Self.firstConversation; Self.version += 1
+                json = ["ok":true,"tab":["tabId":1,"title":"第二个项目对话","conversationId":Self.conversation,"active":true]]
+            }
         } else if path == "/v1/tabs" {
             json = ["tabs":[["tabId":1,"title":"联调测试会话","conversationId":Self.conversation,"active":true]]]
         } else if path == "/v1/sessions" && method == "POST" {
@@ -77,6 +94,9 @@ final class PCCompanionTestProtocol: URLProtocol, @unchecked Sendable {
                     Self.draft = payload["text"] as? String ?? ""; Self.version += 1
                     json = ["ok":true,"commandId":id,"state":"done","result":["status":"draft_synced","draftHash":PCCompanionPolicy.hash(Self.draft),"documentId":"fixture-document"]]
                 }
+            } else if action == "send" && args.contains("--pc-fixture-not-sent") {
+                Self.sends += 1; Self.receiptID = id
+                json = ["ok":false,"commandId":id,"state":"failed","result":["status":"not_sent","error":"send_unavailable","documentId":"fixture-document"]]
             } else if action == "send" {
                 Self.sends += 1; Self.receiptID = id; Self.sentText = Self.draft; Self.draft = ""; Self.version += 1
                 if args.contains("--pc-fixture-unknown") { code = 503; json = ["error":"pc_result_unknown"] }

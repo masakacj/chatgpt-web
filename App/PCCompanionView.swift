@@ -69,6 +69,8 @@ final class PCCompanionModel: ObservableObject {
     @Published var endpoint = UserDefaults.standard.string(forKey: "PCCompanion.endpoint") ?? PCCompanionPolicy.defaultEndpoint
     @Published var pairingKey = PCPairingKeychain.load()
     @Published var tabs: [PCRemoteTab] = []
+    @Published var library: PCSidebarLibrary?
+    @Published var libraryLoading = false
     @Published var snapshot: PCRemoteSnapshot?
     @Published var draft = PCDraftBuffer()
     @Published var status = "未连接 PC"
@@ -106,7 +108,7 @@ final class PCCompanionModel: ObservableObject {
     var hasPending: Bool { pending != nil }
     var canWrite: Bool {
         online && !working && !reconnecting && !hasPending && snapshot != nil &&
-        snapshot?.status != "running" && snapshot?.status != "waiting" && snapshot?.composing != true
+        snapshot?.status != "running" && snapshot?.status != "waiting" && snapshot?.status != "loading" && snapshot?.composing != true
     }
     var connectionChanged: Bool {
         guard let connection else { return false }
@@ -205,6 +207,47 @@ final class PCCompanionModel: ObservableObject {
     }
     private func current(_ epoch: Int) throws {
         guard generation == epoch, foreground, !Task.isCancelled else { throw CancellationError() }
+    }
+    func loadLibrary() async {
+        guard !libraryLoading, !working else { return }
+        libraryLoading = true; defer { libraryLoading = false }
+        do {
+            let c = try config()
+            if let active = connection, active.identity != c.identity { throw PCCompanionError(code: "connection_changed", status: 409) }
+            let path = selected.map { "/v1/library?tabId=\($0.tabId)" } ?? "/v1/library"
+            let value: PCSidebarLibrary = try await request(path, using: c)
+            guard value.projects.count <= 150, value.chats.count <= 600 else { throw PCCompanionError(code: "schema_invalid", status: 409) }
+            library = value; tabs = value.tabs
+        } catch { self.error = error.localizedDescription }
+    }
+    func expandProject(_ id: String, more: Bool) async {
+        guard !libraryLoading, !working, let source = library?.sourceTabId else { return }
+        libraryLoading = true; defer { libraryLoading = false }
+        do {
+            let c = try config()
+            let value: PCSidebarLibrary = try await request("/v1/library/actions", using: c, method: "POST", body: [
+                "commandId": UUID().uuidString, "action": "project", "tabId": source, "projectId": id, "more": more])
+            library = value; tabs = value.tabs
+        } catch { self.error = error.localizedDescription }
+    }
+    func openConversation(_ item: PCSidebarChat) async {
+        guard !working, !libraryLoading else { return }
+        guard !hasPending else { error = "请先核对发送回执，再切换会话。"; return }
+        guard draft.canSelect(item.id) else { error = PCCompanionError(code: "other_draft", status: 409).localizedDescription; return }
+        if let tab = tabs.first(where: { $0.conversationId == item.id }) { await connect(tab); return }
+        guard let source = library?.sourceTabId else { return }
+        working = true; error = nil
+        do {
+            let c = try config()
+            await disconnect(clearSelection: false)
+            let epoch = generation
+            let opened: PCSidebarOpened = try await request("/v1/library/actions", using: c, method: "POST", body: [
+                "commandId": UUID().uuidString, "action": "open", "tabId": source, "conversationId": item.id])
+            try current(epoch)
+            guard opened.ok, opened.tab.conversationId == item.id else { throw PCCompanionError(code: "pc_route_changed", status: 409) }
+            working = false
+            await connect(opened.tab)
+        } catch { working = false; self.error = error.localizedDescription }
     }
     func loadTabs() async {
         guard !working else { return }; working = true; defer { working = false }; error = nil
@@ -346,7 +389,10 @@ final class PCCompanionModel: ObservableObject {
             draft.sent(text: command.text, editedAt: command.revision); pending = nil; error = nil
             defaults.removeObject(forKey: "PCCompanion.pendingSend"); status = "PC 网页已确认消息"
         } else if receipt.state == "failed" {
-            pending = nil; error = receipt.result?.error ?? "发送未执行"; status = "请核对 PC 后再操作"
+            pending = nil
+            defaults.removeObject(forKey: "PCCompanion.pendingSend")
+            error = PCCompanionError(code: receipt.result?.error ?? "not_sent", status: 409).localizedDescription
+            status = "确定未发送 · 草稿已保留"
         } else { status = "发送结果仍待确认 · 不会再次发送" }
         saveDraft()
     }
@@ -395,6 +441,7 @@ final class PCCompanionModel: ObservableObject {
 struct PCCompanionView: View {
     @StateObject private var model = PCCompanionModel()
     @State private var settings = false
+    @State private var sidebar = false
     @State private var confirmDraft = false
     @State private var confirmReceipt = false
     @Environment(\.scenePhase) private var scenePhase
@@ -467,9 +514,11 @@ struct PCCompanionView: View {
             }.navigationTitle(model.snapshot?.title ?? "PC 同步").navigationBarTitleDisplayMode(.inline)
              .toolbar {
                  ToolbarItem(placement: .topBarLeading) { Button("原网页") { Task { await model.disconnect(); returnToWeb() } }.disabled(model.working) }
+                 ToolbarItem(placement: .topBarTrailing) { Button("对话") { sidebar = true }.accessibilityIdentifier("pc.remote.sidebar") }
                  ToolbarItem(placement: .topBarTrailing) { Button("连接") { settings = true } }
              }
              .sheet(isPresented: $settings) { configuration }
+             .sheet(isPresented: $sidebar) { PCSidebarView(model: model) }
              .alert("采用 PC 草稿？", isPresented: $confirmDraft) {
                  Button("取消", role: .cancel) {}; Button("替换手机草稿", role: .destructive) { model.usePCDraft() }
              } message: { Text("仅替换手机输入框，不会发送消息。请先复制需要保留的本地文字。") }
