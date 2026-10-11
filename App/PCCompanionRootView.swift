@@ -1,14 +1,18 @@
 import SwiftUI
 
-struct PCCompanionRootView: View {
+struct PCCompanionRootView<WebContent: View>: View {
     @AppStorage("PCCompanion.selected") private var remote = false
     @State private var confirmSwitch = false
+    let webContent: () -> WebContent
+    init(@ViewBuilder webContent: @escaping () -> WebContent) {
+        self.webContent = webContent
+    }
     var body: some View {
         Group {
             if remote {
                 PCCompanionView(returnToWeb: { remote = false })
             } else {
-                ChatGPTWebView().ignoresSafeArea()
+                webContent().ignoresSafeArea()
                     .overlay(alignment: .topLeading) {
                         Button { confirmSwitch = true } label: {
                             Label("PC 同步",systemImage:"desktopcomputer")
