@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 const change=(p,fn)=>{const s=fs.readFileSync(p,'utf8');const n=fn(s);if(s!==n)fs.writeFileSync(p,n)};
 const one=(s,a,b)=>{assert.equal(s.split(a).length-1,1,'unique native patch: '+a.slice(0,90));return s.replace(a,b)};
 change('App/PCCompanionView.swift',s=>{
- if(s.includes('// companion-beta-safe-storage'))return s;
+ if(!s.includes('// companion-beta-safe-storage')){
  s=one(s,'    private var foreground = true','    private var foreground = true\n    private var writing = false // companion-beta-safe-storage');
  s=one(s,`        #if DEBUG
         fixture = args.contains("--ui-testing") && args.contains("--pc-companion-fixture")
@@ -37,12 +37,25 @@ change('App/PCCompanionView.swift',s=>{
             } // Never send if the durable local reservation could not be saved.`);
  s=one(s,'guard !working, !reconnecting, !online, !fixture, !networkFixture || selected != nil else { return }',
  'guard !working, !reconnecting, !online, !fixture, (!networkFixture || selected != nil) else { return }');
- s=one(s,'    @Published private var pending: PCPending?','    @Published private var pending: PCPending?');
+ }
+ if(!s.includes('// Keep command errors')){
+ s=one(s,'try current(epoch); try apply(value); online = true; reconnecting = false; failures = 0; error = nil',
+ 'try current(epoch); try apply(value); online = true; reconnecting = false; failures = 0\n                // Keep command errors visible: successful reading does not resolve a draft conflict.');
+ s=one(s,'        guard draft.canSelect(tab.conversationId) else',
+ `        if let pending, pending.conversation != tab.conversationId {
+            error = "请先核对当前消息的发送回执，再切换会话。"; return
+        }
+        if draft.text.isEmpty && draft.owner != tab.conversationId {
+            draft = PCDraftBuffer(); saveDraft()
+        }
+        guard draft.canSelect(tab.conversationId) else`);
+ s=one(s,'            draft.sent(text: command.text, editedAt: command.revision); pending = nil',
+ '            draft.sent(text: command.text, editedAt: command.revision); pending = nil; error = nil');
+ }
  return s;
 });
 change('App/PCCompanionPolicy.swift',s=>{
- if(s.includes('// First pairing'))return s;
- return one(s,'        guard !localEdits else { return }\n        text = remote; baseHash = hash; owner = conversation',
+ if(!s.includes('// First pairing'))s=one(s,'        guard !localEdits else { return }\n        text = remote; baseHash = hash; owner = conversation',
  `        // First pairing may keep locally typed text only against a confirmed
         // empty PC editor; a preexisting PC draft must not be silently replaced.
         if localEdits && owner == nil && baseHash == nil && remote.isEmpty {
@@ -50,6 +63,7 @@ change('App/PCCompanionPolicy.swift',s=>{
         }
         guard !localEdits else { return }
         text = remote; baseHash = hash; owner = conversation`);
+ return s.replace('!hasLocalDraft || owner == nil || owner == conversation','text.isEmpty || owner == nil || owner == conversation');
 });
 change('App/PCCompanionRootView.swift',s=>{
  if(s.includes('--pc-companion-network-fixture'))return s;
