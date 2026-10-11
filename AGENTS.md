@@ -1,5 +1,11 @@
 # Deployment rules — current PC/iOS routing
 
+## ACTIVE PLAN — iOS official-like native UX parity v0.7.0 (2026-10-11)
+
+User explicitly requires a ChatGPT-official-app-like native layout, arbitrary account-history chat selection (not only currently mounted PC sidebar), ordinary and in-project new chat creation, and **mobile-local draft with one-way submit ONLY on mobile Send**. PC editor drafts must never be echoed into or overwrite iPhone composer. No automatic sync-draft or adopt-PC-draft UX. The authoritative development / test / release / rollback plan and running handoff is **docs/IOS_070_NATIVE_UX_PARITY_HANDOFF.md**; READ IT FIRST before implementing or resuming this work.
+
+This is **planning only**, not evidence of an implemented feature or signed IPA. Verified current release remains **v0.6.0 Build 221** via install-center GET on 2026-10-11. New 0.6.1 Mobile Controls CI runs were failing/cancelled; do not mistake those for a release. Target v0.7.0 is provisional until validated end-to-end on a real paired iPhone. Retain existing PC extension, browser, NPM/WG channel, sending idempotency journals, WebKit fallback and user data. Never deploy from a draft without the explicit gates in the handoff.
+
 ## Current iOS PC companion (2026-10-11)
 
 The user explicitly authorized the structured-PC native iOS client. Read `IOS_PC_COMPANION_050_HANDOFF.md` and `IOS_PC_COMPANION_RELEASE.json` FIRST for this feature. They supersede the old prototype notes saying the external channel or IPA is unavailable.
