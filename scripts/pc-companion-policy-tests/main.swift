@@ -1,0 +1,61 @@
+import Foundation
+
+var count = 0
+func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+    precondition(condition(), message); count += 1
+}
+let empty = PCCompanionPolicy.hash("")
+let origin = try PCCompanionPolicy.origin(PCCompanionPolicy.defaultEndpoint)
+expect(origin.scheme == "https", "HTTPS required")
+expect(origin.port == 58443, "dedicated external port retained")
+expect(origin.host == "chatgpt-pc.781751.xyz", "existing domain reused")
+for input in ["http://chatgpt-pc.781751.xyz:58443", "https://user:pass@example.com", "https://example.com/path", "https://example.com/?token=x", "https://example.com/#secret", "file:///tmp/a", "https://example.com:0"] {
+    do { _ = try PCCompanionPolicy.origin(input); preconditionFailure("unsafe origin accepted") } catch { count += 1 }
+}
+var d = PCDraftBuffer()
+d.receive(text: "PC draft", hash: "h1", conversation: "a", blocked: false)
+expect(d.text == "PC draft" && d.baseHash == "h1", "initial official draft visible")
+d.edit("phone text", conversation: "a", remoteHash: "h1")
+let submitted = d.revision
+d.receive(text: "late old PC text", hash: "old", conversation: "a", blocked: false)
+expect(d.text == "phone text" && d.baseHash == "h1", "remote snapshots cannot overwrite local text/base")
+d.acknowledged(text: "phone text", hash: "h2", editedAt: submitted)
+expect(!d.localEdits && d.expectedEcho == "h2", "sync acknowledgement waits for matching echo")
+d.receive(text: "PC draft", hash: "h1", conversation: "a", blocked: false)
+expect(d.text == "phone text", "stale pre-sync snapshot discarded")
+d.receive(text: "phone text", hash: "h2", conversation: "a", blocked: false)
+expect(d.expectedEcho == nil, "matching echo unblocks")
+d.edit("first send", conversation: "a", remoteHash: "h2")
+let first = d.revision
+d.edit("new typing during sync", conversation: "a", remoteHash: "h2")
+d.acknowledged(text: "first send", hash: "h3", editedAt: first)
+expect(d.text == "new typing during sync" && d.localEdits, "inflight sync does not clear new typing")
+d.sent(text: "first send", editedAt: first)
+expect(d.text == "new typing during sync" && d.localEdits, "late Send receipt cannot erase next draft")
+expect(d.baseHash == empty, "after confirmed send require empty PC base")
+d.receive(text: "other PC edit", hash: "h4", conversation: "a", blocked: false)
+expect(d.text == "new typing during sync" && d.baseHash == empty, "other edit remains conflict instead of rebase")
+expect(!d.canSelect("b"), "cross-conversation draft switch prevented")
+expect(d.canSelect("a"), "same conversation draft reconnect allowed")
+let restored = try JSONDecoder().decode(PCDraftBuffer.self, from: JSONEncoder().encode(d))
+expect(restored.text == d.text && restored.baseHash == d.baseHash && restored.owner == "a", "native disk roundtrip preserves ownership/base")
+var clean = PCDraftBuffer()
+clean.receive(text: "", hash: empty, conversation: "a", blocked: false)
+clean.edit("hello", conversation: "a", remoteHash: empty)
+clean.sent(text: "hello", editedAt: clean.revision)
+expect(clean.text.isEmpty && !clean.localEdits, "own confirmed text clears exactly once")
+clean.receive(text: "old hello", hash: "old", conversation: "a", blocked: false)
+expect(clean.text.isEmpty, "late snapshot cannot resurrect sent text")
+var offline = PCDraftBuffer()
+offline.edit("offline draft", conversation: nil, remoteHash: nil)
+offline.receive(text: "PC existing", hash: "busy", conversation: "a", blocked: false)
+expect(offline.baseHash == nil && offline.text == "offline draft", "unowned draft cannot silently overwrite occupied editor")
+offline.receive(text: "", hash: empty, conversation: "a", blocked: false)
+expect(offline.baseHash == empty && offline.owner == "a" && offline.text == "offline draft", "first pairing may bind to confirmed empty editor")
+for status in [408, 425, 500, 502, 503, 504] { expect(PCCompanionPolicy.retryableRead(PCCompanionError(code:"network",status:status)), "read retry \(status)") }
+for status in [401, 403, 404, 409, 410, 429] { expect(!PCCompanionPolicy.retryableRead(PCCompanionError(code:"auth",status:status)), "no blind retry \(status)") }
+expect(!PCCompanionPolicy.retryableRead(URLError(.serverCertificateUntrusted)), "TLS trust errors stop")
+expect(!PCCompanionPolicy.retryableRead(CancellationError()), "app pause does not schedule reconnect")
+expect(PCCompanionPolicy.validReceipt(UUID().uuidString), "opaque receipt accepted")
+expect(!PCCompanionPolicy.validReceipt("../bad?token=123"), "receipt path injection rejected")
+print("PC native policy PASS: \(count) assertions; draft race, persistence, origin and retry classification verified")
