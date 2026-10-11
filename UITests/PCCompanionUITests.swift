@@ -26,7 +26,7 @@ final class PCCompanionUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["已从 PC 同步的最新答案。手机原生界面无需加载完整网页。"].exists)
         XCTAssertEqual(app.webViews.count, 0, "No hidden WebKit instance in PC mode")
         editor.tap(); editor.typeText("local draft")
-        XCTAssertFalse(app.buttons["发送"].isEnabled); XCTAssertFalse(app.buttons["同步草稿"].isEnabled)
+        XCTAssertFalse(app.buttons["发送"].isEnabled)
         app.buttons["连接"].tap()
         XCTAssertTrue(app.secureTextFields["配对密钥"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textFields["HTTPS 服务地址"].value as? String, "https://chatgpt-pc.781751.xyz:58443")
@@ -47,6 +47,7 @@ final class PCCompanionUITests: XCTestCase {
         let app = paired("--pc-fixture-conflict")
         let editor = app.textViews["pc.remote.composer"]
         editor.tap(); editor.typeText("phone draft must survive")
+        app.buttons["输入选项"].tap() // compact composer menu
         app.buttons["同步草稿"].tap()
         waitLabel(app.staticTexts["pc.remote.error"], contains: "已阻止覆盖")
         XCTAssertEqual(editor.value as? String, "phone draft must survive")

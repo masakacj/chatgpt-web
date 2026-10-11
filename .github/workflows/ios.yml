@@ -23,6 +23,8 @@ permissions:
 
 jobs:
   build-ipa:
+    # Never update the install center before all simulator regressions pass.
+    needs: ui-smoke
     runs-on: macos-latest
     timeout-minutes: 30
 
@@ -208,6 +210,14 @@ jobs:
 
       - name: Validate unified userscript
         run: npm run check
+
+      - name: Verify native draft and persistence policies
+        run: |
+          set -euo pipefail
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/pc-policy"
+          "$RUNNER_TEMP/pc-policy"
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-policy"
+          "$RUNNER_TEMP/native-policy"
 
       - name: Install XcodeGen
         run: brew install xcodegen

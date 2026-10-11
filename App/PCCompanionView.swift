@@ -12,6 +12,10 @@ struct PCRemoteSnapshot: Codable {
     let schema: Int; let documentId: String; let conversationId: String; let title: String
     let messages: [PCRemoteMessage]; let status: String; let draft: String; let draftHash: String
     let canSend: Bool; let composing: Bool; let unsupportedTools: Bool; let historyPartial: Bool
+    var responsePhase: String? = nil
+    var interactions: [PCInteractionCard]? = nil
+    var historyCursor: String? = nil
+    var hasOlder: Bool? = nil
 }
 struct PCRemoteTab: Codable, Identifiable {
     let tabId: Int; let title: String; let conversationId: String; let active: Bool
@@ -71,6 +75,25 @@ final class PCCompanionModel: ObservableObject {
     @Published var tabs: [PCRemoteTab] = []
     @Published var library: PCSidebarLibrary?
     @Published var libraryLoading = false
+    @Published var olderMessages: [PCRemoteMessage] = []
+    @Published var historyLoading = false
+    @Published var historyReachedStart = false
+    @Published var historyCursor: String?
+    @Published private var pendingInteraction: PCInteractionPending?
+    private var historyDocument: String?
+    var hasPendingInteraction: Bool { pendingInteraction != nil }
+    var displayMessages: [PCRemoteMessage] {
+        let recent = snapshot?.messages ?? []
+        let ids = Set(recent.map(\.id))
+        return olderMessages.filter { !ids.contains($0.id) } + recent
+    }
+    var isThinking: Bool {
+        guard online, let snapshot, (snapshot.interactions ?? []).isEmpty else { return false }
+        return snapshot.responsePhase == "thinking" || (snapshot.responsePhase == nil && snapshot.status == "running" && snapshot.messages.last?.role != "assistant")
+    }
+    var canLoadHistory: Bool {
+        !historyReachedStart && (historyCursor ?? snapshot?.historyCursor) != nil && olderMessages.count < 300
+    }
     @Published var snapshot: PCRemoteSnapshot?
     @Published var draft = PCDraftBuffer()
     @Published var status = "未连接 PC"
@@ -107,7 +130,7 @@ final class PCCompanionModel: ObservableObject {
     }()
     var hasPending: Bool { pending != nil }
     var canWrite: Bool {
-        online && !working && !reconnecting && !hasPending && snapshot != nil &&
+        online && !working && !reconnecting && !hasPending && !hasPendingInteraction && snapshot != nil &&
         snapshot?.status != "running" && snapshot?.status != "waiting" && snapshot?.status != "loading" && snapshot?.composing != true
     }
     var connectionChanged: Bool {
@@ -157,6 +180,10 @@ final class PCCompanionModel: ObservableObject {
             }
         }
         if let data = defaults.data(forKey: "PCCompanion.lastTab") { selected = try? JSONDecoder().decode(PCRemoteTab.self, from: data) }
+        if let data = read("history.json"), let history = try? JSONDecoder().decode(PCSavedHistory.self, from: data), history.conversation == snapshot?.conversationId, history.document == snapshot?.documentId {
+            olderMessages = Array(history.messages.prefix(300)); historyCursor = history.cursor; historyReachedStart = !history.hasMore; historyDocument = history.document
+        }
+        if let data = read("interaction.json") { pendingInteraction = try? JSONDecoder().decode(PCInteractionPending.self, from: data) }
     }
     deinit { pollTask?.cancel(); cacheTask?.cancel() }
     static var offlineSnapshot: PCRemoteSnapshot {
@@ -208,6 +235,56 @@ final class PCCompanionModel: ObservableObject {
     private func current(_ epoch: Int) throws {
         guard generation == epoch, foreground, !Task.isCancelled else { throw CancellationError() }
     }
+    func loadHistory() async {
+        guard online, !historyLoading, let c = connection, let id = sessionID, let snap = snapshot,
+              let cursor = historyCursor ?? snap.historyCursor, !historyReachedStart else { return }
+        historyLoading = true; defer { historyLoading = false }
+        let epoch = generation
+        do {
+            var components = URLComponents(); components.queryItems = [URLQueryItem(name: "before", value: cursor), URLQueryItem(name: "documentId", value: snap.documentId)]
+            let page: PCHistoryPage = try await request("/v1/sessions/\(id)/history?\(components.percentEncodedQuery ?? "")", using: c)
+            try current(epoch)
+            guard page.schema == 1, page.documentId == snap.documentId, page.conversationId == snap.conversationId,
+                  page.messages.count <= 24, Set(page.messages.map(\.id)).count == page.messages.count else { throw PCCompanionError(code: "schema_invalid", status: 409) }
+            let known = Set(displayMessages.map(\.id))
+            olderMessages = Array((page.messages.filter { !known.contains($0.id) } + olderMessages).suffix(300))
+            historyCursor = page.cursor; historyReachedStart = !page.hasMore || page.cursor == cursor
+            write(PCSavedHistory(conversation: snap.conversationId, document: snap.documentId, messages: olderMessages, cursor: page.cursor, hasMore: !historyReachedStart), to: "history.json")
+        } catch { self.error = error.localizedDescription }
+    }
+    func performInteraction(_ selection: PCInteractionSelection) async {
+        guard online, !working, !hasPending, !hasPendingInteraction, let c = connection, let id = sessionID, let snap = snapshot,
+              snap.documentId == selection.document,
+              (snap.interactions ?? []).flatMap({ $0.buttons }).contains(where: { $0.id == selection.button.id && $0.revision == selection.button.revision && !$0.disabled }) else { error = "操作已变化，请查看当前对话。"; return }
+        working = true; defer { working = false }
+        let command = PCInteractionPending(id: UUID().uuidString, server: c.identity, conversation: snap.conversationId)
+        pendingInteraction = command
+        guard write(command, to: "interaction.json") else { pendingInteraction = nil; return }
+        do {
+            let receipt: PCReceipt = try await request("/v1/sessions/\(id)/commands", using: c, method: "POST", body: [
+                "commandId": command.id, "action": "interact", "documentId": snap.documentId,
+                "interactionId": selection.button.id, "interactionRevision": selection.button.revision, "confirmed": true])
+            resolveInteraction(receipt, using: c)
+        } catch { self.error = "操作结果待确认，请核对回执；不会自动重复点击。" }
+    }
+    private func resolveInteraction(_ receipt: PCReceipt, using c: PCConnection) {
+        guard let pendingInteraction, pendingInteraction.id == receipt.commandId, pendingInteraction.server == c.identity else { return }
+        if receipt.state == "done", receipt.result?.status == "interaction_clicked" {
+            self.pendingInteraction = nil; error = nil; status = "已点击，等待 PC 继续"
+        } else if receipt.state == "failed" {
+            self.pendingInteraction = nil; error = "操作已变化或不可用，没有点击。请查看当前对话。"
+        } else { error = "操作回执仍待确认，不会重复点击。" }
+        if self.pendingInteraction == nil { write([String: String](), to: "interaction.json") }
+    }
+    func checkInteractionReceipt() async {
+        guard !working, let pendingInteraction else { return }
+        working = true; defer { working = false }
+        do {
+            let c = try config(); guard c.identity == pendingInteraction.server else { throw PCCompanionError(code: "connection_changed", status: 409) }
+            let receipt: PCReceipt = try await request("/v1/commands/\(pendingInteraction.id)", using: c)
+            resolveInteraction(receipt, using: c)
+        } catch { self.error = error.localizedDescription }
+    }
     func loadLibrary() async {
         guard !libraryLoading, !working else { return }
         libraryLoading = true; defer { libraryLoading = false }
@@ -231,7 +308,7 @@ final class PCCompanionModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func openConversation(_ item: PCSidebarChat) async {
-        guard !working, !libraryLoading else { return }
+        guard !working, !libraryLoading, !hasPendingInteraction else { return }
         guard !hasPending else { error = "请先核对发送回执，再切换会话。"; return }
         guard draft.canSelect(item.id) else { error = PCCompanionError(code: "other_draft", status: 409).localizedDescription; return }
         if let tab = tabs.first(where: { $0.conversationId == item.id }) { await connect(tab); return }
@@ -261,7 +338,7 @@ final class PCCompanionModel: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
     func connect(_ tab: PCRemoteTab) async {
-        guard !working else { return }
+        guard !working, !hasPendingInteraction else { return }
         if let pending, pending.conversation != tab.conversationId {
             error = "请先核对当前消息的发送回执，再切换会话。"; return
         }
@@ -289,6 +366,9 @@ final class PCCompanionModel: ObservableObject {
         guard let fresh = value.snapshot else { return }
         guard fresh.schema == 1, fresh.conversationId == selected?.conversationId, fresh.messages.count <= 24,
               Set(fresh.messages.map(\.id)).count == fresh.messages.count else { throw PCCompanionError(code: "schema_invalid", status: 409) }
+        if historyDocument != fresh.documentId || snapshot?.conversationId != fresh.conversationId {
+            olderMessages = []; historyCursor = nil; historyReachedStart = fresh.hasOlder == false; historyDocument = fresh.documentId
+        }
         snapshot = fresh; capturedAt = value.capturedAt
         draft.receive(text: fresh.draft, hash: fresh.draftHash, conversation: fresh.conversationId, blocked: writing || hasPending)
         status = fresh.status == "running" ? "PC 生成中" : fresh.status == "waiting" ? "等待 PC 工具授权" : "已同步 PC"
@@ -441,94 +521,14 @@ final class PCCompanionModel: ObservableObject {
 struct PCCompanionView: View {
     @StateObject private var model = PCCompanionModel()
     @State private var settings = false
-    @State private var sidebar = false
-    @State private var confirmDraft = false
-    @State private var confirmReceipt = false
     @Environment(\.scenePhase) private var scenePhase
     let returnToWeb: () -> Void
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                HStack {
-                    Circle().fill(model.online ? Color.green : Color.gray).frame(width: 7, height: 7)
-                    Text(model.status).font(.caption).accessibilityIdentifier("pc.remote.status")
-                    Spacer()
-                    if model.working || model.reconnecting { ProgressView().controlSize(.small) }
-                    if !model.online { Button("重连") { Task { await model.resume() } }.font(.caption).disabled(model.working).accessibilityIdentifier("pc.remote.reconnect") }
-                }.padding(.horizontal).padding(.vertical, 8)
-                if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal).accessibilityIdentifier("pc.remote.error") }
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--pc-companion-network-fixture") {
-                    Text(PCCompanionTestProtocol.counters).font(.caption2).accessibilityIdentifier("pc.fixture.counters")
-                }
-                #endif
-                if let snapshot = model.snapshot {
-                    ScrollViewReader { proxy in
-                        VStack(spacing: 0) {
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 18) {
-                                    if !model.online { Text("离线快照 · \(Date(timeIntervalSince1970: model.capturedAt / 1000), style: .time)").font(.caption).foregroundStyle(.secondary) }
-                                    if snapshot.historyPartial { Text("同步最近已加载的消息，完整历史保留在 PC。").font(.caption).foregroundStyle(.secondary) }
-                                    ForEach(snapshot.messages) { message in
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            HStack {
-                                                Text(message.role == "user" ? "你" : "ChatGPT").font(.caption.bold()).foregroundStyle(.secondary)
-                                                Spacer()
-                                                Button { UIPasteboard.general.string = message.text } label: { Image(systemName: "doc.on.doc") }.accessibilityLabel("复制消息")
-                                            }
-                                            Text(message.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                                            ForEach(Array(message.links.enumerated()), id: \.offset) { _, link in
-                                                if let u = URL(string: link.url), ["https", "http"].contains(u.scheme ?? "") {
-                                                    Link(link.title.isEmpty ? (u.host ?? "打开链接") : link.title, destination: u).font(.caption)
-                                                }
-                                            }
-                                            if message.truncated { Text("正文较长，剩余部分请在 PC 查看").font(.caption).foregroundStyle(.secondary) }
-                                        }.padding(12).background(.quaternary.opacity(message.role == "user" ? 0.8 : 0.25)).clipShape(RoundedRectangle(cornerRadius: 12)).id(message.id)
-                                    }
-                                    if snapshot.unsupportedTools { Label("复杂工具、授权及附件请在 PC 处理", systemImage: "desktopcomputer").font(.caption).foregroundStyle(.secondary) }
-                                    Color.clear.frame(height: 1).id("end")
-                                }.padding()
-                            }.onAppear { proxy.scrollTo("end", anchor: .bottom) }
-                             .onChange(of: snapshot.conversationId) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
-                            HStack { Spacer(); Button("最新消息 ↓") { proxy.scrollTo("end", anchor: .bottom) }.font(.caption).padding(.horizontal) }
-                        }
-                    }
-                } else { ContentUnavailableView("连接你的 PC Chrome", systemImage: "desktopcomputer", description: Text("PC 运行官方网页，手机原生显示答案。")) }
-                VStack(spacing: 8) {
-                    TextEditor(text: Binding(get: { model.draft.text }, set: { model.edited($0) }))
-                        .frame(minHeight: 55, maxHeight: 100).padding(6).background(.quaternary).clipShape(RoundedRectangle(cornerRadius: 10))
-                        .accessibilityIdentifier("pc.remote.composer")
-                    HStack {
-                        if model.hasPending {
-                            Button("核对发送回执") { Task { await model.checkReceipt() } }.accessibilityIdentifier("pc.remote.receipt")
-                            Button("已在 PC 核对") { confirmReceipt = true }.font(.caption)
-                        } else {
-                            Button("同步草稿") { Task { await model.syncDraft() } }.disabled(!model.canWrite)
-                            Button("采用 PC 草稿") { confirmDraft = true }.font(.caption).disabled(model.working || model.snapshot == nil)
-                        }
-                        Spacer()
-                        Button("发送") { Task { await model.send() } }.buttonStyle(.borderedProminent)
-                            .disabled(!model.canWrite || model.draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }.padding().background(.regularMaterial)
-            }.navigationTitle(model.snapshot?.title ?? "PC 同步").navigationBarTitleDisplayMode(.inline)
-             .toolbar {
-                 ToolbarItem(placement: .topBarLeading) { Button("原网页") { Task { await model.disconnect(); returnToWeb() } }.disabled(model.working) }
-                 ToolbarItem(placement: .topBarTrailing) { Button("对话") { sidebar = true }.accessibilityIdentifier("pc.remote.sidebar") }
-                 ToolbarItem(placement: .topBarTrailing) { Button("连接") { settings = true } }
-             }
-             .sheet(isPresented: $settings) { configuration }
-             .sheet(isPresented: $sidebar) { PCSidebarView(model: model) }
-             .alert("采用 PC 草稿？", isPresented: $confirmDraft) {
-                 Button("取消", role: .cancel) {}; Button("替换手机草稿", role: .destructive) { model.usePCDraft() }
-             } message: { Text("仅替换手机输入框，不会发送消息。请先复制需要保留的本地文字。") }
-             .alert("已检查 PC 发送结果？", isPresented: $confirmReceipt) {
-                 Button("取消", role: .cancel) {}; Button("已核对，解除等待") { model.acknowledgeManualCheck() }
-             } message: { Text("请先在 PC 确认该消息是否已发送。此操作不会重发，也不会删除服务端防重复记录。") }
-             .task { await model.resume(); if model.pairingKey.isEmpty { settings = true } }
-             .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await model.resume() } } else if phase == .background { model.pause() } }
-             .onDisappear { model.pause() }
-        }
+        NativeConversationScreen(model: model, openSettings: { settings = true }, returnToWeb: returnToWeb)
+            .sheet(isPresented: $settings) { configuration }
+            .task { await model.resume(); if model.pairingKey.isEmpty { settings = true } }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await model.resume() } } else if phase == .background { model.pause() } }
+            .onDisappear { model.pause() }
     }
     private var configuration: some View {
         NavigationStack {

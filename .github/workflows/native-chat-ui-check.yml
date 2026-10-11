@@ -1,0 +1,72 @@
+name: Native Chat UI Check
+on:
+  push:
+    branches: [feature/native-chat-reader-20261011]
+    paths: ['App/**', 'UITests/NativeChatReaderUITests.swift', 'scripts/prepare-native-chat-ui.mjs', 'scripts/prepare-native-chat-fixtures.mjs', 'scripts/refine-native-composer.mjs', '.github/workflows/native-chat-ui-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: native-chat-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-chat:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Integrate native view and isolated test fixtures
+        run: |
+          node scripts/prepare-native-chat-ui.mjs
+          node scripts/prepare-native-chat-fixtures.mjs
+          node scripts/refine-native-composer.mjs
+      - name: Existing source and native policy gates
+        run: |
+          npm run check
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/pc-policy"
+          "$RUNNER_TEMP/pc-policy"
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-policy"
+          "$RUNNER_TEMP/native-policy"
+      - name: Compile device target
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/NativeChatDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Native simulator chat flow and regression
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for g in d.values() for x in g if x.get("isAvailable") and x.get("name","").startswith("iPhone")))')"
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/NativeChatUI" -resultBundlePath "$RUNNER_TEMP/NativeChat.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/NativeChatReaderUITests -only-testing:ChatGPTWebUITests/PCSidebarUITests -only-testing:ChatGPTWebUITests/PCCompanionUITests/testDraftConflictPreservesPhoneText -only-testing:ChatGPTWebUITests/PCCompanionUITests/testUnknownSendQueriesReceiptAndRetainsNextDraft -only-testing:ChatGPTWebUITests/PCCompanionUITests/testOfflineNativeReaderDoesNotLoadWebView CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Capture native layout preview
+        if: always()
+        run: |
+          if [ -n "${SIM_UDID:-}" ]; then
+            xcrun simctl terminate "$SIM_UDID" com.masakacj.chatgptweb || true
+            xcrun simctl launch "$SIM_UDID" com.masakacj.chatgptweb --ui-testing --pc-companion-fixture || true
+            sleep 2
+            xcrun simctl io "$SIM_UDID" screenshot "$RUNNER_TEMP/native-chat-preview.png" || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-chat-ui-evidence
+          path: |
+            ${{ runner.temp }}/NativeChat.xcresult
+            ${{ runner.temp }}/native-chat-preview.png
+          if-no-files-found: ignore
+      - name: Commit validated source to same feature branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add App/PCCompanionView.swift App/NativeConversationScreen.swift App/PCCompanionTestProtocol.swift UITests/PCCompanionUITests.swift package.json project.yml safari/chatgpt-safari.user.js
+          if ! git diff --cached --quiet; then
+            git commit -m 'Validate native chat0.6.0 reader history and explicit interactions'
+            git push origin HEAD:feature/native-chat-reader-20261011
+          fi
