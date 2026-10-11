@@ -9,7 +9,7 @@ struct PCCompanionRootView<WebContent: View>: View {
     }
     var body: some View {
         Group {
-            let fixture = ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--pc-companion-fixture")
+            let fixture = ProcessInfo.processInfo.arguments.contains("--ui-testing") && (ProcessInfo.processInfo.arguments.contains("--pc-companion-fixture") || ProcessInfo.processInfo.arguments.contains("--pc-companion-network-fixture"))
             if remote || fixture {
                 PCCompanionView(returnToWeb: { remote = false })
             } else {

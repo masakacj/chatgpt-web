@@ -85,6 +85,7 @@ final class PCCompanionModel: ObservableObject {
     private var revision = -1
     private var generation = 0
     private var foreground = true
+    private var writing = false // companion-beta-safe-storage
     private var pollTask: Task<Void, Never>?
     private var cacheTask: Task<Void, Never>?
     private let redirect = PCNoRedirect()
@@ -118,11 +119,15 @@ final class PCCompanionModel: ObservableObject {
     init() {
         let args = ProcessInfo.processInfo.arguments
         #if DEBUG
-        fixture = args.contains("--ui-testing") && args.contains("--pc-companion-fixture")
-        networkFixture = args.contains("--ui-testing") && args.contains("--pc-companion-network-fixture")
+        let offlineTest = args.contains("--ui-testing") && args.contains("--pc-companion-fixture")
+        let networkTest = args.contains("--ui-testing") && args.contains("--pc-companion-network-fixture")
+        #else
+        let offlineTest = false; let networkTest = false
         #endif
-        defaults = fixture || networkFixture ? UserDefaults(suiteName: "PCCompanion.UITests")! : .standard
+        defaults = offlineTest || networkTest ? UserDefaults(suiteName: "PCCompanion.UITests")! : .standard
+        fixture = offlineTest; networkFixture = networkTest
         if fixture {
+            pairingKey = String(repeating: "T", count: 43)
             snapshot = Self.offlineSnapshot; status = "本地快照 · 尚未连接 PC"; restored = true; return
         }
         if networkFixture {
@@ -160,16 +165,19 @@ final class PCCompanionModel: ObservableObject {
             composing: false, unsupportedTools: true, historyPartial: true)
     }
     private func read(_ file: String) -> Data? { folder.flatMap { try? Data(contentsOf: $0.appendingPathComponent(file)) } }
-    private func write<T: Encodable>(_ value: T, to file: String) {
-        guard let folder, let data = try? JSONEncoder().encode(value) else { return }
+    @discardableResult
+    private func write<T: Encodable>(_ value: T, to file: String) -> Bool {
+        guard let folder, let data = try? JSONEncoder().encode(value) else { return false }
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             var dir = folder; var attr = URLResourceValues(); attr.isExcludedFromBackup = true
             try dir.setResourceValues(attr)
             try data.write(to: folder.appendingPathComponent(file), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        } catch { self.error = "本地保存失败，请保留当前草稿后重试。" }
+            return true
+        } catch { self.error = "本地保存失败，请保留当前草稿后重试。"; return false }
     }
-    private func saveDraft() { write(PCSavedDraft(draft: draft, pending: pending), to: "draft.json") }
+    @discardableResult
+    private func saveDraft() -> Bool { write(PCSavedDraft(draft: draft, pending: pending), to: "draft.json") }
     private func config() throws -> PCConnection {
         guard pairingKey.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else {
             throw PCCompanionError(code: "invalid_pairing", status: 400)
@@ -211,6 +219,12 @@ final class PCCompanionModel: ObservableObject {
     }
     func connect(_ tab: PCRemoteTab) async {
         guard !working else { return }
+        if let pending, pending.conversation != tab.conversationId {
+            error = "请先核对当前消息的发送回执，再切换会话。"; return
+        }
+        if draft.text.isEmpty && draft.owner != tab.conversationId {
+            draft = PCDraftBuffer(); saveDraft()
+        }
         guard draft.canSelect(tab.conversationId) else { error = PCCompanionError(code: "other_draft", status: 409).localizedDescription; return }
         working = true; defer { working = false }; error = nil
         do {
@@ -233,7 +247,7 @@ final class PCCompanionModel: ObservableObject {
         guard fresh.schema == 1, fresh.conversationId == selected?.conversationId, fresh.messages.count <= 24,
               Set(fresh.messages.map(\.id)).count == fresh.messages.count else { throw PCCompanionError(code: "schema_invalid", status: 409) }
         snapshot = fresh; capturedAt = value.capturedAt
-        draft.receive(text: fresh.draft, hash: fresh.draftHash, conversation: fresh.conversationId, blocked: working || hasPending)
+        draft.receive(text: fresh.draft, hash: fresh.draftHash, conversation: fresh.conversationId, blocked: writing || hasPending)
         status = fresh.status == "running" ? "PC 生成中" : fresh.status == "waiting" ? "等待 PC 工具授权" : "已同步 PC"
         if cacheTask == nil {
             cacheTask = Task { [weak self] in
@@ -256,7 +270,8 @@ final class PCCompanionModel: ObservableObject {
         while !Task.isCancelled, generation == epoch, foreground, let id = sessionID, let c = connection {
             do {
                 let value: PCRemoteEnvelope = try await request("/v1/sessions/\(id)?after=\(revision)", using: c)
-                try current(epoch); try apply(value); online = true; reconnecting = false; failures = 0; error = nil
+                try current(epoch); try apply(value); online = true; reconnecting = false; failures = 0
+                // Keep command errors visible: successful reading does not resolve a draft conflict.
             } catch {
                 if Task.isCancelled || generation != epoch || !foreground { return }
                 online = false
@@ -303,19 +318,23 @@ final class PCCompanionModel: ObservableObject {
         return (text, ack, edit, snap.documentId)
     }
     func syncDraft() async {
-        guard canWrite, let c = connection else { return }; working = true; defer { working = false }; error = nil
+        guard canWrite, let c = connection else { return }; working = true; writing = true; defer { working = false; writing = false }; error = nil
         do { _ = try await sync(c, epoch: generation); status = "草稿已同步，尚未发送" }
         catch { self.error = error.localizedDescription }
     }
     func send() async {
         guard canWrite, !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let c = connection else { return }
-        working = true; defer { working = false }; error = nil; let epoch = generation
+        working = true; writing = true; defer { working = false; writing = false }; error = nil; let epoch = generation
         do {
             let value = try await sync(c, epoch: epoch); try current(epoch)
             guard draft.revision == value.edit, draft.text == value.text, let id = sessionID,
                   let snap = snapshot, snap.documentId == value.document else { throw PCCompanionError(code: "draft_conflict", status: 409) }
             let command = PCPending(id: UUID().uuidString, text: value.text, revision: value.edit, conversation: snap.conversationId, server: c.identity)
-            pending = command; saveDraft() // Persist before the single Send request.
+            pending = command
+            guard saveDraft() else {
+                pending = nil
+                throw PCCompanionError(code: "local_receipt_storage_failed", status: 0)
+            } // Never send if the durable local reservation could not be saved.
             let receipt: PCReceipt = try await request("/v1/sessions/\(id)/commands", using: c, method: "POST", body: [
                 "commandId": command.id, "action": "send", "documentId": value.document, "baseDraftHash": value.hash, "text": value.text])
             resolve(receipt, using: c)
@@ -324,7 +343,7 @@ final class PCCompanionModel: ObservableObject {
     private func resolve(_ receipt: PCReceipt, using c: PCConnection) {
         guard let command = pending, command.id == receipt.commandId, command.server == c.identity else { return }
         if receipt.state == "done", receipt.result?.status == "sent_confirmed" {
-            draft.sent(text: command.text, editedAt: command.revision); pending = nil
+            draft.sent(text: command.text, editedAt: command.revision); pending = nil; error = nil
             defaults.removeObject(forKey: "PCCompanion.pendingSend"); status = "PC 网页已确认消息"
         } else if receipt.state == "failed" {
             pending = nil; error = receipt.result?.error ?? "发送未执行"; status = "请核对 PC 后再操作"
@@ -358,7 +377,7 @@ final class PCCompanionModel: ObservableObject {
     }
     func resume() async {
         foreground = true
-        guard !working, !reconnecting, !online, !fixture, !networkFixture || selected != nil else { return }
+        guard !working, !reconnecting, !online, !fixture, (!networkFixture || selected != nil) else { return }
         guard selected != nil else { restored = true; return }
         working = true; reconnecting = true; defer { working = false; reconnecting = false; restored = true }
         error = nil; generation &+= 1; let epoch = generation
@@ -391,6 +410,11 @@ struct PCCompanionView: View {
                     if !model.online { Button("重连") { Task { await model.resume() } }.font(.caption).disabled(model.working).accessibilityIdentifier("pc.remote.reconnect") }
                 }.padding(.horizontal).padding(.vertical, 8)
                 if let error = model.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal).accessibilityIdentifier("pc.remote.error") }
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--pc-companion-network-fixture") {
+                    Text(PCCompanionTestProtocol.counters).font(.caption2).accessibilityIdentifier("pc.fixture.counters")
+                }
+                #endif
                 if let snapshot = model.snapshot {
                     ScrollViewReader { proxy in
                         VStack(spacing: 0) {

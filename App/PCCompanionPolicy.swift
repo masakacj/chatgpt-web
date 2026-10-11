@@ -22,6 +22,11 @@ struct PCDraftBuffer: Codable {
             guard echo == hash else { return } // Late snapshot from before our edit.
             expectedEcho = nil
         }
+        // First pairing may keep locally typed text only against a confirmed
+        // empty PC editor; a preexisting PC draft must not be silently replaced.
+        if localEdits && owner == nil && baseHash == nil && remote.isEmpty {
+            owner = conversation; baseHash = hash
+        }
         guard !localEdits else { return }
         text = remote; baseHash = hash; owner = conversation
     }
@@ -36,7 +41,7 @@ struct PCDraftBuffer: Codable {
     }
     var hasLocalDraft: Bool { localEdits || !text.isEmpty }
     func canSelect(_ conversation: String) -> Bool {
-        !hasLocalDraft || owner == nil || owner == conversation
+        text.isEmpty || owner == nil || owner == conversation
     }
 }
 
