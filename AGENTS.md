@@ -6,6 +6,12 @@ User explicitly requires a ChatGPT-official-app-like native layout, arbitrary ac
 
 This is **planning only**, not evidence of an implemented feature or signed IPA. Verified current release remains **v0.6.0 Build 221** via install-center GET on 2026-10-11. New 0.6.1 Mobile Controls CI runs were failing/cancelled; do not mistake those for a release. Target v0.7.0 is provisional until validated end-to-end on a real paired iPhone. Retain existing PC extension, browser, NPM/WG channel, sending idempotency journals, WebKit fallback and user data. Never deploy from a draft without the explicit gates in the handoff.
 
+## ACTIVE WORKSTREAM — standalone PC Chrome Bridge extraction (2026-10-11)
+
+The user explicitly requested that the PC ChatGPT bridge Chrome extension be moved OUT OF the Orchestrator project and developed/maintained as an **independent Chrome extension and independent local Bridge Service**, with Orchestrator only an optional adapter. **Read \`docs/PC_CHROME_BRIDGE_DECOUPLING_HANDOFF.md\` FIRST** alongside \`docs/IOS_070_NATIVE_UX_PARITY_HANDOFF.md\`. Migration phases M0–M6 cover extension/source ownership, server 3211 split, optional 3210 executor adapter, Chrome extension ID stability, persistent pairing/journal and iOS v0.7.0 compatibility. This is a **PLAN ONLY**: current production extension, PID/service, Chrome profile, network route, and source ownership do NOT move until verified migration and handoff.
+
+Never install a second competing production extension, delete the existing \`chrome.storage.local\` state, reinitialize pairing key or command reservations, start two services writing 3211, or disrupt Orchestrator workflows. A new repository name and install directory remain proposals, not existing deployed resources. Do not claim independent operation until verified with Orchestrator off in a safe isolated test and then controlled real environment. Keep \`/v1/\` external origin and WebKit fallback unchanged. Any released iOS client must be reconciled against exactly tested Bridge service/protocol versions.
+
 ## Current iOS PC companion (2026-10-11)
 
 The user explicitly authorized the structured-PC native iOS client. Read `IOS_PC_COMPANION_050_HANDOFF.md` and `IOS_PC_COMPANION_RELEASE.json` FIRST for this feature. They supersede the old prototype notes saying the external channel or IPA is unavailable.
