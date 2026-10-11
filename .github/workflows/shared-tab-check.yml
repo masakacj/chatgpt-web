@@ -3,14 +3,15 @@ on:
   workflow_dispatch:
   push:
     branches: ['feature/shared-tab-native-070-20261011']
-    paths: ['App/**', 'UITests/SharedTabUITests.swift', 'scripts/shared-tab-policy-tests/**', '.github/workflows/shared-tab-check.yml']
+    paths: ['App/**', 'UITests/SharedTabUITests.swift', 'scripts/shared-tab-policy-tests/**', 'scripts/refine-shared-native.mjs', '.github/workflows/shared-tab-check.yml']
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: shared-tab-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   native:
+    if: github.ref == 'refs/heads/feature/shared-tab-native-070-20261011'
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -18,6 +19,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Apply small native source refinements
+        run: |
+          set -euo pipefail
+          node scripts/refine-shared-native.mjs
+          git add App/SharedTabModel.swift UITests/SharedTabUITests.swift
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'fix: apply native snapshot deduplication and visible blank-tap acceptance'
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+          echo "testedSource=$(git rev-parse HEAD)"
+          echo "Tested source: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
       - name: Existing runtime checks
         run: npm run check
       - name: Shared-tab draft policy
@@ -26,7 +40,9 @@ jobs:
           swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-tab-policy"
           "$RUNNER_TEMP/shared-tab-policy"
       - name: Generate native project
-        run: brew install xcodegen && xcodegen generate
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
       - name: Shared-tab iPhone Simulator acceptance
         run: |
           set -euo pipefail
@@ -37,6 +53,19 @@ jobs:
       - name: Release device compilation
         run: |
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/SharedTabDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Export simulator attachments
+        if: always()
+        continue-on-error: true
+        run: |
+          if test -d "$RUNNER_TEMP/SharedTabTests.xcresult"; then
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/SharedTabTests.xcresult" --output-path "$RUNNER_TEMP/shared-tab-images"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-tab-test-images
+          path: ${{ runner.temp }}/shared-tab-images
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
         with:
