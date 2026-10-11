@@ -9,7 +9,8 @@ struct PCCompanionRootView<WebContent: View>: View {
     }
     var body: some View {
         Group {
-            if remote {
+            let fixture = ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--pc-companion-fixture")
+            if remote || fixture {
                 PCCompanionView(returnToWeb: { remote = false })
             } else {
                 webContent().ignoresSafeArea()

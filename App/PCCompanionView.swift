@@ -109,7 +109,8 @@ final class PCCompanionModel: ObservableObject {
     @Published var capturedAt: Double = 0
     private var sessionId: String?
     private var revision = -1
-    private var baseDraftHash: String?
+    private var baseDraftHash: String? = UserDefaults.standard.string(forKey:"PCCompanion.draftBase")
+    private var draftOwner: String? = UserDefaults.standard.string(forKey:"PCCompanion.draftOwner")
     private var pollTask: Task<Void,Never>?
     private let redirect = PCNoRedirect()
     private lazy var transport: URLSession = {
@@ -125,6 +126,11 @@ final class PCCompanionModel: ObservableObject {
         return root.appendingPathComponent("PCCompanion/latest.json")
     }
     init() {
+        let fixtureEnabled=ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--pc-companion-fixture")
+        if fixtureEnabled {
+            snapshot=PCRemoteSnapshot(schema:1,documentId:"fixture",conversationId:"11111111-1111-4111-8111-111111111111",title:"PC 原生同步验收",messages:[PCRemoteMessage(id:"m1",role:"assistant",text:"已从 PC 同步的最新答案。手机原生界面无需加载完整网页。",blocks:[PCRemoteBlock(kind:"text",text:"已从 PC 同步的最新答案。")],links:[],truncated:false)],status:"completed",draft:"",draftHash:"fixture",canSend:false,composing:false,unsupportedTools:true,historyPartial:true)
+            status="本地快照 · 尚未连接 PC";return
+        }
         if let u=cacheURL,let data=try? Data(contentsOf:u),let cache=try? JSONDecoder().decode(PCSavedView.self,from:data) {
             snapshot=cache.snapshot;capturedAt=cache.capturedAt
             status="本地快照 · 尚未连接 PC"
@@ -166,7 +172,11 @@ final class PCCompanionModel: ObservableObject {
         }catch{self.error=error.localizedDescription;online=false}
     }
     func connect(_ tab:PCRemoteTab) async {
-        guard !working else{return};await disconnect();working=true;defer{working=false};error=nil
+        guard !working else{return}
+        if localDirty, !text.isEmpty, let draftOwner, draftOwner != tab.conversationId {
+            error="另一会话还有本地草稿，请先保存或清空；不会将它写入当前会话";return
+        }
+        await disconnect();working=true;defer{working=false};error=nil
         do {
             let result:PCRemoteEnvelope=try await request("/v1/sessions",method:"POST",body:["tabId":tab.tabId])
             sessionId=result.sessionId;online=true;apply(result)
@@ -203,6 +213,9 @@ final class PCCompanionModel: ObservableObject {
     func edited(_ value:String) {
         if !localDirty {baseDraftHash=snapshot?.draftHash}
         text=value;localDirty=true
+        if let id=snapshot?.conversationId {draftOwner=id}
+        UserDefaults.standard.set(draftOwner,forKey:"PCCompanion.draftOwner")
+        UserDefaults.standard.set(baseDraftHash,forKey:"PCCompanion.draftBase")
         UserDefaults.standard.set(value,forKey:"PCCompanion.localDraft")
     }
     @discardableResult
@@ -213,6 +226,7 @@ final class PCCompanionModel: ObservableObject {
             "commandId":UUID().uuidString,"action":"draft","documentId":snap.documentId,"baseDraftHash":base,"text":value])
         guard receipt.ok,receipt.result?.status=="draft_synced",let hash=receipt.result?.draftHash else {throw URLError(.cannotParseResponse)}
         baseDraftHash=hash
+        UserDefaults.standard.set(hash,forKey:"PCCompanion.draftBase")
         if text==value {localDirty=false}
         status="草稿已同步到 PC，尚未发送"
         return hash
@@ -240,7 +254,9 @@ final class PCCompanionModel: ObservableObject {
     private func resolve(_ receipt:PCCommandReceipt) {
         if receipt.state=="done",receipt.result?.status=="sent_confirmed" {
             pendingSend=nil;UserDefaults.standard.removeObject(forKey:"PCCompanion.pendingSend")
-            text="";localDirty=false;baseDraftHash=nil
+            text="";localDirty=false;baseDraftHash=nil;draftOwner=nil
+            UserDefaults.standard.removeObject(forKey:"PCCompanion.draftBase")
+            UserDefaults.standard.removeObject(forKey:"PCCompanion.draftOwner")
             UserDefaults.standard.removeObject(forKey:"PCCompanion.localDraft")
             status="PC 网页已确认收到消息"
         }else if receipt.state=="failed" {
@@ -269,7 +285,7 @@ final class PCCompanionModel: ObservableObject {
 
 struct PCCompanionView: View {
     @StateObject private var model=PCCompanionModel()
-    @State private var settings=true
+    @State private var settings = !ProcessInfo.processInfo.arguments.contains("--pc-companion-fixture")
     @Environment(\.scenePhase) private var scenePhase
     let returnToWeb: () -> Void
     var body: some View {
@@ -308,7 +324,7 @@ struct PCCompanionView: View {
                         else {Button("同步草稿"){Task{await model.syncDraft()}}.disabled(!model.online||model.working)}
                         Spacer()
                         Button("发送"){Task{await model.send()}}.buttonStyle(.borderedProminent)
-                            .disabled(!model.online||model.working||model.pendingSend != nil||model.text.isEmpty||model.snapshot?.canSend==false)
+                            .disabled(!model.online||model.working||model.pendingSend != nil||model.text.isEmpty||model.snapshot==nil||model.snapshot?.status=="running"||model.snapshot?.status=="waiting")
                     }
                 }.padding().background(.regularMaterial)
             }.navigationTitle(model.snapshot?.title ?? "PC 同步").navigationBarTitleDisplayMode(.inline)
