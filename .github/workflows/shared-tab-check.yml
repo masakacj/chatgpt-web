@@ -1,0 +1,45 @@
+name: Native Shared Tab Check
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/shared-tab-native-070-20261011']
+    paths: ['App/**', 'UITests/SharedTabUITests.swift', 'scripts/shared-tab-policy-tests/**', '.github/workflows/shared-tab-check.yml']
+permissions:
+  contents: read
+concurrency:
+  group: shared-tab-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Existing runtime checks
+        run: npm run check
+      - name: Shared-tab draft policy
+        run: |
+          set -euo pipefail
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-tab-policy"
+          "$RUNNER_TEMP/shared-tab-policy"
+      - name: Generate native project
+        run: brew install xcodegen && xcodegen generate
+      - name: Shared-tab iPhone Simulator acceptance
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for g in json.load(sys.stdin)["devices"].values() for d in g if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/SharedTabDerivedData" -resultBundlePath "$RUNNER_TEMP/SharedTabTests.xcresult" -parallel-testing-enabled NO -only-testing:ChatGPTWebUITests/SharedTabUITests -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Release device compilation
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/SharedTabDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-tab-simulator-result
+          path: ${{ runner.temp }}/SharedTabTests.xcresult
+          if-no-files-found: ignore
