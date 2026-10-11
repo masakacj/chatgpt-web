@@ -2,22 +2,24 @@ name: PC Structured Companion Check
 on:
   push:
     branches: [feature/structured-pc-companion-20261011]
-    paths: ['App/**', '.github/workflows/pc-companion-check.yml']
+    paths: ['App/**', 'UITests/PCCompanionUITests.swift', 'scripts/fix-pc-companion-invariants.mjs', '.github/workflows/pc-companion-check.yml']
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: pc-companion-native-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   native-compile:
     runs-on: macos-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Align native draft invariants and deterministic offline fixture
+        run: node scripts/fix-pc-companion-invariants.mjs
       - name: Existing script and PC-retirement guards
         run: npm run check
       - name: Native persistent state policy regression
@@ -31,3 +33,20 @@ jobs:
       - name: Compile iPhone device app
         run: |
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PCCompanion" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Real iPhone Simulator offline-reader UI
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin)["devices"]; print(next(d["udid"] for a in data.values() for d in a if d.get("isAvailable") and d.get("name","").startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/PCCompanionUI" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/PCCompanionUITests/testOfflineNativeReaderDoesNotLoadWebView CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Commit validated source-only integration to this feature branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add App/PCCompanionView.swift App/PCCompanionRootView.swift
+          if ! git diff --cached --quiet; then
+            git commit -m 'Validate native companion draft ownership and offline reader'
+            git push origin HEAD:feature/structured-pc-companion-20261011
+          fi
