@@ -2,7 +2,14 @@ import SwiftUI
 import Security
 import CryptoKit
 
-struct PCRemoteBlock: Codable { let kind: String; let text: String }
+// Optional semantic fields keep older 0.7.0 messages decodable. Every field
+// comes from elements already rendered in the bound PC ChatGPT page.
+struct PCRemoteBlock: Codable {
+    let kind: String
+    let text: String
+    var rows: [[String]]? = nil
+    var url: String? = nil
+}
 struct PCRemoteLink: Codable { let title: String; let url: String }
 struct PCRemoteMessage: Codable, Identifiable {
     let id: String; let role: String; let text: String
