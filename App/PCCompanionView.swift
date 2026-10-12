@@ -10,7 +10,14 @@ struct PCRemoteBlock: Codable {
     var rows: [[String]]? = nil
     var url: String? = nil
 }
-struct PCRemoteLink: Codable { let title: String; let url: String }
+struct PCRemoteLink: Codable {
+    let title: String
+    let url: String
+    // Server-generated, document-scoped reference to a visible PC anchor.
+    // Older peers omit these fields and remain decodable (PC-only fallback).
+    var interactionId: String? = nil
+    var interactionRevision: String? = nil
+}
 struct PCRemoteMessage: Codable, Identifiable {
     let id: String; let role: String; let text: String
     let blocks: [PCRemoteBlock]; let links: [PCRemoteLink]; let truncated: Bool
