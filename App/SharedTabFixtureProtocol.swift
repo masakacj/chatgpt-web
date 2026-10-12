@@ -63,6 +63,21 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         let title = current.isEmpty ? "新聊天" : current == a ? "测试对话 A" : current == b ? "历史对话 B" : "已创建的新聊天"
         var messages: [[String: Any]] = current.isEmpty ? [] : [message("u-" + current, "user", "测试提问"), message("a-" + current, "assistant", current == a ? "原生测试答案 A" : "原生历史答案 B")]
         if let sentText { messages.append(message("sent-user-\(sends)", "user", sentText)); messages.append(message("sent-answer-\(sends)", "assistant", "原生回复：" + sentText)) }
+        if args.contains("--shared-fixture-rich") {
+            messages.append([
+                "id": "fixture-rich-message", "role": "assistant", "text": "富内容验收",
+                "blocks": [
+                    ["kind": "heading", "text": "富内容验收"],
+                    ["kind": "table", "text": "Name Value Alpha 42", "rows": [["Name", "Value"], ["Alpha", "42"]]],
+                    ["kind": "code", "text": "print(42)"],
+                    ["kind": "quote", "text": "这是引用"],
+                    ["kind": "image", "text": "PC 私有图片", "url": ""],
+                    ["kind": "attachment", "text": "notes.pdf"]
+                ],
+                "links": [], "truncated": false
+            ])
+        }
+
         var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
         if let projectID { s["projectId"] = projectID }
         if args.contains("--shared-fixture-interaction") && interactionClicks == 0 {
