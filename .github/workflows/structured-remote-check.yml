@@ -1,0 +1,60 @@
+name: Structured Remote Desktop iOS Check
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/structured-remote-desktop-071-20261012']
+    paths:
+      - 'App/**'
+      - 'UITests/SharedTabUITests.swift'
+      - 'scripts/shared-tab-policy-tests/**'
+      - 'project.yml'
+      - '.github/workflows/structured-remote-check.yml'
+permissions:
+  contents: read
+concurrency:
+  group: remote-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Existing source checks
+        run: npm run check
+      - name: Local-draft safety regression
+        run: |
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-draft-policy"
+          "$RUNNER_TEMP/shared-draft-policy"
+      - name: Generate native Xcode project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Simulator native UI acceptance
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for g in json.load(sys.stdin)["devices"].values() for d in g if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/RemoteDesktopDerived" -resultBundlePath "$RUNNER_TEMP/RemoteDesktopUITests.xcresult" -parallel-testing-enabled NO -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Release device compilation
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/RemoteDesktopDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Export test report
+        if: always()
+        continue-on-error: true
+        run: |
+          if test -d "$RUNNER_TEMP/RemoteDesktopUITests.xcresult"; then
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/RemoteDesktopUITests.xcresult" --output-path "$RUNNER_TEMP/remote-desktop-images"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: remote-desktop-ui-evidence
+          path: |
+            ${{ runner.temp }}/RemoteDesktopUITests.xcresult
+            ${{ runner.temp }}/remote-desktop-images
+          if-no-files-found: ignore
