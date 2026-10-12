@@ -118,7 +118,7 @@ struct SharedTabScreen: View {
                                 }.frame(maxWidth: .infinity).padding(.top, 90)
                             }
                             ForEach(model.displayMessages) { message in
-                                STMessageView(message: message).id(message.id)
+                                STMessageView(message: message, onLink: { link in Task { await model.followRemoteLink(link) } }).id(message.id)
                             }
                             if model.thinking {
                                 HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中").foregroundStyle(.secondary) }
@@ -276,6 +276,7 @@ struct SharedTabScreen: View {
 
 private struct STMessageView: View {
     let message: PCRemoteMessage
+    let onLink: (PCRemoteLink) -> Void
     var body: some View {
         if message.role == "user" {
             HStack {
@@ -314,7 +315,17 @@ private struct STMessageView: View {
                         }
                     }
                 }
-                ForEach(message.links, id: \.url) { link in if let url = URL(string: link.url) { Link(link.title.isEmpty ? "打开链接" : link.title, destination: url).font(.footnote) } }
+                ForEach(Array(message.links.enumerated()), id: \.offset) { _, link in
+                    if link.interactionId != nil && link.interactionRevision != nil {
+                        Button { onLink(link) } label: {
+                            Label("在 PC 打开：" + (link.title.isEmpty ? "网页链接" : link.title), systemImage: "link")
+                                .font(.footnote)
+                        }.accessibilityIdentifier("shared.pcLink")
+                    } else {
+                        Label((link.title.isEmpty ? "网页链接" : link.title) + " · 请在 PC 查看", systemImage: "link")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 HStack {
                     Button { UIPasteboard.general.string = message.text } label: { Image(systemName: "doc.on.doc").font(.system(size: 14)) }.accessibilityLabel("复制消息")
                     if message.truncated { Text("此段已截断，完整内容请在 PC 查看").font(.caption2) }
