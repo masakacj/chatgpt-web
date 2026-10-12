@@ -136,6 +136,9 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["这是引用"].exists)
         XCTAssertTrue(app.staticTexts["notes.pdf"].exists)
         XCTAssertTrue(app.staticTexts["PC 私有图片 · 请在 PC 查看"].exists)
+        let remoteLink = app.buttons["shared.pcLink"].firstMatch
+        XCTAssertTrue(remoteLink.exists); remoteLink.tap()
+        wait("label CONTAINS '交互：1'", on: app.staticTexts["shared.fixture.counters"])
         XCTAssertEqual(app.webViews.count, 0)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
