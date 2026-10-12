@@ -74,7 +74,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                     ["kind": "image", "text": "PC 私有图片", "url": ""],
                     ["kind": "attachment", "text": "notes.pdf"]
                 ],
-                "links": [], "truncated": false
+                "links": [["title": "Help in PC", "url": "https://docs.example.test/help", "interactionId": "link-fixture-anchor-0001", "interactionRevision": "fixture-revision-link-001"]], "truncated": false
             ])
         }
 
