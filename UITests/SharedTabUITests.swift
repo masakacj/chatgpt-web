@@ -125,6 +125,20 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertEqual(app.webViews.count, 0)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
+    func testStructuredRemoteRichContentIsNativeAndPreservesFallbacks() throws {
+        let app = launch("--shared-fixture-rich")
+        let transcript = app.scrollViews["shared.transcript"]
+        transcript.swipeUp()
+        XCTAssertTrue(app.staticTexts["富内容验收"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Name"].exists)
+        XCTAssertTrue(app.staticTexts["Alpha"].exists)
+        XCTAssertTrue(app.staticTexts["print(42)"].exists)
+        XCTAssertTrue(app.staticTexts["这是引用"].exists)
+        XCTAssertTrue(app.staticTexts["notes.pdf"].exists)
+        XCTAssertTrue(app.staticTexts["PC 私有图片 · 请在 PC 查看"].exists)
+        XCTAssertEqual(app.webViews.count, 0)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
     func testExplicitInteractionRequiresConfirmationAndExecutesOnce() throws {
         let app = launch("--shared-fixture-interaction")
         let action = app.buttons["允许一次"]
