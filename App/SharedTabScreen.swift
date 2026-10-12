@@ -280,8 +280,16 @@ private struct STMessageView: View {
         if message.role == "user" {
             HStack {
                 Spacer(minLength: 42)
-                Text(message.text).textSelection(.enabled).padding(.horizontal, 16).padding(.vertical, 12)
-                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22))
+                VStack(alignment: .leading, spacing: 8) {
+                    if !message.text.isEmpty {
+                        Text(message.text).textSelection(.enabled)
+                    }
+                    ForEach(Array(message.blocks.enumerated()).filter { ["image", "attachment"].contains($0.element.kind) }, id: \.offset) { _, block in
+                        STRemoteMediaBlock(block: block)
+                    }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22))
             }.frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             VStack(alignment: .leading, spacing: 10) {
@@ -289,9 +297,17 @@ private struct STMessageView: View {
                 else {
                     ForEach(Array(message.blocks.enumerated()), id: \.offset) { _, block in
                         switch block.kind {
-                        case "code", "table":
-                            ScrollView(.horizontal) { Text(block.text).font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12) }
-                                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                        case "code":
+                            ScrollView(.horizontal) {
+                                Text(block.text).font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12)
+                            }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                        case "table":
+                            STRemoteTableBlock(block: block)
+                        case "image", "attachment":
+                            STRemoteMediaBlock(block: block)
+                        case "quote":
+                            Text(block.text).foregroundStyle(.secondary).padding(.leading, 12)
+                                .overlay(alignment: .leading) { Rectangle().fill(.quaternary).frame(width: 3) }
                         case "heading": Text(block.text).font(.title3.weight(.semibold)).textSelection(.enabled)
                         case "list": HStack(alignment: .top, spacing: 8) { Text("•"); Text(LocalizedStringKey(block.text)).textSelection(.enabled) }
                         default: Text(LocalizedStringKey(block.text)).textSelection(.enabled).lineSpacing(5)
@@ -304,6 +320,72 @@ private struct STMessageView: View {
                     if message.truncated { Text("此段已截断，完整内容请在 PC 查看").font(.caption2) }
                 }.foregroundStyle(.secondary).padding(.top, 3)
             }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+ 
+// Only images with a usable HTTPS URL are fetched on the phone. Unavailable
+// PC blob/auth-only media are still represented, not silently dropped.
+private struct STRemoteMediaBlock: View {
+    let block: PCRemoteBlock
+    var body: some View {
+        if block.kind == "image" {
+            if let raw = block.url, let remote = URL(string: raw),
+               remote.scheme == "https", remote.user == nil, remote.password == nil,
+               let host = remote.host, host.contains(".") {
+                AsyncImage(url: remote) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFit().frame(maxHeight: 320)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    } else {
+                        Label(block.text.isEmpty ? "图片" : block.text, systemImage: "photo")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+                .accessibilityLabel(block.text.isEmpty ? "PC 网页图片" : block.text)
+            } else {
+                Label(block.text.isEmpty ? "仅 PC 可查看的图片" : block.text + " · 请在 PC 查看", systemImage: "photo")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        } else {
+            Label(block.text, systemImage: "doc")
+                .font(.footnote).foregroundStyle(.secondary)
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+private struct STRemoteTableBlock: View {
+    let block: PCRemoteBlock
+    var body: some View {
+        if let rows = block.rows, !rows.isEmpty {
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                        HStack(spacing: 0) {
+                            ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                Text(cell).font(rowIndex == 0 ? .subheadline.weight(.semibold) : .subheadline)
+                                    .textSelection(.enabled)
+                                    .frame(minWidth: 130, maxWidth: 200, alignment: .leading)
+                                    .padding(.horizontal, 10).padding(.vertical, 9)
+                            }
+                        }
+                        .background(rowIndex == 0 ? Color(uiColor: .tertiarySystemFill) : Color.clear)
+                        .overlay(alignment: .bottom) { Rectangle().fill(.quaternary).frame(height: 0.5) }
+                    }
+                }
+            }
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        } else {
+            ScrollView(.horizontal) {
+                Text(block.text).font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled).padding(12)
+            }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 }
