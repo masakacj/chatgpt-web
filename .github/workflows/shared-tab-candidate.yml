@@ -60,7 +60,7 @@ jobs:
           GH_RUN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          curl -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
+          curl --retry 6 --retry-all-errors --retry-delay 2 --max-time 20 -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
           curl --fail-with-body --max-time 240 -X POST \
             -H "Authorization: Bearer $GH_RUN_TOKEN" \
             -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
@@ -70,7 +70,7 @@ jobs:
             -H 'Content-Type: application/octet-stream' \
             --data-binary @dist/candidate-unsigned.ipa \
             'https://ipa.78175132.xyz/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
-          curl -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-after.json
+          curl --retry 6 --retry-all-errors --retry-delay 2 --max-time 20 -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-after.json
           python3 - <<'PY'
           import json,os
           from pathlib import Path
