@@ -1,0 +1,124 @@
+name: Native Shared Tab Candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/shared-tab-native-070-20261011']
+    paths: ['.github/workflows/shared-tab-candidate.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: shared-tab-signed-candidate
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/shared-tab-native-070-20261011'
+    runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      ACCEPTED_SOURCE: b33b1d99f9c240261ae2983ecefa583c64e2363a
+      ACCEPTED_RUN: '38153702824'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify unchanged accepted native source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh run view "$ACCEPTED_RUN" --json conclusion --jq .conclusion)" = success
+          git diff --exit-code "$ACCEPTED_SOURCE" HEAD -- App UITests Resources SafariScriptAction safari scripts project.yml package.json package-lock.json
+          gh run view "$ACCEPTED_RUN" --log | grep -F "testedSource=$ACCEPTED_SOURCE"
+          echo "Native source matches the 8/8 Simulator and 24-assertion accepted source $ACCEPTED_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate native policies and existing resources
+        run: |
+          set -euo pipefail
+          npm run check
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-policy"
+          "$RUNNER_TEMP/shared-policy"
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Compile and package candidate
+        run: |
+          set -euo pipefail
+          VERSION=0.7.0
+          BUILD="$GITHUB_RUN_NUMBER"
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CandidateDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" build
+          APP="$RUNNER_TEMP/CandidateDevice/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = com.masakacj.chatgptweb
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
+      - name: Sign into candidate channel only
+        env:
+          GH_RUN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
+          curl --fail-with-body --max-time 240 -X POST \
+            -H "Authorization: Bearer $GH_RUN_TOKEN" \
+            -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
+            -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" \
+            -H "X-GitHub-Sha: $GITHUB_SHA" \
+            -H 'X-App-Key: chatgpt-web' \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @dist/candidate-unsigned.ipa \
+            'https://ipa.78175132.xyz/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
+          curl -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-after.json
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          before=json.loads(Path('dist/stable-before.json').read_text())
+          after=json.loads(Path('dist/stable-after.json').read_text())
+          result=json.loads(Path('dist/candidate-sign-result.json').read_text())
+          assert before==after, 'Stable latest changed during candidate signing'
+          assert result['ok'] and result['channel']=='candidate' and result['promoted'] is False
+          assert result['source_sha']==os.environ['GITHUB_SHA']
+          assert result['bundle_id']=='com.masakacj.chatgptweb' and result['version']=='0.7.0'
+          print(json.dumps({'candidate':result['install_page'],'version':result['version'],'build':result['build'],'stableUnchanged':True}))
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('\nSigned candidate: '+result['install_page']+'\n\nStable latest unchanged. Physical iPhone acceptance is still pending.\n')
+          PY
+      - name: Verify signed archive and manifest
+        run: |
+          set -euo pipefail
+          MANIFEST=$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["manifest_url"])')
+          IPA=$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["ipa_url"])')
+          curl -fsS "$MANIFEST" > dist/candidate-manifest.plist
+          curl -fsS "$IPA" > dist/candidate-signed.ipa
+          python3 - <<'PY'
+          import json,plistlib,zipfile,hashlib
+          from pathlib import Path
+          result=json.loads(Path('dist/candidate-sign-result.json').read_text())
+          manifest=plistlib.loads(Path('dist/candidate-manifest.plist').read_bytes())
+          assert manifest['items'][0]['assets'][0]['url']==result['ipa_url']
+          with zipfile.ZipFile('dist/candidate-signed.ipa') as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              info=plistlib.loads(z.read('Payload/ChatGPTWeb.app/Info.plist'))
+              assert info['CFBundleIdentifier']==result['bundle_id']
+              assert info['CFBundleShortVersionString']==result['version']
+              assert str(info['CFBundleVersion'])==str(result['build'])
+              assert 'Payload/ChatGPTWeb.app/embedded.mobileprovision' in names
+              assert 'Payload/ChatGPTWeb.app/_CodeSignature/CodeResources' in names
+              assert 'Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/_CodeSignature/CodeResources' in names
+              assert 'Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/embedded.mobileprovision' in names
+          digest=hashlib.sha256(Path('dist/candidate-signed.ipa').read_bytes()).hexdigest()
+          Path('dist/candidate-verification.json').write_text(json.dumps({'bundleId':info['CFBundleIdentifier'],'version':info['CFBundleShortVersionString'],'build':str(info['CFBundleVersion']),'sha256':digest,'zipCRC':True,'appAndExtensionSigned':True,'physicalIPhoneAccepted':False},indent=2))
+          print('Candidate archive, manifest, app and extension signature presence verified')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-shared-tab-candidate
+          path: |
+            dist/candidate-signed.ipa
+            dist/*.json
+            dist/candidate-manifest.plist
+          if-no-files-found: ignore
