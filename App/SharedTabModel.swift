@@ -359,6 +359,16 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             if receipt.state == "failed" || receipt.result?.status == "interaction_clicked" { actionPending = nil; save() }
         }
     }
+    func followRemoteLink(_ link: PCRemoteLink) async {
+        guard let id = link.interactionId, let revision = link.interactionRevision,
+              !id.isEmpty, !revision.isEmpty else {
+            error = "当前链接未能映射到 PC 网页，请在电脑上操作。"
+            return
+        }
+        let action = PCInteractionButton(id: id, label: link.title, revision: revision,
+                                         disabled: false, requiresConfirmation: false)
+        await interact(action, document: snapshot?.documentId ?? "")
+    }
     func interact(_ button: PCInteractionButton, document: String) async {
         guard online, !busy, actionPending == nil, let c = connection, let id = sessionID, let snap = snapshot, snap.documentId == document else { error = STError(code: "pc_route_changed").localizedDescription; return }
         busy = true; defer { busy = false }; let pending = STActionPending(id: UUID().uuidString, server: c.identity, conversation: snap.conversationId); actionPending = pending
