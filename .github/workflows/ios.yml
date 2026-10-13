@@ -1,13 +1,18 @@
-name: Current iOS 0.7.2 Source Check
+name: iOS Product Source Check
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'cleanup/current-072-20261013']
+    branches: ['main', 'cleanup/current-072-20261013', 'feature/web-optimized-010-20261013']
     paths:
       - 'App/**'
       - 'Resources/**'
       - 'SafariScriptAction/**'
       - 'safari/chatgpt-safari.user.js'
+      - 'OptimizedApp/**'
+      - 'OptimizedResources/**'
+      - 'OptimizedTests/**'
+      - 'OptimizedUITests/**'
+      - 'Contracts/**'
       - 'UITests/**'
       - 'scripts/**'
       - 'package.json'
@@ -16,20 +21,20 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ios-current-check-${{ github.ref }}
+  group: ios-product-check-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   validate-build:
     runs-on: macos-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Current embedded web script and source checks
+      - name: Source, userscript, target-boundary and CM contract checks
         run: npm run check
-      - name: Existing local-draft and fallback policy checks
+      - name: Existing mirror policy checks
         run: |
           set -euo pipefail
           swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-draft-policy"
@@ -42,20 +47,32 @@ jobs:
         run: |
           command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate
-      - name: Native shared-tab simulator regression
+      - name: Boot simulator
+        id: simulator
         run: |
           set -euo pipefail
           UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/CurrentReleaseSimulator" -resultBundlePath "$RUNNER_TEMP/CurrentReleaseTests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
-      - name: Current iPhone Release compilation (never signs or promotes)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+      - name: Mirror shared-tab simulator regression
         run: |
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.2 CURRENT_PROJECT_VERSION=4 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-      - name: Upload native simulator evidence
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=${{ steps.simulator.outputs.udid }}" -derivedDataPath "$RUNNER_TEMP/MirrorSimulator" -resultBundlePath "$RUNNER_TEMP/MirrorTests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Web Optimized unit and UI tests
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Debug -sdk iphonesimulator -destination "id=${{ steps.simulator.outputs.udid }}" -derivedDataPath "$RUNNER_TEMP/OptimizedSimulator" -resultBundlePath "$RUNNER_TEMP/OptimizedTests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Mirror iPhone Release compilation
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/MirrorDevice" MARKETING_VERSION=0.7.2 CURRENT_PROJECT_VERSION=4 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Web Optimized iPhone Release compilation
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/OptimizedDevice" MARKETING_VERSION=0.1.0 CURRENT_PROJECT_VERSION=1 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Upload simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: current-072-native-simulator
-          path: ${{ runner.temp }}/CurrentReleaseTests.xcresult
+          name: ios-product-simulator-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/MirrorTests.xcresult
+            ${{ runner.temp }}/OptimizedTests.xcresult
           if-no-files-found: ignore

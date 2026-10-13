@@ -1,0 +1,493 @@
+{
+  "schema": 1,
+  "cmProtocol": 2,
+  "cmVersion": "0.2.2",
+  "cases": [
+    {
+      "name": "native-running",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "running",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_active"
+      ],
+      "task": "running",
+      "read": "unknown"
+    },
+    {
+      "name": "completion-waits-for-answer",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "running",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e2",
+          "at": 1791856000020,
+          "sequence": 2,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_active",
+        "completion_waiting_for_answer"
+      ],
+      "task": "running",
+      "read": "unknown"
+    },
+    {
+      "name": "visible-completion-is-read",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": true,
+          "visible": true,
+          "selected": true,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_completed_read"
+      ],
+      "task": "completed",
+      "read": "read"
+    },
+    {
+      "name": "submit-rejects-old-answer",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": true,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "submit",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "pending-2",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e2",
+          "at": 1791856000020,
+          "sequence": 2,
+          "nativeStatus": "unknown",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e3",
+          "at": 1791856000030,
+          "sequence": 3,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": true,
+          "visible": true,
+          "selected": true,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_completed",
+        "submission_observed",
+        "previous_turn_after_submit"
+      ],
+      "task": "running",
+      "read": "unknown"
+    },
+    {
+      "name": "duplicate-event-id",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "running",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000020,
+          "sequence": 2,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": true,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_active",
+        "duplicate"
+      ],
+      "task": "running",
+      "read": "unknown"
+    },
+    {
+      "name": "wrong-owner-generation",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "running",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0002",
+          "eventId": "e2",
+          "at": 1791856000020,
+          "sequence": 2,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": true,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_active",
+        "wrong_owner_generation"
+      ],
+      "task": "running",
+      "read": "unknown"
+    },
+    {
+      "name": "stale-document-sequence",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e2",
+          "at": 1791856000020,
+          "sequence": 2,
+          "nativeStatus": "running",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "late",
+          "at": 1791856000030,
+          "sequence": 1,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": true,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_active",
+        "stale_sequence"
+      ],
+      "task": "running",
+      "read": "unknown"
+    },
+    {
+      "name": "terminal-regression",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "completed",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": true,
+          "visible": true,
+          "selected": true,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e2",
+          "at": 1791856000020,
+          "sequence": 2,
+          "nativeStatus": "running",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_completed_read",
+        "terminal_regression_unverified"
+      ],
+      "task": "completed",
+      "read": "read"
+    },
+    {
+      "name": "restore-running-becomes-unknown",
+      "events": [
+        {
+          "kind": "restore",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "unknown",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "running",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "legacy_imported"
+      ],
+      "task": "unknown",
+      "read": "unknown"
+    },
+    {
+      "name": "explicit-stop",
+      "events": [
+        {
+          "kind": "native",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e1",
+          "at": 1791856000010,
+          "sequence": 1,
+          "nativeStatus": "running",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        },
+        {
+          "kind": "stop",
+          "conversationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "turnKey": "turn-1",
+          "documentId": "doc-1",
+          "ownerGeneration": "owner-generation-0001",
+          "eventId": "e2",
+          "at": 1791856000020,
+          "sequence": 2,
+          "nativeStatus": "unknown",
+          "nativeSpinner": false,
+          "nativeSpinnerOff": false,
+          "nativeUnread": false,
+          "answerReady": false,
+          "visible": false,
+          "selected": false,
+          "newTurn": false,
+          "activeGenerationControl": false,
+          "restoredStatus": "unknown",
+          "restoredRead": "unknown"
+        }
+      ],
+      "decisions": [
+        "native_active",
+        "stop_observed"
+      ],
+      "task": "stopped",
+      "read": "unknown"
+    }
+  ]
+}

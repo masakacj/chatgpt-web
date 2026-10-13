@@ -8,6 +8,12 @@ This repository contains the **current iOS app**. Historical experiments, one-of
 **Exactly signed and verified application source:** `8440857cf0bf485ce79d408b74b8380069eb08dc`  
 **Verified signing pipeline:** [GitHub Actions run 38327609864](https://github.com/masakacj/chatgpt-web/actions/runs/38327609864).
 
+## Planned independent Web Optimized app
+
+A second side-by-side product is approved for this repository: **ChatGPT Web Optimized**, target `ChatGPTWebOptimized`, bundle `com.masakacj.chatgptweb.optimized`. It will be a WKWebView-only app with independent login/data/signing/release and no SharedTab/PC Bridge or Safari code. This is currently planning/handoff only—no target, runtime, candidate or signed app exists yet.
+
+Start with [the implementation handoff](docs/optimized/IMPLEMENTATION_HANDOFF.md), [product contract](docs/optimized/PRODUCT_CONTRACT.md), [execution plan](docs/optimized/EXECUTION_PLAN.md), [architecture](docs/optimized/ARCHITECTURE.md), [acceptance plan](docs/optimized/ACCEPTANCE_PLAN.md), and [development status](DEVELOPMENT_STATUS.json). The existing 0.7.2 mirror remains frozen until the optimized app passes physical-device acceptance.
+
 ## How it works
 
 The iPhone's native SwiftUI interface is a **structured remote desktop** for an explicitly paired **PC Chrome ChatGPT tab**. The PC webpage is the sole execution and message source. The phone mirrors already-mounted page content and sends deliberate interactions back to that same tab. No automatic history crawling, second ChatGPT chat database, or background webpage takeover.

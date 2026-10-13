@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "cmProtocol": 2,
+  "cmVersion": "0.2.2",
+  "corpusVersion": 1,
+  "files": {
+    "reducer-cases.json": "76b90d0302abe38c9fc4dd73952d55dd0b6a52d2f12649bd2d3d8a7e6f5e2ff9",
+    "recovery-cases.json": "162f7e4732319081606c4fd28bacc98f21c888c1ee6bb9e8dedea399f5319fa5",
+    "upstream.json": "4fd658a294359c8e9f18583ad66fb51d35433cda0da7e5b9600863e952432093"
+  }
+}

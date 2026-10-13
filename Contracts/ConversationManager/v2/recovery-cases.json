@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "name": "allow-clean-current-panel",
+      "visible": true,
+      "loadError": true,
+      "canRetry": true,
+      "hasDraft": false,
+      "running": false,
+      "waiting": false,
+      "hasAnswer": false,
+      "recoveryCanceled": false,
+      "expected": "allow"
+    },
+    {
+      "name": "draft-blocks",
+      "visible": true,
+      "loadError": true,
+      "canRetry": true,
+      "hasDraft": true,
+      "running": false,
+      "waiting": false,
+      "hasAnswer": false,
+      "recoveryCanceled": false,
+      "expected": "interactive_or_answer_present"
+    },
+    {
+      "name": "running-blocks",
+      "visible": true,
+      "loadError": true,
+      "canRetry": true,
+      "hasDraft": false,
+      "running": true,
+      "waiting": false,
+      "hasAnswer": false,
+      "recoveryCanceled": false,
+      "expected": "interactive_or_answer_present"
+    },
+    {
+      "name": "missing-button-blocks",
+      "visible": true,
+      "loadError": true,
+      "canRetry": false,
+      "hasDraft": false,
+      "running": false,
+      "waiting": false,
+      "hasAnswer": false,
+      "recoveryCanceled": false,
+      "expected": "native_retry_unavailable"
+    }
+  ]
+}

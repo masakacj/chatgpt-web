@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "updatedAt": "2026-10-13T12:05:00+08:00",
+  "repository": "masakacj/chatgpt-web",
+  "planningOnly": false,
+  "mirror": {
+    "status": "frozen",
+    "mainSha": "fac5b7873ff0e7b643187ad1f852a234dec767e1",
+    "signedSourceSha": "8440857cf0bf485ce79d408b74b8380069eb08dc",
+    "version": "0.7.2",
+    "build": 4,
+    "bundleId": "com.masakacj.chatgptweb",
+    "ipa": {
+      "id": "12112229-485f-49e1-afba-896caa875853",
+      "preserved": true,
+      "sha256": null,
+      "bytes": null,
+      "signingWorkflow": 38327609864,
+      "profileVerified": false,
+      "entitlementsVerified": false
+    },
+    "tests": [],
+    "rollbackVerified": false,
+    "handoff": "docs/mirror/MIRROR_072_SIGNED_BASELINE.md"
+  },
+  "optimized": {
+    "status": "implementing",
+    "displayName": "ChatGPT Web Optimized",
+    "target": "ChatGPTWebOptimized",
+    "bundleId": "com.masakacj.chatgptweb.optimized",
+    "version": "0.1.0",
+    "build": 1,
+    "platform": "iOS 17+ iPhone",
+    "route": "WKWebView only",
+    "independentLoginAndData": true,
+    "includesMirrorOrBridge": false,
+    "includesSafari": false,
+    "contract": {
+      "cmProtocol": 2,
+      "cmVersion": "0.2.2",
+      "corpusVersion": 1,
+      "corpusSha256": null,
+      "pcConsumerSha": null
+    },
+    "phases": {
+      "F0": {
+        "state": "in_progress",
+        "evidence": [
+          "docs/mirror/MIRROR_072_SIGNED_BASELINE.md"
+        ],
+        "remaining": [
+          "signed IPA hash and size",
+          "certificate and provisioning metadata",
+          "mirror test result bundle",
+          "rollback rehearsal evidence"
+        ]
+      },
+      "F1": {
+        "state": "in_progress",
+        "evidence": [
+          "project.yml",
+          "scripts/check-target-boundaries.mjs",
+          "OptimizedApp/",
+          "OptimizedResources/"
+        ]
+      },
+      "F2": {
+        "state": "in_progress",
+        "evidence": [
+          "Contracts/ConversationManager/v2/manifest.json",
+          "OptimizedApp/ConversationManager/CMReducer.swift",
+          "OptimizedTests/CMContractTests.swift"
+        ]
+      },
+      "F3": {
+        "state": "in_progress",
+        "evidence": [
+          "OptimizedApp/Web/OptimizedWebView.swift",
+          "OptimizedResources/Observation/conversation-observer.js"
+        ]
+      },
+      "F4": {
+        "state": "in_progress",
+        "evidence": [
+          "OptimizedApp/ConversationManager/ManualRecoveryPolicy.swift",
+          "OptimizedApp/Application/ChatGPTWebOptimizedApp.swift"
+        ]
+      },
+      "F5": {
+        "state": "not_started",
+        "evidence": []
+      }
+    },
+    "signing": {
+      "appIdCreated": false,
+      "signerKeyCreated": false,
+      "archiveSha256": null,
+      "workflowRun": null,
+      "candidateId": null,
+      "entitlementsVerified": false
+    },
+    "physicalDeviceAcceptance": {
+      "requiredBeforeStable": true,
+      "deviceModel": null,
+      "iosVersion": null,
+      "passedCases": [],
+      "failedCases": []
+    },
+    "rollback": {
+      "artifactPreserved": false,
+      "rehearsed": false
+    },
+    "openRisks": [
+      "WKWebView has no chrome.webRequest-equivalent evidence for internal saved-conversation GETs",
+      "signed mirror IPA/profile/hash baseline is not yet fully captured",
+      "PC CM corpus has not yet been published as a traceable shared fixture",
+      "physical iPhone Web Optimized behavior and performance are untested"
+    ],
+    "handoff": "docs/optimized/IMPLEMENTATION_HANDOFF.md"
+  },
+  "mirrorCleanup": {
+    "status": "blocked_until_optimized_acceptance",
+    "sourceSha": null,
+    "plannedVersion": "0.7.3",
+    "plannedBuild": 5,
+    "removedComponents": [],
+    "tests": [],
+    "handoff": "docs/mirror/MIRROR_CLEANUP_HANDOFF_073.md"
+  }
+}

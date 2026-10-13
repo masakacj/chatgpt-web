@@ -1,0 +1,12 @@
+{
+  "source": "local mcpoffice PC Bridge",
+  "cmProtocol": 2,
+  "cmVersion": "0.2.2",
+  "files": {
+    "core/events.js": "e034498b0c2aafad0f6bc4b273bf39517a7cfd580960c81c7ea386b1262cae9d",
+    "core/state-reducer.js": "c3025ad5a46a60db71873453d36ed227b5cddc5457330c6933f9633feaf95423",
+    "core/recovery-policy.js": "f514b2ab350af95d87a8844f5ea1bcb8e37bbfbe7182c3e7e8416c35b44da031"
+  },
+  "gitCommit": null,
+  "note": "Local PC CM source is not yet published as a traceable Git commit; hashes are planning/development evidence only."
+}
