@@ -12,6 +12,7 @@ struct ChatGPTWebOptimizedApp: App {
 struct OptimizedRootView: View {
     @StateObject private var model = OptimizedAppModel()
     @StateObject private var owner = ConversationManagerOwner()
+    @StateObject private var telemetry = OptimizedTelemetry()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -33,7 +34,7 @@ struct OptimizedRootView: View {
             .frame(height: 36)
             .background(.regularMaterial)
 
-            OptimizedWebView(model: model, owner: owner)
+            OptimizedWebView(model: model, owner: owner, telemetry: telemetry)
                 .id(model.webViewGeneration)
         }
         .sheet(isPresented: $model.diagnosticsEnabled) {
@@ -43,6 +44,23 @@ struct OptimizedRootView: View {
                     LabeledContent("修订版本", value: String(owner.projection.revision))
                     LabeledContent("网页状态", value: model.status)
                     LabeledContent("网页恢复次数", value: String(model.recoveryAttempts))
+                    Section("远程诊断 · Cloudflare") {
+                        Toggle("自动采集诊断事件", isOn: $telemetry.isEnabled)
+                        LabeledContent("上传状态", value: telemetry.state)
+                        LabeledContent("待上传", value: String(telemetry.pendingCount))
+                        LabeledContent("最近事件", value: telemetry.lastEvent)
+                        if let last = telemetry.lastSuccess {
+                            LabeledContent("最近成功", value: last.formatted(date: .abbreviated,
+                                                                            time: .standard))
+                        }
+                        LabeledContent("会话编号", value: telemetry.sessionId)
+                        Button("立即发送待上传事件") { telemetry.flush(force: true) }
+                            .disabled(!telemetry.isEnabled || telemetry.pendingCount == 0)
+                        ShareLink("分享本地诊断摘要", item: telemetry.localReport)
+                        Text("只记录错误码、网页类型、终止与恢复事件；不读取聊天正文、URL、Cookie 或 Token。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .navigationTitle("诊断")
                 .navigationBarTitleDisplayMode(.inline)
@@ -74,6 +92,7 @@ struct OptimizedRootView: View {
             Button("稍后", role: .cancel) {}
             Button("重新创建网页") {
                 owner.invalidateDocument(processTerminated: true)
+                telemetry.record(.manualRecovery, urgent: true)
                 model.rebuildAfterConfirmation()
             }
         } message: {
@@ -81,6 +100,22 @@ struct OptimizedRootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             owner.setAppActive(phase == .active)
+            if phase == .active {
+                telemetry.record(.foreground)
+                telemetry.flush()
+            } else if phase == .background {
+                telemetry.record(.background, urgent: true)
+            }
+        }
+        .onAppear {
+            telemetry.record(.launch, urgent: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            telemetry.record(.memoryWarning, urgent: true)
+        }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            telemetry.periodicTick(isActive: scenePhase == .active)
         }
     }
 }
