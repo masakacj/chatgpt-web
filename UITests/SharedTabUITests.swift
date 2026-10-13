@@ -154,7 +154,7 @@ final class SharedTabUITests: XCTestCase {
         let endpoint = app.textFields["HTTPS 服务地址"]
         XCTAssertTrue(endpoint.waitForExistence(timeout: 8))
         wait("value == 'https://chatgpt-bridge-test.78175132.xyz'", on: endpoint)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS 'PC 13213'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS '127.0.0.1:13213/local/pair'")).firstMatch.exists)
         XCTAssertEqual(app.webViews.count, 0)
     }
     func testExplicitInteractionRequiresConfirmationAndExecutesOnce() throws {
