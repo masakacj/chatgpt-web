@@ -1,8 +1,8 @@
-name: Current iOS 0.7.2 Source Check
+name: Mirror iOS Native UX 0.7.4 Source Check
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'cleanup/current-072-20261013', 'fix/mirror-send-state-*']
+    branches: ['main', 'cleanup/current-072-20261013', 'fix/mirror-send-state-*', 'feature/mirror-ux-074-*']
     paths:
       - 'App/**'
       - 'Resources/**'
@@ -34,6 +34,8 @@ jobs:
           set -euo pipefail
           swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-draft-policy"
           "$RUNNER_TEMP/shared-draft-policy"
+          swiftc App/SharedResourcePolicy.swift scripts/shared-resource-policy-tests/main.swift -o "$RUNNER_TEMP/shared-resource-policy"
+          "$RUNNER_TEMP/shared-resource-policy"
           swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/pc-policy"
           "$RUNNER_TEMP/pc-policy"
           swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-parity"
@@ -51,11 +53,11 @@ jobs:
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/CurrentReleaseSimulator" -resultBundlePath "$RUNNER_TEMP/CurrentReleaseTests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
       - name: Current iPhone Release compilation (never signs or promotes)
         run: |
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.2 CURRENT_PROJECT_VERSION=4 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.4 CURRENT_PROJECT_VERSION=6 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Upload native simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: current-072-native-simulator
+          name: mirror-074-native-simulator
           path: ${{ runner.temp }}/CurrentReleaseTests.xcresult
           if-no-files-found: ignore
