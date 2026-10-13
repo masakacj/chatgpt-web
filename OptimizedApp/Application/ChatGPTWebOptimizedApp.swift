@@ -39,7 +39,7 @@ struct OptimizedRootView: View {
         .sheet(isPresented: $model.diagnosticsEnabled) {
             NavigationStack {
                 List {
-                    LabeledContent("任务状态", value: owner.projection.task.rawValue)
+                    LabeledContent("任务状态", value: owner.projection.task.rawValue == "unknown" ? "尚未检测到任务状态" : owner.projection.task.rawValue)
                     LabeledContent("修订版本", value: String(owner.projection.revision))
                     LabeledContent("网页状态", value: model.status)
                     LabeledContent("网页恢复次数", value: String(model.recoveryAttempts))
