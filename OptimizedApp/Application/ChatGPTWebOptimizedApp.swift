@@ -15,43 +15,44 @@ struct OptimizedRootView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        ZStack(alignment: .top) {
-            OptimizedWebView(model: model, owner: owner)
-                .id(model.webViewGeneration)
-                .ignoresSafeArea()
-            if model.diagnosticsEnabled {
-                HStack(spacing: 8) {
-                    Text(owner.projection.task.rawValue)
-                    Text("r\(owner.projection.revision)")
-                    Text(model.status)
-                    Spacer()
-                    Button("关闭诊断") { model.diagnosticsEnabled = false }
-                }
-                .font(.caption.monospaced())
-                .padding(10)
-                .background(.ultraThinMaterial)
-                .padding(.top, 8)
-                .padding(.horizontal, 10)
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            VStack(alignment: .trailing, spacing: 8) {
-                if let file = model.downloadedFile {
-                    ShareLink(item: file) {
-                        Label("导出下载", systemImage: "square.and.arrow.up")
-                            .padding(10).background(.regularMaterial, in: Capsule())
-                    }
-                }
+        VStack(spacing: 0) {
+            HStack {
+                Text("ChatGPT")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
                 Button {
-                    model.diagnosticsEnabled.toggle()
+                    model.diagnosticsEnabled = true
                 } label: {
                     Image(systemName: "stethoscope")
-                        .frame(width: 40, height: 40)
-                        .background(.regularMaterial, in: Circle())
+                        .frame(width: 36, height: 32)
                 }
                 .accessibilityLabel("诊断")
             }
-            .padding(14)
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(.regularMaterial)
+
+            OptimizedWebView(model: model, owner: owner)
+                .id(model.webViewGeneration)
+        }
+        .sheet(isPresented: $model.diagnosticsEnabled) {
+            NavigationStack {
+                List {
+                    LabeledContent("任务状态", value: owner.projection.task.rawValue)
+                    LabeledContent("修订版本", value: String(owner.projection.revision))
+                    LabeledContent("网页状态", value: model.status)
+                    LabeledContent("网页恢复次数", value: String(model.recoveryAttempts))
+                }
+                .navigationTitle("诊断")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成") { model.diagnosticsEnabled = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
         }
         .alert("重试当前对话？", isPresented: Binding(
             get: { owner.recoveryCandidate != nil },
