@@ -134,7 +134,7 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Alpha"].exists)
         XCTAssertTrue(app.staticTexts["print(42)"].exists)
         XCTAssertTrue(app.staticTexts["这是引用"].exists)
-        XCTAssertTrue(app.staticTexts["notes.pdf"].exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'notes.pdf'")).firstMatch.exists)
         XCTAssertTrue(app.staticTexts["PC 私有图片 · 请在 PC 查看"].exists)
         let remoteLink = app.buttons["shared.pcLink"].firstMatch
         XCTAssertTrue(remoteLink.exists); remoteLink.tap()
