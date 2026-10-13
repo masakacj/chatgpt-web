@@ -29,34 +29,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Current mirror userscript checks
-        run: |
-          set +e
-          {
-            node --check safari/chatgpt-safari.user.js &&
-            node scripts/validate-userscript.mjs &&
-            node scripts/test-project-labels.mjs
-          } 2>&1 | tee "$RUNNER_TEMP/mirror-source-check.log"
-          STATUS=${PIPESTATUS[0]}
-          {
-            echo '### Mirror source check'
-            echo '```text'
-            tail -120 "$RUNNER_TEMP/mirror-source-check.log"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$STATUS"
-      - name: Web Optimized boundary and CM contract checks
-        run: |
-          set +e
-          npm run check:optimized 2>&1 | tee "$RUNNER_TEMP/optimized-source-check.log"
-          STATUS=${PIPESTATUS[0]}
-          {
-            echo '### Web Optimized source check'
-            echo '```text'
-            tail -120 "$RUNNER_TEMP/optimized-source-check.log"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$STATUS"
+      - name: Mirror userscript syntax
+        run: node --check safari/chatgpt-safari.user.js
+      - name: Mirror userscript architecture
+        run: node scripts/validate-userscript.mjs
+      - name: Mirror project-label regression
+        run: node scripts/test-project-labels.mjs
+      - name: Optimized observer syntax
+        run: node --check OptimizedResources/Observation/conversation-observer.js
+      - name: Optimized target boundary
+        run: node scripts/check-target-boundaries.mjs
+      - name: Optimized CM contract
+        run: node scripts/check-cm-contract.mjs
       - name: Generate project and test optimized target
         run: |
           set -euo pipefail
