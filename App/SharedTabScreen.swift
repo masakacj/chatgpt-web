@@ -301,7 +301,14 @@ struct SharedTabScreen: View {
             }
             Text(model.status).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1).accessibilityIdentifier("shared.status")
             #if DEBUG
-            if model.fixture { Text(SharedTabFixtureProtocol.counters).font(.system(size: 9)).accessibilityIdentifier("shared.fixture.counters") }
+            if model.fixture {
+                Text(SharedTabFixtureProtocol.counters).font(.system(size: 9))
+                    .accessibilityIdentifier("shared.fixture.counters")
+                Button("测试附件交付") {
+                    Task { await model.upload(Data("synthetic attachment".utf8),
+                        filename: "fixture.txt", mimeType: "text/plain") }
+                }.accessibilityIdentifier("shared.fixture.upload")
+            }
             #endif
         }.padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 3).background(Color(uiColor: .systemBackground))
     }
