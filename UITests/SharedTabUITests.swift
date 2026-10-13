@@ -157,6 +157,24 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS '127.0.0.1:13213/local/pair'")).firstMatch.exists)
         XCTAssertEqual(app.webViews.count, 0)
     }
+    func testRunningPCDisablesSendAndPreservesLocalDraft() throws {
+        let app = launch("--shared-fixture-busy-send")
+        let input = composer(app)
+        input.tap(); input.typeText("do not send while PC is responding")
+        XCTAssertFalse(app.buttons["shared.send"].isEnabled)
+        XCTAssertTrue(String(describing: composer(app).value).contains("do not send while PC is responding"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '生成中'")).firstMatch.exists)
+    }
+    func testWaitingPCApprovalDisablesSendAndKeepsDraft() throws {
+        let app = launch("--shared-fixture-interaction")
+        let input = composer(app)
+        input.tap(); input.typeText("draft while approval is pending")
+        XCTAssertFalse(app.buttons["shared.send"].isEnabled)
+        XCTAssertTrue(String(describing: composer(app).value).contains("draft while approval is pending"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertTrue(app.buttons["允许一次"].exists)
+    }
     func testExplicitInteractionRequiresConfirmationAndExecutesOnce() throws {
         let app = launch("--shared-fixture-interaction")
         let action = app.buttons["允许一次"]
