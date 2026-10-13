@@ -90,6 +90,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
 }
 
 @MainActor final class SharedTabModel: ObservableObject {
+    static let stageEndpoint = "https://chatgpt-bridge-test.78175132.xyz"
     @Published var endpoint = UserDefaults.standard.string(forKey: "PCCompanion.endpoint") ?? "https://chatgpt-pc.781751.xyz:58443"
     @Published var pairingKey = ""
     @Published var tabs: [STTab] = []
@@ -295,6 +296,23 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         if let id, let c = connection { let _: STOK? = try? await request("/v1/sessions/\(id)", using: c, method: "DELETE") }
     }
     func disconnect() async { ledger.edit(owner, text: text); save(); await disconnectSession() }
+    // Make the signed development IPA usable against the separately verified
+    // public Bridge stage. Never send a saved production pairing key to stage.
+    // Drafts are already persisted by disconnect() and remain keyed by server.
+    func chooseStageBridge() async {
+        guard !busy else { return }
+        await disconnect()
+        endpoint = Self.stageEndpoint
+        pairingKey = ""
+        connection = nil
+        selectedTabId = nil
+        tabs = []; chats = []; projects = []
+        snapshot = nil; older = []; historyCursor = nil; historyHasMore = nil
+        owner = ""; text = ""
+        error = nil
+        status = "测试通道 · 请复制 PC 13213 的配对密钥"
+        needsSettings = true
+    }
     private func refresh(using c: STConnection) async throws {
         guard let id = sessionID else { return }; let generation = epoch
         let value: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try current(generation); try apply(value, using: c)
