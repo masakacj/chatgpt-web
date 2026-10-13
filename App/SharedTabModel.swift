@@ -141,7 +141,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     var canLoadHistory: Bool { online && !historyLoading && (historyHasMore ?? snapshot?.hasOlder ?? false) }
     var currentPending: STPendingSend? { ledger.pendingFor(owner) }
-    var canSubmit: Bool { online && !busy && !loading && snapshot != nil && currentPending == nil && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    // The PC's observed composer eligibility is authoritative. Never expose a
+    // working Send button while its page is generating, waiting for approval,
+    // navigating, composing, or holding a separate unsent PC draft.
+    var canSubmit: Bool {
+        guard let snap = snapshot else { return false }
+        return online && !busy && !loading && currentPending == nil && snap.canSend == true &&
+            snap.pcDraftOccupied != true && snap.composing != true &&
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     var thinking: Bool { snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant" }
     var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
     private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
@@ -250,7 +258,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         let waitingForNewReceipt = busy && currentPending?.temporary == true && !fresh.conversationId.isEmpty
         if newOwner != owner && !waitingForNewReceipt { ledger.edit(owner, text: text); owner = newOwner; text = ledger.draft(owner).text }
         snapshot = fresh; loading = fresh.status == "loading"
-        status = loading ? "PC 页面加载中" : fresh.pcDraftOccupied == true ? "PC 有未发送内容" : fresh.status == "running" ? "生成中" : fresh.status == "waiting" ? "需要确认" : "与 PC 共用此标签页"
+        status = loading ? "PC 页面加载中" : fresh.pcDraftOccupied == true ? "PC 有未发送内容" : fresh.status == "running" ? "生成中 · 手机草稿已保留" : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用此标签页"
+        // A prior definite busy rejection must not leave an obsolete red alert
+        // after the same PC page explicitly reports that composing is possible.
+        if fresh.canSend == true && error == STError(code: "pc_busy_or_approval").localizedDescription { error = nil }
         saveSoon()
     }
     private func startPolling() {
