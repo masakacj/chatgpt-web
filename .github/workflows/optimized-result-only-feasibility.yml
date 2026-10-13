@@ -1,0 +1,61 @@
+name: Web Optimized Result Only Feasibility (No Publish)
+on:
+  push:
+    branches:
+      - experiment/optimized-result-only-go-no-go-20261013
+    paths:
+      - 'OptimizedTests/ResultOnlyWebKitFeasibilityTests.swift'
+      - '.github/workflows/optimized-result-only-feasibility.yml'
+      - 'project.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: optimized-result-only-feasibility
+  cancel-in-progress: false
+jobs:
+  simulator-webkit-ab:
+    if: github.repository == 'masakacj/chatgpt-web'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare iOS simulator
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+      - name: Compare iOS WKWebView Result Only approaches
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj \
+            -scheme ChatGPTWebOptimized -configuration Debug -sdk iphonesimulator \
+            -destination "id=$UDID" \
+            -derivedDataPath "$RUNNER_TEMP/ROFeasibilityDerived" \
+            -resultBundlePath "$RUNNER_TEMP/ROFeasibility.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:ChatGPTWebOptimizedTests/ResultOnlyWebKitFeasibilityTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test 2>&1 | tee "$RUNNER_TEMP/ro-webkit.log"
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### iOS WebKit Result Only experiment"
+            echo "No candidate signing, no IPA publication and no production changes."
+            echo "Fixture distinguishes visual suppression from retained JS/DOM state. It is not a real ChatGPT benchmark."
+            echo '~~~'
+            grep 'RESULT_ONLY_WEBKIT_BENCH' "$RUNNER_TEMP/ro-webkit.log" || true
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optimized-result-only-ios-webkit-evidence-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/ro-webkit.log
+            ${{ runner.temp }}/ROFeasibility.xcresult
+          if-no-files-found: ignore
