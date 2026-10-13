@@ -1,8 +1,8 @@
-name: Mirror iOS Native UX 0.7.4 Source Check
+name: Mirror iOS Native UX Source Check
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'cleanup/current-072-20261013', 'fix/mirror-send-state-*', 'feature/mirror-ux-074-*']
+    branches: ['main', 'cleanup/current-072-20261013', 'fix/mirror-send-state-*', 'feature/mirror-ux-074-*', 'feature/mirror-controls-075-*']
     paths:
       - 'App/**'
       - 'Resources/**'
@@ -53,7 +53,7 @@ jobs:
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/CurrentReleaseSimulator" -resultBundlePath "$RUNNER_TEMP/CurrentReleaseTests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
       - name: Current iPhone Release compilation (never signs or promotes)
         run: |
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.4 CURRENT_PROJECT_VERSION=6 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.5 CURRENT_PROJECT_VERSION=7 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Upload native simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
