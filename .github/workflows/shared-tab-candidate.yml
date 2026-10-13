@@ -16,8 +16,8 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 25
     env:
-      ACCEPTED_SOURCE: 8f63ecebe6a1f549f3bf5b27bf07230cd642c443
-      ACCEPTED_RUN: '38252574512'
+      ACCEPTED_SOURCE: 3f3ae6ba70e6cdf7ae172cf8fa6ede6c837ea08b
+      ACCEPTED_RUN: '38327417052'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,7 +33,7 @@ jobs:
           test "$(gh run view "$ACCEPTED_RUN" --json conclusion --jq .conclusion)" = success
           git diff --exit-code "$ACCEPTED_SOURCE" HEAD -- App UITests Resources SafariScriptAction safari scripts project.yml package.json package-lock.json
           test "$(gh run view "$ACCEPTED_RUN" --json headSha --jq .headSha)" = "$ACCEPTED_SOURCE"
-          echo "Native source matches successful native simulator/device CI $ACCEPTED_SOURCE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Native source matches successful candidate Release iPhone build and draft-policy CI. Physical iPhone and new stage-button simulator acceptance remain pending. $ACCEPTED_SOURCE" >> "$GITHUB_STEP_SUMMARY"
       - name: Validate native policies and existing resources
         run: |
           set -euo pipefail
@@ -45,7 +45,7 @@ jobs:
       - name: Compile and package candidate
         run: |
           set -euo pipefail
-          VERSION=0.7.1
+          VERSION=0.7.2
           BUILD="$GITHUB_RUN_NUMBER"
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CandidateDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" build
           APP="$RUNNER_TEMP/CandidateDevice/Build/Products/Release-iphoneos/ChatGPTWeb.app"
@@ -80,7 +80,7 @@ jobs:
           assert before==after, 'Stable latest changed during candidate signing'
           assert result['ok'] and result['channel']=='candidate' and result['promoted'] is False
           assert result['source_sha']==os.environ['GITHUB_SHA']
-          assert result['bundle_id']=='com.masakacj.chatgptweb' and result['version']=='0.7.1'
+          assert result['bundle_id']=='com.masakacj.chatgptweb' and result['version']=='0.7.2'
           print(json.dumps({'candidate':result['install_page'],'version':result['version'],'build':result['build'],'stableUnchanged':True}))
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
               f.write('\nSigned candidate: '+result['install_page']+'\n\nStable latest unchanged. Physical iPhone acceptance is still pending.\n')
