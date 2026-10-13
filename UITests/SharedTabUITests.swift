@@ -191,6 +191,29 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["生成中"].exists)
         XCTAssertEqual(app.webViews.count, 0)
     }
+    func testNativeModelAndThinkingControlsComeFromBoundPC() throws {
+        let app = launch()
+        XCTAssertTrue(app.images["shared.header.completed"].exists ||
+                      app.otherElements["shared.header.completed"].exists ||
+                      app.staticTexts["shared.title"].exists)
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let high = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(high.waitForExistence(timeout: 8))
+        high.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testActiveProjectConversationAppearsAboveNativeRecentList() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        XCTAssertTrue(app.staticTexts["最近活跃（含项目对话）"].waitForExistence(timeout: 8))
+        let chat = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"].firstMatch
+        XCTAssertTrue(chat.exists)
+        XCTAssertEqual(chat.value as? String, "生成中")
+        XCTAssertTrue(app.buttons["shared.attach"].exists)
+    }
     func testEdgeSwipeOpensAndLeftSwipeClosesNativeSidebar() throws {
         let app = launch()
         let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.48))
