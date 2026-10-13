@@ -185,6 +185,54 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
         XCTAssertTrue(app.buttons["允许一次"].exists)
     }
+    func testVisibleHeaderIndicatorDuringPCGeneration() throws {
+        let app = launch("--shared-fixture-busy-send")
+        XCTAssertTrue(app.descendants(matching: .any)["shared.header.running"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["生成中"].exists)
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+    func testEdgeSwipeOpensAndLeftSwipeClosesNativeSidebar() throws {
+        let app = launch()
+        let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.48))
+        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.48))
+        from.press(forDuration: 0.06, thenDragTo: to)
+        let search = app.textFields["shared.search.input"]
+        XCTAssertTrue(search.waitForExistence(timeout: 6))
+        let closeFrom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        let closeTo = app.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5))
+        closeFrom.press(forDuration: 0.06, thenDragTo: closeTo)
+        wait("exists == false", on: search, timeout: 6)
+    }
+    func testNativeSidebarIndicatorValuesAreNotInvented() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        let active = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"]
+        let unread = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(active.waitForExistence(timeout: 6))
+        XCTAssertTrue(unread.waitForExistence(timeout: 6))
+        XCTAssertEqual(active.value as? String, "生成中")
+        XCTAssertEqual(unread.value as? String, "未读")
+    }
+    func testNativePublicLinksAndDownloadControlsAreAvailable() throws {
+        let app = launch("--shared-fixture-native-resources")
+        let content = app.scrollViews["shared.transcript"]
+        content.swipeUp()
+        XCTAssertTrue(app.buttons["shared.nativeLink"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["shared.file.preview"].exists)
+        XCTAssertTrue(app.buttons["shared.file.download"].exists)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '仅 PC 可获取'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testBackgroundForegroundTimeoutRecoversWithoutRedError() throws {
+        let app = launch("--shared-fixture-resume-timeout")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        wait("label == '与 PC 共用此标签页'", on: app.staticTexts["shared.status"], timeout: 20)
+        XCTAssertFalse(app.staticTexts["The request timed out."].exists)
+        XCTAssertFalse(app.staticTexts["请求超时"].exists)
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
     func testExplicitInteractionRequiresConfirmationAndExecutesOnce() throws {
         let app = launch("--shared-fixture-interaction")
         let action = app.buttons["允许一次"]
