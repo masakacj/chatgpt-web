@@ -32,8 +32,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Source, userscript, target-boundary and CM contract checks
-        run: npm run check
+      - name: Current mirror userscript checks
+        run: |
+          node --check safari/chatgpt-safari.user.js
+          node scripts/validate-userscript.mjs
+          node scripts/test-project-labels.mjs
+      - name: Web Optimized boundary and CM contract checks
+        run: npm run check:optimized
       - name: Existing mirror policy checks
         run: |
           set -euo pipefail
