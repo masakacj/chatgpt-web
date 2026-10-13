@@ -13,7 +13,13 @@ struct STSnapshot: Codable {
     var canSend: Bool?; var pcDraftOccupied: Bool?; var composing: Bool?; var responsePhase: String?
     var interactions: [PCInteractionCard]?; var historyCursor: String?; var hasOlder: Bool?
     var sidebarIndicators: [STSidebarSignal]?
+    var model: STPCModel?
 }
+struct STPCModel: Codable { let available: Bool; let name: String }
+struct STModelOption: Codable, Identifiable { let id: String; let label: String; var selected: Bool?; var submenu: Bool? }
+private struct STModelCatalog: Decodable { let available: Bool; let current: String; let options: [STModelOption] }
+private struct STModelChoice: Decodable { let status: String; var error: String?; var model: STPCModel?; var options: [STModelOption]? }
+private struct STUploadResult: Decodable { let status: String; var error: String?; var name: String? }
 struct STSidebarSignal: Codable {
     let id: String
     let status: String
@@ -26,7 +32,7 @@ struct STEnvelope: Decodable {
 struct STProject: Codable, Identifiable { let id: String; let title: String; let collapsed: Bool; let hasMore: Bool }
 struct STChat: Codable, Identifiable {
     let id: String; let title: String
-    var projectId: String?; var current: Bool?; var status: String?; var readState: String?
+    var projectId: String?; var current: Bool?; var status: String?; var readState: String?; var activityAt: Double?
 }
 struct STLibrary: Decodable {
     var projects: [STProject]?; var chats: [STChat]?; var partial: Bool?; var source: String?
@@ -102,6 +108,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var tabs: [STTab] = []
     @Published var projects: [STProject] = []
     @Published var chats: [STChat] = []
+    @Published var recentActive: [STChat] = []
+    @Published var modelOptions: [STModelOption] = []
+    @Published var modelPickerLoading = false
+    @Published var uploading = false
+    @Published var controlNotice: String?
     @Published var snapshot: STSnapshot?
     @Published var older: [PCRemoteMessage] = []
     @Published var text = ""
@@ -128,6 +139,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private var pollTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempts = 0
+    private var capabilities = Set<String>()
     private var saveTask: Task<Void, Never>?
     private var historyCursor: String?
     private var historyHasMore: Bool?
@@ -159,6 +171,8 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             snap.pcDraftOccupied != true && snap.composing != true &&
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    var canUpload: Bool { online && !busy && !uploading && !loading && capabilities.contains("mobile-upload") && snapshot != nil && snapshot?.status != "waiting" }
+    var canPickModel: Bool { online && !busy && capabilities.contains("model-selection") && snapshot?.model?.available == true }
     var thinking: Bool { snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant" }
     var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
     private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
@@ -233,6 +247,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard !busy else { return }; busy = true; defer { busy = false }; error = nil
         do {
             let c = try config(); let health: STHealth = try await request("/v1/health", using: c)
+            capabilities = Set(health.capabilities ?? [])
             guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
             let value: STTabs = try await request("/v1/tabs?shared=1", using: c); tabs = value.tabs
             if !fixture { try STKeychain.save(c.key); UserDefaults.standard.set(c.origin.absoluteString, forKey: "PCCompanion.endpoint") }
@@ -281,6 +296,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 var chat = original
                 chat.status = marker.status
                 chat.readState = marker.readState
+                return chat
+            }
+            recentActive = recentActive.map { original in
+                guard let marker = byId[original.id] else { return original }
+                var chat = original; chat.status = marker.status; chat.readState = marker.readState
                 return chat
             }
         }
@@ -344,6 +364,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         do {
             let c = try config(); connection = c
             let health: STHealth = try await request("/v1/health", using: c)
+            capabilities = Set(health.capabilities ?? [])
             guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
             if let id = sessionID {
                 do { let result: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try apply(result, using: c); online = result.tabClosed != true }
@@ -392,7 +413,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         pairingKey = ""
         connection = nil
         selectedTabId = nil
-        tabs = []; chats = []; projects = []
+        tabs = []; chats = []; projects = []; recentActive = []; modelOptions = []
         snapshot = nil; older = []; historyCursor = nil; historyHasMore = nil
         owner = ""; text = ""
         error = nil
@@ -415,6 +436,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             let result: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body); try current(generation)
             projects = result.projects ?? projects
             if append { let ids = Set(chats.map(\.id)); chats += (result.chats ?? []).filter { !ids.contains($0.id) } } else { chats = result.chats ?? [] }
+            if action == "catalog" {
+                recentActive = chats.filter { ($0.activityAt ?? 0) > 0 }
+                    .sorted { ($0.activityAt ?? 0) > ($1.activityAt ?? 0) }.prefix(30).map { $0 }
+            }
             searchHasMore = result.hasMore == true
             searchNotice = result.loading == true ? "官网搜索仍在加载" : result.emptyConfirmed == true ? "官网搜索未找到匹配对话" : result.source == "official_search" ? "官网历史搜索 · 按需加载" : "最近对话与项目 · 可搜索更早记录"
         } catch { self.error = error.localizedDescription }
@@ -439,6 +464,48 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             }
             try await refresh(using: c)
         } catch { self.error = error.localizedDescription; try? await refresh(using: c) }
+    }
+    func loadModelOptions() async {
+        guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        modelPickerLoading = true; defer { modelPickerLoading = false }
+        do {
+            let value: STModelCatalog = try await request("/v1/sessions/\(id)/actions", using: c,
+                body: ["action": "model_catalog", "commandId": UUID().uuidString, "documentId": snap.documentId])
+            modelOptions = value.available ? value.options : []
+            if modelOptions.isEmpty { controlNotice = "PC 当前未提供可镜像的模型或思考选项" }
+        } catch { controlNotice = error.localizedDescription }
+    }
+    func chooseModel(_ option: STModelOption) async {
+        guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        modelPickerLoading = true; defer { modelPickerLoading = false }
+        do {
+            let result: STModelChoice = try await request("/v1/sessions/\(id)/actions", using: c,
+                body: ["action": "model_select", "commandId": UUID().uuidString,
+                       "documentId": snap.documentId, "optionId": option.id])
+            guard result.status == "option_clicked" else { throw STError(code: result.error ?? "model_option_changed") }
+            modelOptions = result.options ?? []
+            controlNotice = modelOptions.isEmpty ? "已在 PC 网页选择：\(option.label)" : "请选择 PC 网页实际提供的细分档位"
+            try? await refresh(using: c)
+        } catch { controlNotice = error.localizedDescription }
+    }
+    func upload(_ data: Data, filename: String, mimeType: String) async {
+        guard canUpload, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        guard !data.isEmpty && data.count <= 10 * 1024 * 1024 else {
+            controlNotice = "附件须小于 10 MB，草稿仍已保留"; return
+        }
+        uploading = true; defer { uploading = false }; controlNotice = "正在交给 PC 网页附件控件…"
+        let safeName = String(filename.replacingOccurrences(of: #"[\\/\x00-\x1f]"#,
+                         with: "_", options: .regularExpression).prefix(180))
+        do {
+            let result: STUploadResult = try await request("/v1/sessions/\(id)/uploads", using: c,
+                body: ["uploadId": UUID().uuidString, "documentId": snap.documentId,
+                       "name": safeName, "mimeType": mimeType, "base64": data.base64EncodedString()])
+            controlNotice = result.status == "handed_to_pc" ?
+                "已交给 PC 网页附件控件，请确认处理完成后发送" :
+                "未确认 PC 附件上传：\(result.error ?? result.status)，请先核对 PC"
+        } catch {
+            controlNotice = "附件结果未确认：\(error.localizedDescription)。不会自动重传"
+        }
     }
     func send() async {
         guard canSubmit, let c = connection, let id = sessionID, let snap = snapshot else { return }
