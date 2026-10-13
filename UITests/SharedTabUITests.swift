@@ -142,6 +142,21 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertEqual(app.webViews.count, 0)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
+    func testBridgeStageCanBeSelectedWithoutReusingOldPairing() throws {
+        let app = launch()
+        app.buttons["更多"].tap()
+        let settings = app.buttons["连接设置"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        let change = app.buttons["shared.useTestBridge"]
+        XCTAssertTrue(change.waitForExistence(timeout: 8))
+        change.tap()
+        let endpoint = app.textFields["HTTPS 服务地址"]
+        XCTAssertTrue(endpoint.waitForExistence(timeout: 8))
+        wait("value == 'https://chatgpt-bridge-test.78175132.xyz'", on: endpoint)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS 'PC 13213'")).firstMatch.exists)
+        XCTAssertEqual(app.webViews.count, 0)
+    }
     func testExplicitInteractionRequiresConfirmationAndExecutesOnce() throws {
         let app = launch("--shared-fixture-interaction")
         let action = app.buttons["允许一次"]
