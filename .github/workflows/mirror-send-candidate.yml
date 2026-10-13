@@ -28,13 +28,13 @@ jobs:
           node-version: 22
       - name: Require green simulator and unchanged reviewed app source
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           ready=false
           for i in {1..80}; do
             result="$(gh run view "$ACCEPTED_RUN" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha --jq '.status + ":" + (.conclusion // "pending") + ":" + .headSha')"
-            test "\${result##*:}" = "$ACCEPTED_SOURCE"
+            test "${result##*:}" = "$ACCEPTED_SOURCE"
             case "$result" in
               completed:success:*) ready=true; break ;;
               completed:*) echo 'Source acceptance CI failed'; exit 1 ;;
@@ -65,7 +65,7 @@ jobs:
           (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
       - name: Sign only candidate; keep stable latest
         env:
-          GH_RUN_TOKEN: \${{ github.token }}
+          GH_RUN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           curl --retry 5 --retry-all-errors --retry-delay 2 --max-time 15 -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
