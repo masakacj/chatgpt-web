@@ -1,7 +1,7 @@
 # ChatGPT Web Optimized Implementation Handoff
 
 Date: 2026-10-13
-Status: implementation started on `feature/web-optimized-010-20261013`; local Node boundary/contract checks pass, macOS compile and signing evidence pending
+Status: source/Simulator/unsigned Release passed at `7e855d6`; candidate signing blocked only on deployment of tested signer commit `13d56ac`; see `SIGNER_DEPLOYMENT_HANDOFF_010.md`
 Audience: iOS architecture, WKWebView, Conversation Manager, CI/signing and release maintainers
 
 ## Current decision
@@ -29,7 +29,8 @@ These decisions supersede any assumption that the existing mirror app should gai
 3. `docs/optimized/ARCHITECTURE.md`
 4. `docs/optimized/EXECUTION_PLAN.md`
 5. `docs/optimized/ACCEPTANCE_PLAN.md`
-6. root `DEVELOPMENT_STATUS.json`
+6. `docs/optimized/SIGNER_DEPLOYMENT_HANDOFF_010.md`
+7. root `DEVELOPMENT_STATUS.json`
 
 The existing `docs/CURRENT_RELEASE.md` remains authoritative for the current stable mirror release.
 
@@ -106,12 +107,12 @@ Therefore Web Optimized uses explicit user-confirmed official Retry only and nev
 
 ## Phase state
 
-- F0 mirror baseline: `in_progress` — source identity documented; signed artifact/profile/hash evidence still to collect
-- F1 target isolation: `in_progress` — target, resources, tests and boundary checker added locally; macOS build pending
-- F2 CM corpus/Swift owner: `in_progress` — v2 corpus, reducer/store/owner and Swift tests added; macOS parity run pending
-- F3 WK shell: `in_progress` — isolated WK app shell and observation adapter added; real-device login/navigation pending
-- F4 recovery/debug/performance: `in_progress` — explicit Retry and process-rebuild control added; synthetic/real-device acceptance pending
-- F5 candidate/physical acceptance: `not_started`
+- F0 mirror baseline: `in_progress` — source identity and CI mirror evidence recorded; signed artifact/profile/hash evidence remains
+- F1 target isolation: `passed` — target boundary, both schemes and Release compiles passed in run 38351064043
+- F2 CM corpus/Swift owner: `passed` — contract, unit tests and Simulator passed in run 38351064043
+- F3 WK shell: `in_progress` — UI tests and Release compile passed; physical-device login/navigation pending
+- F4 recovery/debug/performance: `in_progress` — synthetic tests passed; physical recovery/performance acceptance pending
+- F5 candidate/physical acceptance: `blocked` — unsigned candidate passed run 38351063992; deploy signer commit 13d56ac and rerun
 - F6 mirror cleanup: `blocked` until F5 passes
 
 ## First implementation increment
@@ -141,7 +142,7 @@ Do not begin by copying the old 3233-line WebView coordinator or 7395-line users
 
 Do not claim:
 
-- implementation has started;
+- signed candidate or installation-center publication exists before a successful post-deployment workflow;
 - WK has Chrome `webRequest` parity;
 - simulator/build/signing equals physical acceptance;
 - performance improved before measured A/B;
@@ -151,4 +152,4 @@ Do not claim:
 
 ## Next action
 
-Complete F0 signed-artifact evidence, then add the empty isolated target and target-boundary test without changing any existing mirror runtime source.
+Deploy tested signer commit `13d56ac` on mcpdebian exactly as documented in `SIGNER_DEPLOYMENT_HANDOFF_010.md`, verify mirror stable unchanged, then rerun `web-optimized-candidate.yml`. Stop after publishing and verifying an unpromoted candidate; physical-iPhone acceptance remains the next gate.

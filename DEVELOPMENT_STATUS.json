@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-10-13T12:05:00+08:00",
+  "updatedAt": "2026-10-13T14:05:00+08:00",
   "repository": "masakacj/chatgpt-web",
   "planningOnly": false,
   "mirror": {
@@ -19,17 +19,22 @@
       "profileVerified": false,
       "entitlementsVerified": false
     },
-    "tests": [],
+    "tests": [
+      "SharedTab Simulator regression passed in run 38351064043",
+      "Release iPhone compile passed in run 38351064043"
+    ],
     "rollbackVerified": false,
     "handoff": "docs/mirror/MIRROR_072_SIGNED_BASELINE.md"
   },
   "optimized": {
-    "status": "implementing",
+    "status": "candidate_signing_blocked_on_live_signer_deployment",
     "displayName": "ChatGPT Web Optimized",
     "target": "ChatGPTWebOptimized",
     "bundleId": "com.masakacj.chatgptweb.optimized",
     "version": "0.1.0",
     "build": 1,
+    "sourceSha": "7e855d6aa5466c14b9dac21b38b117ca643686a1",
+    "branch": "feature/web-optimized-010-20261013",
     "platform": "iOS 17+ iPhone",
     "route": "WKWebView only",
     "independentLoginAndData": true,
@@ -46,56 +51,82 @@
       "F0": {
         "state": "in_progress",
         "evidence": [
-          "docs/mirror/MIRROR_072_SIGNED_BASELINE.md"
+          "docs/mirror/MIRROR_072_SIGNED_BASELINE.md",
+          "CI run 38351064043 mirror tests and Release compile passed"
         ],
         "remaining": [
           "signed IPA hash and size",
           "certificate and provisioning metadata",
-          "mirror test result bundle",
           "rollback rehearsal evidence"
         ]
       },
       "F1": {
-        "state": "in_progress",
+        "state": "passed",
         "evidence": [
           "project.yml",
           "scripts/check-target-boundaries.mjs",
-          "OptimizedApp/",
-          "OptimizedResources/"
+          "CI run 38351064043 target boundary and both app compiles passed"
         ]
       },
       "F2": {
-        "state": "in_progress",
+        "state": "passed",
         "evidence": [
           "Contracts/ConversationManager/v2/manifest.json",
           "OptimizedApp/ConversationManager/CMReducer.swift",
-          "OptimizedTests/CMContractTests.swift"
+          "OptimizedTests/CMContractTests.swift",
+          "CI run 38351064043 CM contract and optimized unit tests passed"
         ]
       },
       "F3": {
         "state": "in_progress",
         "evidence": [
           "OptimizedApp/Web/OptimizedWebView.swift",
-          "OptimizedResources/Observation/conversation-observer.js"
+          "OptimizedResources/Observation/conversation-observer.js",
+          "CI run 38351064043 optimized UI tests and Release compile passed"
+        ],
+        "remaining": [
+          "physical-device independent login/navigation",
+          "popup/upload/download/permission acceptance"
         ]
       },
       "F4": {
         "state": "in_progress",
         "evidence": [
           "OptimizedApp/ConversationManager/ManualRecoveryPolicy.swift",
-          "OptimizedApp/Application/ChatGPTWebOptimizedApp.swift"
+          "OptimizedApp/Application/ChatGPTWebOptimizedApp.swift",
+          "CI run 38351064043 synthetic tests passed"
+        ],
+        "remaining": [
+          "physical-device manual Retry",
+          "WebContent termination",
+          "performance acceptance"
         ]
       },
       "F5": {
-        "state": "not_started",
-        "evidence": []
+        "state": "blocked",
+        "evidence": [
+          "Candidate run 38351063992 passed Simulator, unsigned Release compile and IPA packaging",
+          "Candidate run 38351063992 failed only at live signer allowlist",
+          "Signer source branch feature/web-optimized-signer-20261013 commit 13d56ac passed 12/12 tests"
+        ],
+        "remaining": [
+          "deploy signer commit 13d56ac on mcpdebian",
+          "rerun candidate workflow",
+          "verify signed candidate",
+          "physical iPhone acceptance"
+        ]
       }
     },
     "signing": {
       "appIdCreated": false,
-      "signerKeyCreated": false,
+      "signerKeySourcePrepared": true,
+      "signerSourceSha": "13d56ac",
+      "signerBranch": "feature/web-optimized-signer-20261013",
+      "signerDeployed": false,
       "archiveSha256": null,
-      "workflowRun": null,
+      "sourceCheckRun": 38351064043,
+      "failedPreDeploymentCandidateRun": 38351063992,
+      "unsignedArtifactId": 11791485764,
       "candidateId": null,
       "entitlementsVerified": false
     },
@@ -113,10 +144,10 @@
     "openRisks": [
       "WKWebView has no chrome.webRequest-equivalent evidence for internal saved-conversation GETs",
       "signed mirror IPA/profile/hash baseline is not yet fully captured",
-      "PC CM corpus has not yet been published as a traceable shared fixture",
+      "live signer still has old single-app candidate allowlist",
       "physical iPhone Web Optimized behavior and performance are untested"
     ],
-    "handoff": "docs/optimized/IMPLEMENTATION_HANDOFF.md"
+    "handoff": "docs/optimized/SIGNER_DEPLOYMENT_HANDOFF_010.md"
   },
   "mirrorCleanup": {
     "status": "blocked_until_optimized_acceptance",
