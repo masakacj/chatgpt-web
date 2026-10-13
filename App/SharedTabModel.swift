@@ -124,6 +124,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private var revision = -1
     private var epoch = 0
     private var foreground = true
+    private var resuming = false
     private var pollTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempts = 0
@@ -333,11 +334,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func resume() async {
         foreground = true
-        if online { return }
+        if online || resuming { return }
         if busy { scheduleReconnect(); return }
         if pairingKey.isEmpty { needsSettings = true; return }
         guard selectedTabId != nil else { needsSettings = true; await loadTabs(); return }
-        busy = true; defer { busy = false }; epoch += 1
+        busy = true; resuming = true; defer { busy = false; resuming = false }; epoch += 1
         status = "PC 连接恢复中 · 本地内容已保留"
         error = nil
         do {
