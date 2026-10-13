@@ -2,7 +2,7 @@ name: Current iOS 0.7.2 Source Check
 on:
   workflow_dispatch:
   push:
-    branches: ['main', 'cleanup/current-072-20261013']
+    branches: ['main', 'cleanup/current-072-20261013', 'fix/mirror-send-state-*']
     paths:
       - 'App/**'
       - 'Resources/**'
