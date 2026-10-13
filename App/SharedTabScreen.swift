@@ -252,6 +252,14 @@ struct SharedTabScreen: View {
                 Section("PC 连接") {
                     TextField("HTTPS 服务地址", text: $model.endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                     SecureField("配对密钥", text: $model.pairingKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button {
+                        Task { await model.chooseStageBridge() }
+                    } label: {
+                        Label("使用新版 PC Bridge 测试通道", systemImage: "desktopcomputer")
+                    }
+                    .accessibilityIdentifier("shared.useTestBridge")
+                    Text("在 PC 上打开 http://127.0.0.1:13213/local/pair，复制配对密钥到手机。测试服务独立于旧正式通道。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Button("读取 PC 标签页") { Task { await model.loadTabs() } }.disabled(model.busy).accessibilityIdentifier("shared.connect")
                     Text("手机与选中的 PC 标签页双向切换对话。输入草稿只在手机保存，点击发送才提交。").font(.caption)
                 }
