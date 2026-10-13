@@ -1,0 +1,43 @@
+name: Structured Remote Candidate Readiness
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feature/structured-remote-desktop-071-20261012']
+    paths: ['.github/workflows/remote-candidate-readiness.yml']
+permissions:
+  contents: read
+concurrency:
+  group: candidate-readiness-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  candidate-readiness:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Existing source validation
+        run: npm run check
+      - name: Native draft safety
+        run: |
+          set -euo pipefail
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/remote-draft-policy"
+          "$RUNNER_TEMP/remote-draft-policy"
+      - name: Generate native Xcode project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Release iPhone device compilation
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/RemoteCandidateBuild" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION=0.7.2 CURRENT_PROJECT_VERSION=1 build
+          APP="$RUNNER_TEMP/RemoteCandidateBuild/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -f "$APP/Info.plist"
+          test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = 0.7.2
+      - name: Record evidence boundary
+        run: |
+          echo "Candidate0.7.2 device target compiled; draft policy passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "This fallback does NOT claim simulator or physical-iPhone acceptance." >> "$GITHUB_STEP_SUMMARY"
