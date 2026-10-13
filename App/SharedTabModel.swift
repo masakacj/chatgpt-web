@@ -363,7 +363,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             // reconciliation below still handles any subsequent PC-side change.
             if let fresh = result.snapshot,
                (action != "new" || fresh.conversationId.isEmpty),
-               (action != "open" || fresh.conversationId == fields["targetConversationId"]),
+               (action != "open" || fresh.conversationId == (fields["targetConversationId"] as? String ?? "")),
                (action != "new" || fresh.documentId != snap.documentId) {
                 try display(fresh, using: c)
             }
