@@ -95,7 +95,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             ])
         }
 
-        var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
+        var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "model": ["available": true, "name": "GPT-6"], "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
         if let projectID { s["projectId"] = projectID }
         if args.contains("--shared-fixture-sidebar") {
             s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
@@ -115,19 +115,21 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     private static func library(search: Bool = false) -> [String: Any] {
         let selected: [[String: Any]] = search ? [["id": b, "title": "历史对话 B", "status": "completed", "readState": "read"]] : ProcessInfo.processInfo.arguments.contains("--shared-fixture-sidebar") ? [
-            ["id": a, "title": "测试对话 A", "status": "completed", "readState": "unread"],
-            ["id": b, "title": "历史对话 B", "status": "running", "readState": "unknown"]
+            ["id": a, "title": "测试对话 A", "status": "completed", "readState": "unread", "activityAt": 1000],
+            ["id": b, "title": "历史对话 B", "projectId": project, "status": "running", "readState": "unknown", "activityAt": 9000]
         ] : [["id": a, "title": "测试对话 A", "status": "completed", "readState": "read"]]
         return ["ok": true, "projects": [["id": project, "title": "Project Alpha", "collapsed": false, "hasMore": false]], "chats": selected, "partial": true, "source": search ? "official_search" : "official_sidebar", "hasMore": false, "loading": false]
     }
     private static func response(_ req: URLRequest) -> (Int, [String: Any]) {
         let path = req.url?.path ?? "", input = body(req), args = ProcessInfo.processInfo.arguments
-        if path == "/v1/health" { return (200, ["capabilities": ["shared-tab-v1", "compose-on-send"]]) }
+        if path == "/v1/health" { return (200, ["capabilities": ["shared-tab-v1", "compose-on-send", "model-selection", "mobile-upload", "recent-activity"]]) }
         if path == "/v1/tabs" { return (200, ["tabs": [["tabId": 7, "title": "测试共用标签页", "conversationId": current, "active": true]]]) }
         if path == "/v1/sessions" { return (200, envelope()) }
         if path.hasSuffix("/actions") {
             let action = input["action"] as? String ?? ""
             if action == "catalog" || action == "project" { return (200, library()) }
+            if action == "model_catalog" { return (200, ["available": true, "current": "GPT-6", "options": [["id": "fixture-model-option-0001", "label": "Thinking · High", "selected": false, "submenu": false]]]) }
+            if action == "model_select" { return (200, ["status": "option_clicked", "model": ["available": true, "name": "GPT-6 Thinking · High"], "options": []]) }
             if action == "search" { return (200, library(search: true)) }
             actions += 1; revision += 1; sentText = nil
             if action == "open" { current = input["targetConversationId"] as? String ?? b; projectID = nil }
@@ -135,6 +137,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             document = "fixture-document-\(revision)"
             return (200, ["ok": true, "snapshot": snapshot()])
         }
+        if path.hasSuffix("/uploads") { return (200, ["status": "handed_to_pc", "name": input["name"] ?? "test.png"]) }
         if path.hasSuffix("/commands") {
             let id = input["commandId"] as? String ?? "", action = input["action"] as? String ?? ""
             if let existing = receipts[id] { return (200, existing) }
