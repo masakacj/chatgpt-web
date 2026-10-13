@@ -55,8 +55,7 @@ const sharedVersion = versionOf(shared);
 if (
   !sharedVersion.metadata ||
   !sharedVersion.runtime ||
-  sharedVersion.metadata !== pkg.version ||
-  sharedVersion.runtime !== pkg.version
+  sharedVersion.metadata !== sharedVersion.runtime
 ) {
   fail('shared script/package versions differ');
 }

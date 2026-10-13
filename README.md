@@ -1,289 +1,34 @@
-# ChatGPT Web
+# ChatGPT Web iOS — 0.7.2 (Build 4)
 
-## Desktop Lite 0.2.2 — minimal intervention for Chrome / Tampermonkey
+This repository contains the **current iOS app**. Historical experiments, one-off patch scripts and older release plans are not part of the current source tree.
 
-**Purpose:** keep ChatGPT's native long-chat renderer and avoid adding any
-extra work while the browser is idle. The new version incorporates native
-turn-state observations from real MCP/DevSpace long conversations.
+**Official signed version:** **0.7.2 Build 4**  
+**Install / update:** https://ipa.78175132.xyz/  
+**Bundle ID:** `com.masakacj.chatgptweb`  
+**Exactly signed and verified application source:** `8440857cf0bf485ce79d408b74b8380069eb08dc`  
+**Verified signing pipeline:** [GitHub Actions run 38327609864](https://github.com/masakacj/chatgpt-web/actions/runs/38327609864).
 
-- **Install / update:** [Desktop Lite userscript](https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-desktop-lite.user.js). It uses the same GitHub raw URL for future updates.
-- **Important:** disable the legacy **ChatGPT Web Unified** desktop userscript
-  and any older **Desktop Lite / chatgpt-perf** extension in that same browser
-  profile. Running multiple optimizers at once can cause redundant observers,
-  duplicate badges or UI conflicts.
-- **Never touches:** conversation messages, DIL/Markdown, Thinking/MCP
-  content, iframe loading, fetch/XHR, React internals, scroll state, tab
-  navigation or ChatGPT's rendering hierarchy.
-- **Conservative states:** `进行中`, `已完成`, `等待操作`, `已停止`,
-  `待确认`. Prefer `data-talvt-turn-state` when available and recognize
-  the newer `data-conversation-role="assistant"` messages. Fallback to a
-  visibly active native Stop button for older markup.
-- **Minimal overhead:** **no permanent polling**. One scoped sidebar
-  observer; only one timed status check while an active chat request is
-  observed (1.8 s visible / 3.2 s hidden). No duplicate heartbeat timer.
-  Initial chat hydration checks stop early once a trustworthy native state is
-  found, with a finite final retry for very slow conversations.
-- **Safety:** a 90-second lapse without an active heartbeat is shown as
-  `待确认`, never silently converted to `已完成`. Cross-tab state is
-  broadcast and cached locally only.
-- **Scope:** Desktop Lite is separate from the iOS Safari/native-container
-  script, which is **not changed** by this update.
+## How it works
 
-**What this does not claim:** Chrome tracing found that ChatGPT itself can
-spend several seconds in script execution during startup/hydration, and a WSA
-long MCP chat displayed many historical iframe placeholders. Removing DOM or
-blocking iframe requests failed to prove faster complete-answer availability
-and can break content. Therefore 0.2.2 deliberately avoids destructive
-"optimization" and makes no unverified long-chat speedup claim.
+The iPhone's native SwiftUI interface is a **structured remote desktop** for an explicitly paired **PC Chrome ChatGPT tab**. The PC webpage is the sole execution and message source. The phone mirrors already-mounted page content and sends deliberate interactions back to that same tab. No automatic history crawling, second ChatGPT chat database, or background webpage takeover.
 
-Native-state and multi-tab regression tests plus a synthetic 160-turn,
-23,232-node long-DOM test were passed on the local Chrome extension bridge.
-The user's actual ChatGPT account remains under its normal browser session;
-tests on the dedicated profile use a separate logged-out browser.
+The app retains its signed-version Safari/WKWebView fallback, embedded web script, local-draft protections, and opt-in performance telemetry. The independent **PC Bridge** is maintained outside this iOS repository.
 
-## Shared web userscript (0.4.39)
+**Official PC endpoint:** `https://chatgpt-pc.781751.xyz:58443`  
+**PC-only pairing page:** `http://127.0.0.1:13213/local/pair` (open on the PC, not on the iPhone).
 
-- Project-name labels are **Recents-only**: conversations listed inside a
-  project folder no longer repeat the containing project's name.
-- Recents can include project conversations using ChatGPT's own setting:
-  Recents (⋯) → Show → Projects (enabled). This is a native sidebar
-  preference and is intentionally not overridden or duplicated by a script.
-  If the setting is unavailable in the current rollout, the userscript does
-  not manufacture incomplete, out-of-date recent entries.
-- Once ChatGPT renders project chats in Recents, local project membership
-  tracking annotates the rows without touching native ordering or navigation.
-- Sidebar item context is checked when rendering a known project chat only;
-  no new network fetches, polling loops, or mutation observers are introduced.
+## Source layout
 
-## Shared web userscript (0.4.38)
+- `App/`: native client, remote-page mirror, composer, local drafts, web fallback.
+- `Resources/`, `SafariScriptAction/`, `safari/chatgpt-safari.user.js`: current iOS resources and embedded Safari fallback.
+- `UITests/`, `scripts/`: checks and fixtures for current features.
+- `telemetry-worker/`: backend for the current app's **opt-in** performance diagnostics.
+- `project.yml`, `package.json`, `.github/workflows/ios.yml`: repeatable builds, source checks and simulator tests.
 
-- Desktop "recent chats" shows a compact project-name label when the sidebar
-  exposes a trustworthy project mapping.
-- Project names come from visible project links; chat membership comes from a
-  project chat URL, an explicit project marker, or a project chat that was opened.
-  The local cache survives page refreshes and updates project names on rename.
-- The feature does **not** fetch undocumented ChatGPT endpoints or intercept
-  application requests. It does not infer a name when membership is unknown.
-  For an old chat with only a generic /c/ link and no project metadata, opening
-  the project chat can populate the mapping.
-- Sidebar labels are drawn with CSS rather than additional DOM nodes. Existing
-  sidebar mutation handling is incremental and the desktop status fallback
-  interval is reduced from once every 7 seconds to once every 15 seconds;
-  settling/completion checks are scheduled directly.
-- The new labels are desktop-only. The iOS result-only/runtime path remains
-  disabled for sidebar project scanning.
+## Development
 
+Run `npm run check` and `xcodegen generate` on macOS, then build with Xcode. CI **does not sign or publish an IPA on push**; official signing and production promotion are separate, explicit deployment actions.
 
-## Current iOS runtime (0.4.35)
+The **iOS app version is 0.7.2**. The embedded web userscript retains its independently versioned runtime **0.6.0**, matching the already signed app. The repository clean-up changes metadata/CI/docs, not the exact verified application source under `App/`, `Resources/` or the included browser script.
 
-The default iOS app runtime is again the developer-first WKWebView shell:
-
-- inspectable WKWebView (Safari Web Inspector enabled);
-- persistent ChatGPT website data / login state;
-- native JavaScript bridge;
-- cached + multi-source remote userscript hot update;
-- latest userscript is injected into the current page immediately;
-- returning the app to foreground triggers a throttled hot-update check;
-- Result Only mode hides normal reasoning/tool process UI while keeping explicit approval interactions;
-- completed historical reasoning/tool DOM is destructively pruned in small idle chunks to reduce WebKit memory pressure;
-- modern ChatGPT activity blocks use a WSA regression-tested boundary: MCP/thinking activity DOM is removed while non-process content hash remains unchanged;
-- separate popup WKWebView for links/files, plus WebKit content-process recovery.
-
-The SFSafariViewController + Action Extension implementation remains in the repository as a fallback/reference path, but it is no longer the default app root.
-
-
-ChatGPT Web now uses a two-layer runtime architecture:
-
-1. **Shared core userscript**
-   - `safari/chatgpt-safari.user.js`
-   - used by desktop Tampermonkey / Violentmonkey and the iOS IPA
-   - owns performance optimization, conversation state, tool-process compaction, the floating S panel, and the narrow native hot-update bridge
-
-2. **iOS-only gesture userscript**
-   - `safari/chatgpt-ios-gestures.user.js`
-   - injected only by the iOS IPA shell
-   - owns sidebar gesture recognition, sidebar DOM detection, open/close behavior, and gesture tuning
-   - never runs on desktop
-
-This separation keeps PC behavior independent from iOS gesture experiments while preserving one shared optimization/state implementation.
-
-## Shared core install URL
-
-`https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-safari.user.js`
-
-Use this URL for desktop Tampermonkey / Violentmonkey.
-
-The shared script includes `@updateURL` and `@downloadURL` pointing to the same canonical file.
-
-Desktop users do **not** install the iOS gesture script.
-
-## iOS gesture script
-
-Canonical source:
-
-`https://raw.githubusercontent.com/masakacj/chatgpt-web/main/safari/chatgpt-ios-gestures.user.js`
-
-The IPA shell injects this script automatically. It is gated by the native IPA environment and is not part of the desktop runtime.
-
-Gesture script versioning is independent from the shared core version. For example:
-
-- shared core: `0.3.8`
-- iOS gestures: `0.1.0`
-- IPA shell: `0.3.8 (11)`
-
-Changing only the iOS gesture script does not require bumping the shared script version and does not require rebuilding the IPA.
-
-## Shared performance behavior
-
-The shared optimization layer starts from the first conversation turn:
-
-- always-on `content-visibility: auto` for eligible turns;
-- current streaming final answer remains fully live;
-- focused / interactive content remains fully live;
-- iOS native / Safari-container runtime uses **Result Only mode**: normal MCP, tool, reasoning, and process blocks are hidden instead of rendered as summaries;
-- tool blocks that require explicit user approval / confirmation remain visible and interactive;
-- the Result Only status keeps a lightweight per-request elapsed-time and tool-call summary in the control panel;
-- desktop userscript runtime keeps the lightweight one-line tool summary behavior;
-- final assistant answers remain intact;
-- no `innerHTML` snapshots;
-- no `replaceChildren`;
-- no media source unloading.
-
-The shared script is the same on PC and iOS, with Result Only presentation enabled only for the native/Safari-container runtime.
-
-## Shared conversation-state model
-
-Both PC and iOS use the same state machine:
-
-`running → waiting_user → settling → completed_unread → completed_read`
-
-Rules:
-
-- settling window: 2.8 seconds;
-- visible read dwell: 1.2 seconds;
-- state persists in `localStorage`;
-- cross-tab sync uses `BroadcastChannel`;
-- browser `storage` events are the fallback;
-- sidebar status dots and the floating S control use the same state store.
-
-## iOS gesture behavior
-
-The iOS gesture script owns all sidebar touch handling.
-
-Current tuning starts with:
-
-- opening gesture start region: left 96 px;
-- horizontal trigger distance: 20 px;
-- horizontal/vertical intent ratio: 0.95;
-- maximum gesture duration: 1.4 seconds;
-- when the sidebar is open, the close gesture can start within the left-side sidebar region.
-
-WebKit back/forward navigation gestures remain disabled in the native shell.
-
-Because the thresholds live in `chatgpt-ios-gestures.user.js`, future sensitivity changes are delivered by gesture-script hot update without a new IPA.
-
-## iOS hot update
-
-The iOS shell maintains two independent cached runtimes:
-
-- shared core userscript;
-- iOS gesture userscript.
-
-Startup order for each runtime:
-
-1. use the newest valid cached copy;
-2. fall back to the copy bundled in the IPA;
-3. race multiple trusted update sources in parallel;
-4. validate metadata/runtime version;
-5. choose the newest valid result;
-6. cache and hot-inject the newer script.
-
-The native updater races GitHub Raw, jsDelivr CDN, jsDelivr Fastly, and GitHub Contents API. A single blocked endpoint no longer blocks the update path.
-
-A failure to update one runtime does not block the other runtime.
-
-Opening the floating **S** panel triggers a native update check for both scripts.
-
-The S panel displays:
-
-- shared script version;
-- IPA shell version;
-- shared update status;
-- tool-process compaction count;
-- iOS gesture version and gesture update status when running inside the IPA.
-
-## Microphone permission
-
-The IPA includes `NSMicrophoneUsageDescription` and grants WKWebView microphone capture only to `chatgpt.com` / its subdomains.
-
-Camera capture is not automatically granted.
-
-## Release assets
-
-Each shared-core release publishes:
-
-- `ChatGPT-Web-Unified.user.js`
-- `ChatGPT-Web-Unified.user.js.sha256`
-- `ChatGPT-Web-Unified.zip`
-- `ChatGPT-Web-Unified.zip.sha256`
-- `ChatGPT-Web-iOS-Gestures.user.js`
-- `ChatGPT-Web-iOS-Gestures.user.js.sha256`
-- `ChatGPT-Web-iOS-Gestures.zip`
-- `ChatGPT-Web-iOS-Gestures.zip.sha256`
-
-Native-shell releases also attach the unsigned IPA and its SHA-256 file.
-
-## Maintenance rule
-
-- Shared optimization/state changes belong only in `chatgpt-safari.user.js`.
-- iOS gesture changes belong only in `chatgpt-ios-gestures.user.js`.
-- Native Swift changes should be limited to shell capabilities such as WebKit configuration, permissions, and loading/updating the two runtime scripts.
-
-
-## Update check fail-safe
-
-Update checks are fail-safe starting with shared core 0.3.9 / iOS shell 0.3.9.
-
-- shared core and iOS gesture updates are checked in parallel;
-- each runtime also races four trusted download sources in parallel;
-- each source has a 6-second timeout;
-- the S panel has a 10-second UI watchdog;
-- timeout falls back to the current cached/bundled runtime;
-- a failed gesture update does not block the shared runtime, and vice versa.
-
-
-## Manual update retry
-
-The S panel includes a dedicated update action:
-
-- `检查更新` in the normal state;
-- `检查更新中…` while a check is running;
-- `重试更新` after offline / timeout / error;
-- `再次检查更新` after a successful or latest check.
-
-The button invokes the native updater directly and restarts the update watchdog without requiring the S panel to be closed and reopened.
-
-
-## Popup browser overlay
-
-Starting with iOS shell 0.3.11 build 14, ChatGPT pages opened as a new browser page/window are presented in a separate native WKWebView layered above the main ChatGPT WKWebView.
-
-Typical cases include:
-
-- viewing a file generated by ChatGPT;
-- opening an external website from a ChatGPT answer;
-- links using `target=_blank`;
-- pages created with `window.open()`.
-
-The main ChatGPT page remains alive underneath. The popup layer shows a floating native browser control with:
-
-- back;
-- forward;
-- reload;
-- close.
-
-Closing destroys only the popup WKWebView and immediately reveals the original ChatGPT page underneath, without relying on browser history.
-
-The floating browser control appears only for this popup layer. Normal ChatGPT navigation does not show it.
-
-Shared and iOS gesture runtimes also explicitly exit on non-ChatGPT hosts so external popup pages do not run ChatGPT-specific optimization or gesture code.
+**Acceptance boundary:** simulator/build, signed IPA and PC HTTPS have been checked. Full real-iPhone remote operation and latency acceptance have not been claimed. Details: [Current release notes](docs/CURRENT_RELEASE.md).

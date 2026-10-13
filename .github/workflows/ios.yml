@@ -1,245 +1,61 @@
-name: iOS IPA
-
+name: Current iOS 0.7.2 Source Check
 on:
-  push:
-    branches:
-      - main
-      - "release/**"
-    paths:
-      - "App/**"
-      - "Resources/**"
-      - "SafariScriptAction/**"
-      - "safari/**"
-      - "!safari/chatgpt-desktop-lite.user.js"
-      - "package.json"
-      - "project.yml"
-      - "UITests/**"
-      - ".github/workflows/ios.yml"
   workflow_dispatch:
-
+  push:
+    branches: ['main', 'cleanup/current-072-20261013']
+    paths:
+      - 'App/**'
+      - 'Resources/**'
+      - 'SafariScriptAction/**'
+      - 'safari/chatgpt-safari.user.js'
+      - 'UITests/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'project.yml'
+      - '.github/workflows/ios.yml'
 permissions:
-  contents: write
-  actions: read
-
+  contents: read
+concurrency:
+  group: ios-current-check-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  build-ipa:
-    # Never update the install center before all simulator regressions pass.
-    needs: ui-smoke
+  validate-build:
     runs-on: macos-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 35
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-
-      - name: Validate unified userscript
+          node-version: 22
+      - name: Current embedded web script and source checks
         run: npm run check
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
+      - name: Existing local-draft and fallback policy checks
+        run: |
+          set -euo pipefail
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-draft-policy"
+          "$RUNNER_TEMP/shared-draft-policy"
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/pc-policy"
+          "$RUNNER_TEMP/pc-policy"
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-parity"
+          "$RUNNER_TEMP/native-parity"
       - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Build unsigned device app
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Native shared-tab simulator regression
         run: |
           set -euo pipefail
-          rm -rf DerivedData dist
-          VERSION="$(node -p "require('./package.json').version")"
-          xcodebuild \
-            -project ChatGPTWeb.xcodeproj \
-            -scheme ChatGPTWeb \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -derivedDataPath "$PWD/DerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            MARKETING_VERSION="$VERSION" \
-            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
-            build
-
-      - name: Verify in-app Safari script action
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/CurrentReleaseSimulator" -resultBundlePath "$RUNNER_TEMP/CurrentReleaseTests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Current iPhone Release compilation (never signs or promotes)
         run: |
-          set -euo pipefail
-
-          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
-          ACTION="$APP/PlugIns/ChatGPTScriptAction.appex"
-          SCRIPT="$ACTION/InjectChatGPT.js"
-
-          test -d "$APP"
-          test -d "$ACTION"
-          test -f "$SCRIPT"
-
-          VERSION="$(node -p "require('./package.json').version")"
-          APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
-          ACTION_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ACTION/Info.plist")"
-          EXTENSION_POINT="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$ACTION/Info.plist")"
-
-          test "$APP_VERSION" = "$VERSION"
-          test "$ACTION_VERSION" = "$VERSION"
-          test "$EXTENSION_POINT" = "com.apple.services"
-          test -x "$ACTION/ChatGPTScriptAction"
-
-          node --check "$SCRIPT"
-          grep -q "ExtensionPreprocessingJS" "$SCRIPT"
-          grep -q "this.finalize = function(parameters)" "$SCRIPT"
-          grep -q "ready: true" "$SCRIPT"
-          grep -q "__CHATGPT_SAFARI_CONTAINER__ = true" "$SCRIPT"
-          grep -q "ChatGPT Web Unified" "$SCRIPT"
-          grep -q "@version      $VERSION" "$SCRIPT"
-          grep -q "优化已启用" "$SCRIPT"
-          grep -q "__CHATGPT_UNIFIED_INJECTED__" "$SCRIPT"
-          grep -q "suppressOpenAppBanner" "$SCRIPT"
-          grep -q 'data-testid.*reasoning' "$SCRIPT"
-
-      - name: Verify app icon
-        run: |
-          set -euo pipefail
-          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
-          test -f "$APP/Assets.car"
-          plutil -p "$APP/Info.plist" | grep -q "CFBundleIcons"
-          plutil -p "$APP/Info.plist" | grep -q "AppIcon"
-
-      - name: Verify media permissions
-        run: |
-          set -euo pipefail
-          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
-          PLIST="$APP/Info.plist"
-          plutil -p "$PLIST" | grep -q "NSMicrophoneUsageDescription"
-          plutil -p "$PLIST" | grep -q "NSCameraUsageDescription"
-          plutil -p "$PLIST" | grep -q "NSPhotoLibraryUsageDescription"
-          plutil -p "$PLIST" | grep -q "NSPhotoLibraryAddUsageDescription"
-
-      - name: Package unsigned IPA
-        run: |
-          set -euo pipefail
-          APP="$PWD/DerivedData/Build/Products/Release-iphoneos/ChatGPTWeb.app"
-          test -d "$APP"
-
-          VERSION="$(node -p "require('./package.json').version")"
-          BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
-
-          mkdir -p dist/Payload
-          cp -R "$APP" dist/Payload/
-
-          IPA="ChatGPT-Web-Unified-$VERSION-$BUILD-unsigned.ipa"
-          (
-            cd dist
-            zip -qry "$IPA" Payload
-            rm -rf Payload
-            shasum -a 256 "$IPA" > "$IPA.sha256"
-          )
-
-          echo "IPA=$IPA" >> "$GITHUB_ENV"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Sign and publish to IPA install center
-        if: github.ref == 'refs/heads/main'
-        env:
-          GH_RUN_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          READY="$(curl -fsS https://ipa.78175132.xyz/api/health | python3 -c 'import json,sys; d=json.load(sys.stdin); print("1" if (d.get("apps") or {}).get("chatgpt-web",{}).get("signing_ready") else "0")')"
-          if [[ "$READY" != "1" ]]; then
-            echo "No provisioning profile currently authorizes com.masakacj.chatgptweb; keeping unsigned build only."
-            exit 0
-          fi
-          curl --fail-with-body --retry 8 --retry-all-errors --retry-delay 8 --retry-max-time 180 \
-            -X POST \
-            -H "Authorization: Bearer $GH_RUN_TOKEN" \
-            -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
-            -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" \
-            -H "X-GitHub-Sha: $GITHUB_SHA" \
-            -H "X-App-Key: chatgpt-web" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @"$PWD/dist/$IPA" \
-            https://ipa.78175132.xyz/api/v1/sign \
-            | tee "$PWD/dist/remote-sign-result.json"
-
-      - name: Upload workflow artifact
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.2 CURRENT_PROJECT_VERSION=4 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Upload native simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ChatGPT-Web-Unified-IPA
-          path: |
-            dist/*.ipa
-            dist/*.sha256
-          if-no-files-found: error
-
-      - name: Attach IPA to version release
-        if: github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          TAG="v$VERSION"
-
-          for i in {1..18}; do
-            if gh release view "$TAG" >/dev/null 2>&1; then
-              gh release upload "$TAG" "dist/$IPA" "dist/$IPA.sha256" --clobber
-              exit 0
-            fi
-            sleep 5
-          done
-
-          gh release create "$TAG" "dist/$IPA" "dist/$IPA.sha256" \
-            --target "$GITHUB_SHA" \
-            --title "ChatGPT Web Unified $TAG" \
-            --generate-notes
-
-  ui-smoke:
-    runs-on: macos-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Validate unified userscript
-        run: npm run check
-
-      - name: Verify native draft and persistence policies
-        run: |
-          set -euo pipefail
-          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/pc-policy"
-          "$RUNNER_TEMP/pc-policy"
-          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native-policy"
-          "$RUNNER_TEMP/native-policy"
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Run in-app Safari container UI smoke test
-        run: |
-          set -euo pipefail
-
-          UDID="$(
-            xcrun simctl list devices available -j |
-            python3 -c 'import json,sys; data=json.load(sys.stdin)["devices"]; devices=[d for group in data.values() for d in group if d.get("isAvailable") and str(d.get("name","")).startswith("iPhone")]; print(devices[0]["udid"])'
-          )"
-
-          xcrun simctl boot "$UDID" || true
-          xcrun simctl bootstatus "$UDID" -b
-
-          rm -rf UITestDerivedData
-
-          xcodebuild             -project ChatGPTWeb.xcodeproj             -scheme ChatGPTWeb             -configuration Debug             -sdk iphonesimulator             -destination "id=$UDID"             -derivedDataPath "$PWD/UITestDerivedData"             -parallel-testing-enabled NO             -test-timeouts-enabled YES             -default-test-execution-time-allowance 90             -maximum-test-execution-time-allowance 120             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             test
-
-
-# shared-profile-signing-v1
+          name: current-072-native-simulator
+          path: ${{ runner.temp }}/CurrentReleaseTests.xcresult
+          if-no-files-found: ignore
