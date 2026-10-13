@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-10-13T16:51:00+08:00",
+  "updatedAt": "2026-10-13T20:56:00+08:00",
   "repository": "masakacj/chatgpt-web",
   "planningOnly": false,
   "mirror": {
@@ -27,13 +27,13 @@
     "handoff": "docs/mirror/MIRROR_072_SIGNED_BASELINE.md"
   },
   "optimized": {
-    "status": "signed_candidate_published_pending_physical_device_acceptance",
+    "status": "no_go_archived_for_true_result_only",
     "displayName": "ChatGPT Web Optimized",
     "target": "ChatGPTWebOptimized",
     "bundleId": "com.masakacj.chatgptweb.optimized",
-    "version": "0.1.0",
-    "build": 1,
-    "sourceSha": "d905486fd91d8873af8383ceb277c130906a4099",
+    "version": "0.1.2",
+    "build": 3,
+    "sourceSha": "7f54b2ac60ff636a209822d0849e7cfdffd11193",
     "branch": "feature/web-optimized-010-20261013",
     "platform": "iOS 17+ iPhone",
     "route": "WKWebView only",
@@ -103,7 +103,7 @@
         ]
       },
       "F5": {
-        "state": "candidate_published",
+        "state": "archived_no_go",
         "evidence": [
           "Candidate run 38351063992 passed Simulator, unsigned Release compile and IPA packaging",
           "Candidate run 38351063992 failed only at live signer allowlist",
@@ -112,8 +112,7 @@
           "IPA installation center now shows distinct mirror and optimized candidate cards; mirror stable 0.7.2 Build4 unchanged"
         ],
         "remaining": [
-          "Physical iPhone installation, login, navigation, permissions and performance acceptance",
-          "Promote optimized candidate only after physical iPhone acceptance"
+          "Do not promote; explicit new product decision required to resume development."
         ]
       }
     },
@@ -127,11 +126,11 @@
       "sourceCheckRun": 38351064043,
       "failedPreDeploymentCandidateRun": 38351063992,
       "unsignedArtifactId": 11791485764,
-      "candidateId": "66c131fb-9fc0-4346-9b68-e1a5385bba7f",
+      "candidateId": "ce533fdb-a113-4423-9ed0-0343f7d4643a",
       "entitlementsVerified": false,
-      "candidateRun": 38370546893,
+      "candidateRun": 38382619322,
       "signerSourceBranch": "feature/web-optimized-signer-20261013",
-      "candidateInstallPage": "https://ipa.78175132.xyz/candidate/66c131fb-9fc0-4346-9b68-e1a5385bba7f",
+      "candidateInstallPage": "https://ipa.78175132.xyz/candidate/ce533fdb-a113-4423-9ed0-0343f7d4643a",
       "candidateVerification": "passed"
     },
     "physicalDeviceAcceptance": {
@@ -149,9 +148,37 @@
       "WKWebView has no chrome.webRequest-equivalent evidence for internal saved-conversation GETs",
       "signed mirror IPA/profile/hash baseline is not yet fully captured",
       "physical iPhone Web Optimized behavior and performance are untested",
-      "Signed candidate uses shared-profile compatibility; physical-iPhone acceptance remains outstanding"
+      "Signed candidate uses shared-profile compatibility; physical-iPhone acceptance remains outstanding",
+      "Strict Result Only cannot reliably avoid official React intermediate model retention under existing WKWebView architecture; no real-device memory A/B evidence."
     ],
-    "handoff": "docs/optimized/SIGNER_DEPLOYMENT_HANDOFF_010.md"
+    "handoff": "docs/optimized/RESULT_ONLY_GO_NO_GO_20261013.md",
+    "goNoGo": {
+      "decision": "NO_GO",
+      "scope": "Independent WKWebView-only true Result Only for long MCP-heavy ChatGPT conversations",
+      "decisionDate": "2026-10-13",
+      "action": "Stop standalone optimized development; retain signed candidate for non-destructive rollback only; prioritize PC native mirror",
+      "evidence": {
+        "realDevice": {
+          "appVersion": "0.1.2+3",
+          "distinctWebContentTerminations": 2,
+          "memoryWarnings": 2,
+          "cfRoute": "project",
+          "causality": "memory_pressure_suspected_not_confirmed"
+        },
+        "simulator": {
+          "runId": 38399873801,
+          "conclusion": "success",
+          "xctests": 1,
+          "failures": 0,
+          "fixture": "400 turns, 2400 intermediate records",
+          "trueResultOnly": "requires_own_data_and_rendering_pipeline"
+        },
+        "documentation": "docs/optimized/RESULT_ONLY_GO_NO_GO_20261013.md"
+      },
+      "realWorldMemoryFootprintMeasured": false,
+      "trueResultOnlyImplemented": false,
+      "physicalAcceptancePassed": false
+    }
   },
   "mirrorCleanup": {
     "status": "blocked_until_optimized_acceptance",
