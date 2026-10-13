@@ -26,6 +26,21 @@ struct SharedTabScreen: View {
         withAnimation(.easeOut(duration: 0.16)) { sidebar = true }
         Task { await model.catalog() }
     }
+    // Edge-right to open, horizontal-left to close. A simultaneous gesture
+    // leaves vertical transcript/list scrolling and horizontal code scrolling intact.
+    private var sidebarSwipe: some Gesture {
+        DragGesture(minimumDistance: 40)
+            .onEnded { swipe in
+                let dx = swipe.translation.width, dy = swipe.translation.height
+                guard abs(dx) > 85 && abs(dx) > abs(dy) * 1.6 else { return }
+                if sidebar && dx < 0 {
+                    dismissKeyboard()
+                    withAnimation(.easeOut(duration: 0.16)) { sidebar = false }
+                } else if !sidebar && dx > 0 && swipe.startLocation.x < 64 {
+                    openSidebar()
+                }
+            }
+    }
     var body: some View {
         NavigationStack {
             ZStack(alignment: .leading) {
@@ -45,6 +60,7 @@ struct SharedTabScreen: View {
                     library.frame(width: min(UIScreen.main.bounds.width * 0.88, 370)).transition(.move(edge: .leading))
                 }
             }
+            .simultaneousGesture(sidebarSwipe)
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $model.needsSettings) { settings }
             .sheet(item: $interaction) { selected in
@@ -77,7 +93,19 @@ struct SharedTabScreen: View {
                 Image(systemName: "line.3.horizontal").font(.system(size: 21)).frame(width: 44, height: 44)
             }.accessibilityLabel("打开侧边栏").accessibilityIdentifier("shared.sidebar")
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.projectTitle ?? "ChatGPT").font(.headline).lineLimit(1)
+                HStack(spacing: 7) {
+                    Text(model.projectTitle ?? "ChatGPT").font(.headline).lineLimit(1)
+                    if model.snapshot?.status == "running" {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel("PC 正在生成")
+                            .accessibilityIdentifier("shared.header.running")
+                        Text("生成中").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                    } else if model.snapshot?.status == "waiting" {
+                        Image(systemName: "hand.raised.circle").font(.caption).foregroundStyle(.orange)
+                        Text("待确认").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("shared.header.waiting")
+                    }
+                }
                 Text(model.snapshot?.title ?? (model.loading ? "正在切换对话" : "PC 共享标签页"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("shared.title")
             }
@@ -240,11 +268,29 @@ struct SharedTabScreen: View {
             HStack {
                 Text(chat.title).lineLimit(2).foregroundStyle(.primary)
                 Spacer(minLength: 4)
-                if chat.id == model.snapshot?.conversationId { Image(systemName: "checkmark").font(.caption) }
-                else if chat.status == "running" { ProgressView().controlSize(.mini) }
-                else if chat.readState == "unread" { Circle().frame(width: 6, height: 6) }
+                if displayedChatStatus(chat) == "running" {
+                    ProgressView().controlSize(.mini).accessibilityLabel("生成中")
+                } else if displayedChatStatus(chat) == "waiting" {
+                    Image(systemName: "hand.raised").font(.caption2).foregroundStyle(.orange)
+                } else if displayedChatStatus(chat) == "error" {
+                    Image(systemName: "exclamationmark.circle").font(.caption2).foregroundStyle(.red)
+                } else if chat.readState == "unread" {
+                    Circle().fill(displayedChatStatus(chat) == "completed" ? Color.green : Color.blue)
+                        .frame(width: 7, height: 7)
+                }
+                if chat.id == model.snapshot?.conversationId { Image(systemName: "checkmark").font(.caption2).foregroundStyle(.secondary) }
             }
         }.disabled(model.busy || model.libraryLoading).accessibilityIdentifier("shared.chat.\(chat.id)")
+            .accessibilityValue(displayedChatStatus(chat) == "running" ? "生成中" :
+                displayedChatStatus(chat) == "waiting" ? "等待确认" :
+                chat.readState == "unread" ? "未读" : displayedChatStatus(chat) == "error" ? "错误" : "")
+    }
+    private func displayedChatStatus(_ chat: STChat) -> String {
+        if chat.id == model.snapshot?.conversationId,
+           let live = model.snapshot?.status, ["running", "waiting", "error"].contains(live) {
+            return live
+        }
+        return chat.status ?? "unknown"
     }
     private var settings: some View {
         NavigationStack {
@@ -324,7 +370,9 @@ private struct STMessageView: View {
                     }
                 }
                 ForEach(Array(message.links.enumerated()), id: \.offset) { _, link in
-                    if link.interactionId != nil && link.interactionRevision != nil {
+                    if let remote = STResourcePolicy.publicURL(link.url) {
+                        STNativeWebLink(title: link.title, url: remote)
+                    } else if link.interactionId != nil && link.interactionRevision != nil {
                         Button { onLink(link) } label: {
                             Label("在 PC 打开：" + (link.title.isEmpty ? "网页链接" : link.title), systemImage: "link")
                                 .font(.footnote)
@@ -370,8 +418,10 @@ private struct STRemoteMediaBlock: View {
                 Label(block.text.isEmpty ? "仅 PC 可查看的图片" : block.text + " · 请在 PC 查看", systemImage: "photo")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+        } else if let url = STResourcePolicy.publicURL(block.url) {
+            STNativeFileLink(title: block.text, url: url)
         } else {
-            Label(block.text, systemImage: "doc")
+            Label(block.text + " · 仅 PC 可获取", systemImage: "doc")
                 .font(.footnote).foregroundStyle(.secondary)
                 .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
