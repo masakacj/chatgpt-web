@@ -80,8 +80,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
         var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
         if let projectID { s["projectId"] = projectID }
+        if args.contains("--shared-fixture-busy-send") {
+            s["status"] = "running"; s["responsePhase"] = "responding"; s["canSend"] = false
+        }
         if args.contains("--shared-fixture-interaction") && interactionClicks == 0 {
-            s["status"] = "waiting"; s["interactions"] = [["id": "fixture-card-001", "title": "测试确认", "summary": "只执行一次本地测试操作", "buttons": [["id": "fixture-button-0001", "label": "允许一次", "revision": "fixture-revision-001", "disabled": false, "requiresConfirmation": true]]]]
+            s["status"] = "waiting"; s["canSend"] = false; s["interactions"] = [["id": "fixture-card-001", "title": "测试确认", "summary": "只执行一次本地测试操作", "buttons": [["id": "fixture-button-0001", "label": "允许一次", "revision": "fixture-revision-001", "disabled": false, "requiresConfirmation": true]]]]
         }
         return s
     }
