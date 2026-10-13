@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+import PhotosUI
+import UniformTypeIdentifiers
 
 private struct STSelectedInteraction: Identifiable {
     let card: PCInteractionCard; let button: PCInteractionButton; let document: String
@@ -14,6 +16,9 @@ struct SharedTabScreen: View {
     @State private var expanded = Set<String>()
     @State private var followLatest = true
     @State private var interaction: STSelectedInteraction?
+    @State private var showFilePicker = false
+    @State private var showModelPicker = false
+    @State private var photo: PhotosPickerItem?
     @FocusState private var editing: Bool
     let returnToWeb: () -> Void
 
@@ -63,6 +68,57 @@ struct SharedTabScreen: View {
             .simultaneousGesture(sidebarSwipe)
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $model.needsSettings) { settings }
+            .sheet(isPresented: $showModelPicker) {
+                NavigationStack {
+                    List {
+                        if model.modelPickerLoading { ProgressView("读取 PC 模型与思考选项…") }
+                        ForEach(model.modelOptions) { option in
+                            Button {
+                                Task { await model.chooseModel(option) }
+                            } label: {
+                                HStack {
+                                    Text(option.label).foregroundStyle(.primary)
+                                    Spacer()
+                                    if option.selected == true { Image(systemName: "checkmark") }
+                                    if option.submenu == true { Image(systemName: "chevron.right").foregroundStyle(.secondary) }
+                                }
+                            }.disabled(model.modelPickerLoading).accessibilityIdentifier("shared.model.\(option.id)")
+                        }
+                        if model.modelOptions.isEmpty && !model.modelPickerLoading {
+                            Text(model.controlNotice ?? "PC 网页暂未提供可切换选项").foregroundStyle(.secondary)
+                        }
+                    }.navigationTitle("模型与思考档位")
+                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showModelPicker = false } } }
+                }.presentationDetents([.medium, .large])
+                 .task { await model.loadModelOptions() }
+            }
+            .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
+                if case let .success(url) = result {
+                    let access = url.startAccessingSecurityScopedResource()
+                    defer { if access { url.stopAccessingSecurityScopedResource() } }
+                    if let data = try? Data(contentsOf: url) {
+                        let type = UTType(filenameExtension: url.pathExtension)
+                        Task { await model.upload(data, filename: url.lastPathComponent,
+                            mimeType: type?.preferredMIMEType ?? "application/octet-stream") }
+                    } else {
+                        model.controlNotice = "无法读取选定文件，未传给 PC"
+                    }
+                }
+            }
+            .onChange(of: photo) { _, chosen in
+                guard let chosen else { return }
+                Task {
+                    if let data = try? await chosen.loadTransferable(type: Data.self) {
+                        let type = chosen.supportedContentTypes.first
+                        await model.upload(data,
+                            filename: "image-" + UUID().uuidString + "." + (type?.preferredFilenameExtension ?? "jpg"),
+                            mimeType: type?.preferredMIMEType ?? "image/jpeg")
+                    } else {
+                        model.controlNotice = "无法读取照片，未传给 PC"
+                    }
+                    photo = nil
+                }
+            }
             .sheet(item: $interaction) { selected in
                 NavigationStack {
                     ScrollView {
