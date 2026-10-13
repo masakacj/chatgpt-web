@@ -156,6 +156,14 @@ struct SharedTabScreen: View {
                             .accessibilityLabel("PC 正在生成")
                             .accessibilityIdentifier("shared.header.running")
                         Text("生成中").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                    } else if model.snapshot?.status == "completed" {
+                        Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+                            .symbolEffect(.bounce, value: model.snapshot?.status)
+                            .accessibilityIdentifier("shared.header.completed")
+                    } else if model.snapshot?.status == "error" {
+                        Image(systemName: "exclamationmark.circle.fill").font(.caption).foregroundStyle(.red)
+                            .symbolEffect(.pulse, value: model.snapshot?.status)
+                            .accessibilityIdentifier("shared.header.error")
                     } else if model.snapshot?.status == "waiting" {
                         Image(systemName: "hand.raised.circle").font(.caption).foregroundStyle(.orange)
                         Text("待确认").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
@@ -166,6 +174,14 @@ struct SharedTabScreen: View {
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("shared.title")
             }
             Spacer(minLength: 4)
+            if model.canPickModel {
+                Button { dismissKeyboard(); showModelPicker = true } label: {
+                    HStack(spacing: 3) {
+                        Text(model.snapshot?.model?.name ?? "模型").lineLimit(1)
+                        Image(systemName: "chevron.down").font(.system(size: 9))
+                    }.font(.caption2).frame(maxWidth: 116)
+                }.accessibilityIdentifier("shared.modelPicker")
+            }
             Button { dismissKeyboard(); Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil").font(.system(size: 20)).frame(width: 40, height: 44) }
                 .disabled(!model.online || model.busy).accessibilityLabel("新建聊天").accessibilityIdentifier("shared.new")
             Menu {
@@ -252,7 +268,20 @@ struct SharedTabScreen: View {
                 Button("核对发送／操作回执") { Task { await model.checkReceipts() } }
                     .font(.caption).accessibilityIdentifier("shared.receipt")
             }
-            HStack(alignment: .bottom, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 8) {
+                if model.canUpload {
+                    Menu {
+                        PhotosPicker(selection: $photo, matching: .images) {
+                            Label("照片与图片", systemImage: "photo")
+                        }
+                        Button { showFilePicker = true } label: {
+                            Label("附件与文件", systemImage: "doc")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle").font(.system(size: 22))
+                            .frame(width: 34, height: 40)
+                    }.accessibilityIdentifier("shared.attach")
+                }
                 TextField("发送消息", text: Binding(get: { model.text }, set: { model.edited($0) }), axis: .vertical)
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
                     .accessibilityIdentifier("shared.composer")
@@ -266,6 +295,10 @@ struct SharedTabScreen: View {
                 }.disabled(!model.canSubmit).padding(.bottom, 5).padding(.trailing, 6)
                     .accessibilityLabel("发送").accessibilityIdentifier("shared.send")
             }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 25))
+            if let notice = model.controlNotice {
+                Text(notice).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    .accessibilityIdentifier("shared.controlNotice")
+            }
             Text(model.status).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1).accessibilityIdentifier("shared.status")
             #if DEBUG
             if model.fixture { Text(SharedTabFixtureProtocol.counters).font(.system(size: 9)).accessibilityIdentifier("shared.fixture.counters") }
@@ -293,6 +326,11 @@ struct SharedTabScreen: View {
                         if model.searchHasMore { Button("加载更多搜索结果") { Task { await model.search(query, more: true) } }.disabled(model.libraryLoading) }
                     }
                 } else {
+                    if !model.recentActive.isEmpty {
+                        Section("最近活跃（含项目对话）") {
+                            ForEach(model.recentActive) { chat in chatRow(chat) }
+                        }
+                    }
                     Section("项目") {
                         ForEach(model.projects) { project in
                             DisclosureGroup(isExpanded: Binding(get: { expanded.contains(project.id) }, set: { value in
@@ -305,7 +343,11 @@ struct SharedTabScreen: View {
                             } label: { Text(project.title).lineLimit(1) }
                         }
                     }
-                    Section("最近对话") { ForEach(model.chats.filter { $0.projectId == nil }) { chat in chatRow(chat) } }
+                    Section("其他已显示对话") {
+                        ForEach(model.chats.filter { chat in
+                            chat.projectId == nil && !model.recentActive.contains(where: { $0.id == chat.id })
+                        }) { chat in chatRow(chat) }
+                    }
                 }
                 Section {
                     Text(model.searchNotice).font(.caption).foregroundStyle(.secondary)
