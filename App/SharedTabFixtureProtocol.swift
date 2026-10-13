@@ -15,6 +15,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var draftWrites = 0
     private static var actions = 0
     private static var reads = 0
+    private static var healthReads = 0
     private static var newChats = 0
     private static var interactionClicks = 0
     private static var sentText: String?
@@ -28,7 +29,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
     }
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") && request.url?.host == "shared-tab.invalid"
@@ -40,8 +41,17 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             self.instanceLock.lock(); let cancelled = self.cancelled; self.instanceLock.unlock(); guard !cancelled else { return }
-            Self.lock.lock(); let result = Self.response(request); Self.lock.unlock()
-            guard let url = request.url, let response = HTTPURLResponse(url: url, statusCode: result.0, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]), let data = try? JSONSerialization.data(withJSONObject: result.1) else { return }
+            Self.lock.lock()
+            let health = request.url?.path == "/v1/health"
+            let failOnce = health && ProcessInfo.processInfo.arguments.contains("--shared-fixture-resume-timeout") && Self.healthReads == 1
+            if health { Self.healthReads += 1 }
+            let result = failOnce ? nil : Self.response(request)
+            Self.lock.unlock()
+            if failOnce {
+                self.client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+                return
+            }
+            guard let result, let url = request.url, let response = HTTPURLResponse(url: url, statusCode: result.0, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]), let data = try? JSONSerialization.data(withJSONObject: result.1) else { return }
             self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             self.client?.urlProtocol(self, didLoad: data); self.client?.urlProtocolDidFinishLoading(self)
         }
@@ -63,6 +73,13 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         let title = current.isEmpty ? "新聊天" : current == a ? "测试对话 A" : current == b ? "历史对话 B" : "已创建的新聊天"
         var messages: [[String: Any]] = current.isEmpty ? [] : [message("u-" + current, "user", "测试提问"), message("a-" + current, "assistant", current == a ? "原生测试答案 A" : "原生历史答案 B")]
         if let sentText { messages.append(message("sent-user-\(sends)", "user", sentText)); messages.append(message("sent-answer-\(sends)", "assistant", "原生回复：" + sentText)) }
+        if args.contains("--shared-fixture-native-resources") {
+            messages.append(["id": "fixture-native-resources", "role": "assistant", "text": "公开链接和文件", "blocks": [
+                ["kind": "text", "text": "公开链接和文件"],
+                ["kind": "attachment", "text": "demo.pdf", "url": "https://www.example.com/demo.pdf"],
+                ["kind": "attachment", "text": "仅 PC 私有文件", "url": ""]
+            ], "links": [["title": "官方帮助", "url": "https://www.example.com/help"]], "truncated": false])
+        }
         if args.contains("--shared-fixture-rich") {
             messages.append([
                 "id": "fixture-rich-message", "role": "assistant", "text": "富内容验收",
@@ -80,6 +97,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
         var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
         if let projectID { s["projectId"] = projectID }
+        if args.contains("--shared-fixture-sidebar") {
+            s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
+                                       ["id": b, "status": "running", "readState": "unknown"]]
+        }
         if args.contains("--shared-fixture-busy-send") || args.contains("--shared-fixture-busy-blocked") {
             s["status"] = "running"; s["responsePhase"] = "responding"
             s["canSend"] = !args.contains("--shared-fixture-busy-blocked")
@@ -93,7 +114,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         ["ok": true, "sessionId": "shared-fixture-session-001", "tabId": 7, "followTab": true, "revision": revision, "routeChanged": false, "tabClosed": false, "capturedAt": Date().timeIntervalSince1970 * 1000, "snapshot": snapshot()]
     }
     private static func library(search: Bool = false) -> [String: Any] {
-        ["ok": true, "projects": [["id": project, "title": "Project Alpha", "collapsed": false, "hasMore": false]], "chats": search ? [["id": b, "title": "历史对话 B", "status": "completed", "readState": "read"]] : [["id": a, "title": "测试对话 A", "status": "completed", "readState": "read"]], "partial": true, "source": search ? "official_search" : "official_sidebar", "hasMore": false, "loading": false]
+        let selected: [[String: Any]] = search ? [["id": b, "title": "历史对话 B", "status": "completed", "readState": "read"]] : ProcessInfo.processInfo.arguments.contains("--shared-fixture-sidebar") ? [
+            ["id": a, "title": "测试对话 A", "status": "completed", "readState": "unread"],
+            ["id": b, "title": "历史对话 B", "status": "running", "readState": "unknown"]
+        ] : [["id": a, "title": "测试对话 A", "status": "completed", "readState": "read"]]
+        return ["ok": true, "projects": [["id": project, "title": "Project Alpha", "collapsed": false, "hasMore": false]], "chats": selected, "partial": true, "source": search ? "official_search" : "official_sidebar", "hasMore": false, "loading": false]
     }
     private static func response(_ req: URLRequest) -> (Int, [String: Any]) {
         let path = req.url?.path ?? "", input = body(req), args = ProcessInfo.processInfo.arguments
