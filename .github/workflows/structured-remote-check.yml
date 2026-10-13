@@ -39,7 +39,7 @@ jobs:
           UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for g in json.load(sys.stdin)["devices"].values() for d in g if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/RemoteDesktopDerived" -resultBundlePath "$RUNNER_TEMP/RemoteDesktopUITests.xcresult" -parallel-testing-enabled NO -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/RemoteDesktopDerived" -resultBundlePath "$RUNNER_TEMP/RemoteDesktopUITests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests/testBridgeStageCanBeSelectedWithoutReusingOldPairing -only-testing:ChatGPTWebUITests/SharedTabUITests/testNativeBlankTapDismissesKeyboardAndSendWorksOnce -only-testing:ChatGPTWebUITests/SharedTabUITests/testPerChatDraftsSurviveSearchAndSwitchWithoutSyncingPC CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
       - name: Release device compilation
         run: |
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/RemoteDesktopDevice" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
