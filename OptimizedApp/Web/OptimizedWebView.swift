@@ -5,9 +5,10 @@ import WebKit
 struct OptimizedWebView: UIViewRepresentable {
     @ObservedObject var model: OptimizedAppModel
     @ObservedObject var owner: ConversationManagerOwner
+    let telemetry: OptimizedTelemetry
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model, owner: owner)
+        Coordinator(model: model, owner: owner, telemetry: telemetry)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -60,36 +61,63 @@ struct OptimizedWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let model: OptimizedAppModel
         let owner: ConversationManagerOwner
+        let telemetry: OptimizedTelemetry
         let handler: WeakOptimizedObservationHandler
         weak var webView: WKWebView?
         private var destinations: [ObjectIdentifier: URL] = [:]
 
-        init(model: OptimizedAppModel, owner: ConversationManagerOwner) {
+        init(model: OptimizedAppModel, owner: ConversationManagerOwner,
+             telemetry: OptimizedTelemetry) {
             self.model = model
             self.owner = owner
+            self.telemetry = telemetry
             handler = WeakOptimizedObservationHandler(owner: owner)
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             owner.invalidateDocument()
             model.status = "正在加载"
+            telemetry.record(.navigationStart, route: routeCategory(for: webView))
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             model.markReady()
+            telemetry.record(.navigationFinish, route: routeCategory(for: webView))
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             model.status = "页面加载失败"
+            recordNavigationError(error, webView: webView)
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             model.status = "无法打开页面"
+            recordNavigationError(error, webView: webView)
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            let route = routeCategory(for: webView)
+            telemetry.record(.contentTerminated, route: route, urgent: true)
             owner.invalidateDocument(processTerminated: true)
             model.markProcessTerminated()
+            telemetry.record(model.processTerminated ? .recoveryPaused : .automaticRecovery,
+                             route: route, urgent: true)
+        }
+
+        private func recordNavigationError(_ error: Error, webView: WKWebView) {
+            let code = (error as NSError).code
+            // -999 is cancellation during ordinary navigation, not a page failure.
+            guard code != NSURLErrorCancelled else { return }
+            telemetry.record(.navigationError, route: routeCategory(for: webView),
+                             errorCode: code, urgent: true)
+        }
+
+        private func routeCategory(for webView: WKWebView) -> String {
+            guard let url = webView.url, url.host == "chatgpt.com" else { return "other" }
+            let path = url.path
+            if path.contains("/g/") { return "project" }
+            if path.hasPrefix("/c/") { return "conversation" }
+            return "home"
         }
 
         func webView(_ webView: WKWebView,
@@ -197,6 +225,7 @@ struct OptimizedWebView: UIViewRepresentable {
         func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
             destinations.removeValue(forKey: ObjectIdentifier(download))
             model.status = "下载失败"
+            telemetry.record(.downloadError, errorCode: (error as NSError).code, urgent: true)
         }
 
         private func present(_ controller: UIViewController) {
