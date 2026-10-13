@@ -252,6 +252,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         if envelope.tabClosed == true { online = false; loading = false; snapshot = nil; status = "绑定标签页已关闭"; needsSettings = true; return }
         if envelope.routeChanged == true && envelope.snapshot == nil { loading = true; snapshot = nil; older = []; status = "PC 正在切换对话"; return }
         guard let fresh = envelope.snapshot else { return }
+        try display(fresh, using: c)
+    }
+    // Navigation returns a PC-observed snapshot directly. Display it immediately
+    // instead of waiting for a later cached session GET to catch up.
+    private func display(_ fresh: STSnapshot, using c: STConnection) throws {
         guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 24 else { throw STError(code: "schema_invalid") }
         if snapshot?.documentId != fresh.documentId { older = []; historyCursor = nil; historyHasMore = nil }
         let newOwner = ownerKey(fresh, c)
@@ -351,8 +356,18 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text); save(); let generation = epoch
         do {
             var body: [String: Any] = ["action": action, "commandId": UUID().uuidString, "documentId": snap.documentId]; body.merge(fields) { _, value in value }
-            let _: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
-            try current(generation); try await refresh(using: c)
+            let result: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
+            try current(generation)
+            // The action response already contains the page observed after the
+            // native PC navigation. Only adopt its matching destination; GET
+            // reconciliation below still handles any subsequent PC-side change.
+            if let fresh = result.snapshot,
+               (action != "new" || fresh.conversationId.isEmpty),
+               (action != "open" || fresh.conversationId == fields["targetConversationId"]),
+               (action != "new" || fresh.documentId != snap.documentId) {
+                try display(fresh, using: c)
+            }
+            try await refresh(using: c)
         } catch { self.error = error.localizedDescription; try? await refresh(using: c) }
     }
     func send() async {
