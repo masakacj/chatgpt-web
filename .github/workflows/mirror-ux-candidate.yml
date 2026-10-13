@@ -1,0 +1,127 @@
+name: Mirror UX 0.7.4 Signed Candidate
+on:
+  push:
+    branches: ['feature/mirror-ux-074-20261013']
+    paths: ['.github/workflows/mirror-ux-candidate.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mirror-ux-candidate-20261013
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/mirror-ux-074-20261013'
+    runs-on: macos-latest
+    timeout-minutes: 35
+    env:
+      ACCEPTED_SOURCE: b13592b74fb2742230f2dd4aeeddedc85e195a65
+      ACCEPTED_RUN: '38406361112'
+      VERSION: '0.7.4'
+      BUILD: '6'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require green simulator and unchanged reviewed app source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ready=false
+          for i in {1..80}; do
+            result="$(gh run view "$ACCEPTED_RUN" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha --jq '.status + ":" + (.conclusion // "pending") + ":" + .headSha')"
+            test "${result##*:}" = "$ACCEPTED_SOURCE"
+            case "$result" in
+              completed:success:*) ready=true; break ;;
+              completed:*) echo 'Source acceptance CI failed'; exit 1 ;;
+            esac
+            sleep 15
+          done
+          test "$ready" = true
+          git diff --exit-code "$ACCEPTED_SOURCE" HEAD -- App UITests Resources SafariScriptAction safari scripts project.yml package.json package-lock.json
+      - name: Confirm source policies
+        run: |
+          set -euo pipefail
+          npm run check
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-draft-policy"
+          "$RUNNER_TEMP/shared-draft-policy"
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Compile mirror iPhone candidate
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/MirrorUXCandidateDevice" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          APP="$RUNNER_TEMP/MirrorUXCandidateDevice/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = "$BUILD"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = com.masakacj.chatgptweb
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
+      - name: Sign only candidate; keep stable latest
+        env:
+          GH_RUN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --retry 5 --retry-all-errors --retry-delay 2 --max-time 15 -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
+          curl --fail-with-body --max-time 240 -X POST \
+            -H "Authorization: Bearer $GH_RUN_TOKEN" \
+            -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
+            -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" \
+            -H "X-GitHub-Sha: $GITHUB_SHA" \
+            -H 'X-App-Key: chatgpt-web' \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @dist/candidate-unsigned.ipa \
+            'https://ipa.78175132.xyz/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
+          curl --retry 5 --retry-all-errors --retry-delay 2 --max-time 15 -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-after.json
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          before=json.loads(Path('dist/stable-before.json').read_text())
+          after=json.loads(Path('dist/stable-after.json').read_text())
+          signed=json.loads(Path('dist/candidate-sign-result.json').read_text())
+          assert before==after and before['version']=='0.7.3' and str(before['build'])=='5'
+          assert signed['ok'] and signed['channel']=='candidate' and signed['promoted'] is False
+          assert signed['source_sha']==os.environ['GITHUB_SHA']
+          assert signed['bundle_id']=='com.masakacj.chatgptweb'
+          assert signed['version']==os.environ['VERSION'] and str(signed['build'])==os.environ['BUILD']
+          print(json.dumps({'candidate':signed['install_page'],'stableUntouched':True}))
+          PY
+      - name: Verify signed IPA and manifest
+        run: |
+          set -euo pipefail
+          MANIFEST="$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["manifest_url"])')"
+          IPA="$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["ipa_url"])')"
+          curl -fsS --max-time 30 "$MANIFEST" > dist/candidate-manifest.plist
+          curl -fsS --max-time 70 "$IPA" > dist/candidate-signed.ipa
+          python3 - <<'PY'
+          import json,os,plistlib,zipfile
+          from pathlib import Path
+          signed=json.loads(Path('dist/candidate-sign-result.json').read_text())
+          manifest=plistlib.loads(Path('dist/candidate-manifest.plist').read_bytes())
+          assert manifest['items'][0]['assets'][0]['url']==signed['ipa_url']
+          with zipfile.ZipFile('dist/candidate-signed.ipa') as z:
+              assert z.testzip() is None
+              names=z.namelist()
+              info=plistlib.loads(z.read('Payload/ChatGPTWeb.app/Info.plist'))
+              assert info['CFBundleIdentifier']=='com.masakacj.chatgptweb'
+              assert info['CFBundleShortVersionString']==os.environ['VERSION']
+              assert str(info['CFBundleVersion'])==os.environ['BUILD']
+              for required in ('Payload/ChatGPTWeb.app/embedded.mobileprovision','Payload/ChatGPTWeb.app/_CodeSignature/CodeResources','Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/_CodeSignature/CodeResources','Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/embedded.mobileprovision'):
+                  assert required in names, required
+          print('Mirror candidate signed, IPA ZIP CRC valid, main app + extension signatures present')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mirror-ux-074-signed-candidate
+          path: |
+            dist/candidate-signed.ipa
+            dist/candidate-manifest.plist
+            dist/candidate-sign-result.json
+          if-no-files-found: ignore
