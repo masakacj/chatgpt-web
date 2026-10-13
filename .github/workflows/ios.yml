@@ -76,7 +76,7 @@ jobs:
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/MirrorDevice" MARKETING_VERSION=0.7.2 CURRENT_PROJECT_VERSION=4 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Web Optimized iPhone Release compilation
         run: |
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/OptimizedDevice" MARKETING_VERSION=0.1.0 CURRENT_PROJECT_VERSION=1 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/OptimizedDevice" MARKETING_VERSION=0.1.2 CURRENT_PROJECT_VERSION=3 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Upload simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
