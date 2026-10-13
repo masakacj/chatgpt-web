@@ -157,14 +157,24 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS '127.0.0.1:13213/local/pair'")).firstMatch.exists)
         XCTAssertEqual(app.webViews.count, 0)
     }
-    func testRunningPCDisablesSendAndPreservesLocalDraft() throws {
-        let app = launch("--shared-fixture-busy-send")
+    func testRunningPCWithDisabledNativeSendPreservesLocalDraft() throws {
+        let app = launch("--shared-fixture-busy-blocked")
         let input = composer(app)
         input.tap(); input.typeText("do not send while PC is responding")
         XCTAssertFalse(app.buttons["shared.send"].isEnabled)
         XCTAssertTrue(String(describing: composer(app).value).contains("do not send while PC is responding"))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '生成中'")).firstMatch.exists)
+    }
+    func testRunningPCWithEnabledNativeSendAcceptsFollowUpOnce() throws {
+        let app = launch("--shared-fixture-busy-send")
+        let input = composer(app)
+        input.tap(); input.typeText("follow-up while responding")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：follow-up while responding"].waitForExistence(timeout: 10))
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("草稿同步：0"))
     }
     func testWaitingPCApprovalDisablesSendAndKeepsDraft() throws {
         let app = launch("--shared-fixture-interaction")
