@@ -165,3 +165,21 @@ If candidate signing fails after a profile or partial temporary file is created,
 - `chatgpt-web-optimized/latest`: HTTP404 `unknown app`
 - `chatgpt-web-optimized/candidate`: HTTP404 `no candidate channel`
 - No Web Optimized signed IPA has been published.
+
+## Deployment result — 2026-10-13 16:49 (Asia/Taipei)
+
+This handoff's signing blocker is RESOLVED. Historical preflight and proposed steps above are retained as context, not outstanding work.
+
+- Candidate workflow: https://github.com/masakacj/chatgpt-web/actions/runs/38370546893 — completed successfully, signed and archive/manifest verified.
+- Signed source: `d905486fd91d8873af8383ceb277c130906a4099` (documentation-only descendant of tested 7e855d6).
+- Signed app: `chatgpt-web-optimized` / `com.masakacj.chatgptweb.optimized`, v0.1.0 Build 1.
+- Candidate ID: `66c131fb-9fc0-4346-9b68-e1a5385bba7f`.
+- Candidate install page: https://ipa.78175132.xyz/candidate/66c131fb-9fc0-4346-9b68-e1a5385bba7f
+- Public IPA index: https://ipa.78175132.xyz/ now shows independent mirror and optimized cards, optimized clearly marked as a test candidate.
+- Signer source: `masakacj/laocai-manager` branch `feature/web-optimized-signer-20261013`, latest rollout commit `da12a77dd0d4f97289dba2e5a0f8f983c82e1342`.
+- Live signer server blob: `302017bdd70a24d71514872ee3ef21fa27d496e6`; candidate authorization blob: `96793ff29acb3f18ddab3e6a4c9fa80bc6439e39`. 13 policy tests passed including preservation of pre-existing structured-remote candidate authorization.
+- Latest deployment backups: `/opt/ipa-signer/server.mjs.before-candidate-20261013164927` and matching `candidate-channel.mjs.before-candidate-20261013164927`.
+- Stable mirror unchanged: `chatgpt-web` 0.7.2 Build 4, bundle `com.masakacj.chatgptweb`. Optimized channel has **not** been promoted to stable.
+- Remaining: physical iPhone app installation, login, browsing, camera/upload/download permissions, performance/recovery, and provisioning-profile compatibility acceptance. The Apple auto-profile API is not configured; the signing service currently reports shared-profile compatibility.
+
+Updated source-of-truth release status is in `DEVELOPMENT_STATUS.json`. Do not re-run the signer deployment steps above merely because this historical handoff mentions a blocker.
