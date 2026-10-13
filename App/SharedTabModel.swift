@@ -12,6 +12,12 @@ struct STSnapshot: Codable {
     var sharedTab: Bool?; var route: String?; var projectId: String?; var temporary: Bool?
     var canSend: Bool?; var pcDraftOccupied: Bool?; var composing: Bool?; var responsePhase: String?
     var interactions: [PCInteractionCard]?; var historyCursor: String?; var hasOlder: Bool?
+    var sidebarIndicators: [STSidebarSignal]?
+}
+struct STSidebarSignal: Codable {
+    let id: String
+    let status: String
+    let readState: String
 }
 struct STEnvelope: Decodable {
     let ok: Bool; let sessionId: String; let revision: Int
@@ -119,6 +125,8 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private var epoch = 0
     private var foreground = true
     private var pollTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempts = 0
     private var saveTask: Task<Void, Never>?
     private var historyCursor: String?
     private var historyHasMore: Bool?
@@ -263,11 +271,34 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         let waitingForNewReceipt = busy && currentPending?.temporary == true && !fresh.conversationId.isEmpty
         if newOwner != owner && !waitingForNewReceipt { ledger.edit(owner, text: text); owner = newOwner; text = ledger.draft(owner).text }
         snapshot = fresh; loading = fresh.status == "loading"
+        // Only official visible sidebar badges are projected. An unknown row
+        // is unknown, not a guessed completion or inferred read receipt.
+        if let indicators = fresh.sidebarIndicators, !indicators.isEmpty {
+            let byId = Dictionary(indicators.map { ($0.id, $0) }, uniquingKeysWith: { _, newer in newer })
+            chats = chats.map { original in
+                guard let marker = byId[original.id] else { return original }
+                var chat = original
+                chat.status = marker.status
+                chat.readState = marker.readState
+                return chat
+            }
+        }
         status = loading ? "PC 页面加载中" : fresh.pcDraftOccupied == true ? "PC 有未发送内容" : fresh.status == "running" ? (fresh.canSend == true ? "PC 生成中 · 可继续发送" : "PC 生成中 · 手机草稿已保留") : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用此标签页"
         // A prior definite busy rejection must not leave an obsolete red alert
         // after the same PC page explicitly reports that composing is possible.
         if fresh.canSend == true && error == STError(code: "pc_busy_or_approval").localizedDescription { error = nil }
         saveSoon()
+    }
+    private func scheduleReconnect() {
+        guard foreground, reconnectTask == nil, reconnectAttempts < 4 else { return }
+        reconnectAttempts += 1
+        let delay = UInt64(min(1 << (reconnectAttempts - 1), 8)) * 1_000_000_000
+        reconnectTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard let self, self.foreground else { return }
+            self.reconnectTask = nil
+            await self.resume()
+        }
     }
     private func startPolling() {
         pollTask?.cancel(); let generation = epoch
@@ -283,17 +314,32 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                     if Task.isCancelled || generation != self.epoch { return }
                     if let e = error as? STError, e.status == 410, failures < 2 { failures += 1; do { try await self.subscribe(using: c); continue } catch {} }
                     let code = (error as? STError)?.status ?? 0
-                    if [401, 403, 429].contains(code) || failures >= 3 { self.online = false; self.status = "离线快照 · 点击重连"; self.error = error.localizedDescription; break }
+                    if [401, 403, 429].contains(code) || failures >= 3 {
+                        self.online = false
+                        if PCCompanionPolicy.retryableRead(error) && ![401, 403, 429].contains(code) {
+                            self.status = "PC 连接恢复中 · 本地内容已保留"
+                            self.error = nil
+                            self.scheduleReconnect()
+                        } else {
+                            self.status = "离线快照 · 点击重连"
+                            self.error = error.localizedDescription
+                        }
+                        break
+                    }
                     failures += 1; try? await Task.sleep(nanoseconds: UInt64(failures) * 1_000_000_000)
                 }
             }
         }
     }
     func resume() async {
-        foreground = true; guard !online, !busy else { return }
+        foreground = true
+        if online { return }
+        if busy { scheduleReconnect(); return }
         if pairingKey.isEmpty { needsSettings = true; return }
         guard selectedTabId != nil else { needsSettings = true; await loadTabs(); return }
         busy = true; defer { busy = false }; epoch += 1
+        status = "PC 连接恢复中 · 本地内容已保留"
+        error = nil
         do {
             let c = try config(); connection = c
             let health: STHealth = try await request("/v1/health", using: c)
@@ -302,10 +348,33 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 do { let result: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try apply(result, using: c); online = result.tabClosed != true }
                 catch { if (error as? STError)?.status == 410 { sessionID = nil; try await subscribe(using: c) } else { throw error } }
             } else { try await subscribe(using: c) }
-            if online { startPolling(); await checkReceiptsInternal(using: c) }
-        } catch { online = false; self.error = error.localizedDescription; status = "离线快照 · 点击重连" }
+            if online {
+                reconnectAttempts = 0
+                reconnectTask?.cancel(); reconnectTask = nil
+                error = nil
+                startPolling()
+                await checkReceiptsInternal(using: c)
+            }
+        } catch {
+            online = false
+            if PCCompanionPolicy.retryableRead(error) {
+                self.error = nil
+                status = "PC 连接恢复中 · 本地内容已保留"
+                scheduleReconnect()
+            } else {
+                self.error = error.localizedDescription
+                status = "离线快照 · 点击重连"
+            }
+        }
     }
-    func pause() { foreground = false; epoch += 1; pollTask?.cancel(); online = false; save(); status = "本地快照" }
+    func pause() {
+        foreground = false; epoch += 1
+        pollTask?.cancel()
+        reconnectTask?.cancel(); reconnectTask = nil; reconnectAttempts = 0
+        online = false; save(); status = "本地快照"
+        if error?.localizedCaseInsensitiveContains("timed out") == true ||
+           error?.contains("超时") == true { error = nil }
+    }
     private func disconnectSession() async {
         epoch += 1; pollTask?.cancel(); online = false; revision = -1
         let id = sessionID; sessionID = nil
