@@ -101,8 +101,8 @@ jobs:
           set -euo pipefail
           MANIFEST=$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["manifest_url"])')
           IPA=$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["ipa_url"])')
-          curl -fsS "$MANIFEST" > dist/candidate-manifest.plist
-          curl -fsS "$IPA" > dist/candidate-signed.ipa
+          curl --http1.1 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 120 -fsS "$MANIFEST" > dist/candidate-manifest.plist
+          curl --http1.1 --retry 8 --retry-all-errors --retry-delay 3 --connect-timeout 20 --max-time 240 -fsS "$IPA" > dist/candidate-signed.ipa
           python3 - <<'PY'
           import json,plistlib,zipfile,hashlib
           from pathlib import Path
