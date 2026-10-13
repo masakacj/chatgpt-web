@@ -271,7 +271,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private func apply(_ envelope: STEnvelope, using c: STConnection) throws {
         guard envelope.ok, envelope.sessionId == sessionID else { throw STError(code: "schema_invalid") }
         guard envelope.revision >= revision else { return }
-        if envelope.revision == revision && envelope.routeChanged != true && envelope.tabClosed != true { return }
+        // Resume may receive the same revision. We still have to rehydrate the
+        // visible PC status after marking the app offline; skipping here leaves
+        // the header stuck at '连接恢复中' even though the session is healthy.
+        if envelope.revision == revision && envelope.routeChanged != true && envelope.tabClosed != true && online { return }
         revision = envelope.revision
         if envelope.tabClosed == true { online = false; loading = false; snapshot = nil; status = "绑定标签页已关闭"; needsSettings = true; return }
         if envelope.routeChanged == true && envelope.snapshot == nil { loading = true; snapshot = nil; older = []; status = "PC 正在切换对话"; return }
