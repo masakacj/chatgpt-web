@@ -12,12 +12,12 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: remote-ui-${{ github.ref }}
+  group: remote-ui-stage-validation-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   native:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
