@@ -3,7 +3,7 @@
 Date: 2026-10-13
 Owner: ChatGPT Web iOS project
 Scope: independently signed `ChatGPTWebOptimized` (WKWebView, no PC Bridge) vs existing native-PC mirror.
-Status: **architecture-level NO-GO for true Result Only; simulator gate pending**. This does *not* claim that a real-ChatGPT iPhone A/B memory benchmark has been completed.
+Status: **NO-GO for strict independent WKWebView Result Only; iOS Simulator benchmark PASSED 2026-10-13**. This does *not* claim a real-ChatGPT iPhone A/B resident-memory benchmark.
 
 ## Required outcome
 
@@ -47,13 +47,30 @@ Modes:
 
 Assertions check intermediate DOM, stored model records and visible UI controls. `retainedPayloadBytes` in the fixture is *logical payload capacity*, **not measured RSS or JavaScript heap residency**. Layout timing is illustrative and device-dependent. This experiment alone does not establish exact WebContent memory savings, crash rates, or authentic ChatGPT React compatibility.
 
+## iOS Simulator measured evidence
+
+- GitHub Actions run `38399873801` completed **success**, one iOS Simulator WebKit XCTest passed, zero failures.
+- The five modes produced the following counts from the same fixture:
+
+| Mode | DOM elements | Intermediate DOM nodes | Hidden intermediate nodes | Retained intermediate model records | Final answer nodes | Approval buttons |
+|---|---:|---:|---:|---:|---:|---:|
+| full | 3,609 | 2,400 | 0 | 2,400 | 400 | 1 |
+| css_hidden | 3,609 | 2,400 | 2,400 | 2,400 | 400 | 1 |
+| offscreen | 3,609 | 2,400 | 0 | 2,400 | 400 | 1 |
+| dom_pruned | 1,209 | 0 | 0 | 2,400 | 400 | 1 |
+| owned_final_only | 1,209 | 0 | 0 | 0 | 400 | 1 |
+
+- The experiment intentionally embeds only synthetic fixture content and never logs in to ChatGPT. The 10,560,000-byte `retainedPayloadBytes` field is a **logical UTF-16 payload-size estimate**, *not measured physical resident memory* and potentially overestimates actual allocations due to JavaScript string sharing.
+- A single layout flush yielded approximately 4.0ms (full), 0.0ms (css), 3.0ms (offscreen), 0.0ms (pruned), 0.0ms (owned). Single-run timings are not stable benchmarks and do not establish production performance.
+- All modes preserved the fixture's 400 final messages and one approval button. This does **not** establish compatibility with real ChatGPT approvals or rich results.
+
 ## Decision rules
 
 For the **strict Result Only requirement**: NO-GO unless a reliable, supported mechanism is found that prevents the live official app from creating and retaining intermediate model data. The existing public WKWebView APIs and display-only scripts do not meet this gate.
 
 A weaker `visual-only` mode may improve readability and painting, but it must be labeled accordingly. Do not relabel it as memory-safe Result Only or use a synthetic fixture's timings to claim production improvement.
 
-Suggested disposition if experiment confirms the mechanism gap:
+**Final decision: NO-GO for true standalone Result Only using the current official-web WKWebView architecture.** This is a product/architecture gate, not a proof that all small WKWebView display optimizations are worthless or that all observed terminations were caused specifically by MCP content.\n\nDiscontinued-route disposition:
 - **Discontinue further standalone Web Optimized Result Only investment.**
 - Preserve existing signed IPA/releases and user app data; do not auto-uninstall, erase credentials or overwrite the mirror line.
 - Focus long/MCP-heavy conversations on the already-built structured PC Bridge mirror (which *never loads* ChatGPT React on the iPhone).
