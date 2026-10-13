@@ -191,6 +191,15 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["生成中"].exists)
         XCTAssertEqual(app.webViews.count, 0)
     }
+    func testNativeUploadHandsToPCWithoutSubmittingPrompt() throws {
+        let app = launch()
+        let upload = app.buttons["shared.fixture.upload"]
+        XCTAssertTrue(upload.waitForExistence(timeout: 8))
+        upload.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(
+            format: "label CONTAINS '已交给 PC 网页附件控件'")).firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
     func testNativeModelAndThinkingControlsComeFromBoundPC() throws {
         let app = launch()
         XCTAssertTrue(app.images["shared.header.completed"].exists ||
