@@ -402,6 +402,10 @@ struct SharedTabScreen: View {
             Form {
                 Section("PC 连接") {
                     TextField("HTTPS 服务地址", text: $model.endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    if model.legacyEndpointRouted {
+                        Text("已兼容旧连接：请求自动走 HTTPS 443，原配对和本地草稿不会被迁移或清除。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     SecureField("配对密钥", text: $model.pairingKey).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button {
                         Task { await model.chooseStageBridge() }
