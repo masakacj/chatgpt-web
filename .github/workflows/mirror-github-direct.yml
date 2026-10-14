@@ -1,0 +1,79 @@
+name: Mirror IPA Direct GitHub Download
+on:
+  push:
+    branches: ['feature/mirror-controls-075-20261013']
+    paths: ['.github/workflows/mirror-github-direct.yml']
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: mirror-ipa-direct-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/mirror-controls-075-20261013'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SIGN_RUN: '38424010320'
+      SIGN_SOURCE: 'ca97c79b4600f070b05e59003e4ac26339ca0c3d'
+      SIGNED_SHA256: '89c2fbf64be0dcbbc9221414df9f03f24deb1ca8b895b3a5c9a656ddccb9987d'
+      BUILD: '7'
+      VERSION: '0.7.5'
+      TAG: 'chatgpt-web-mirror-0.7.5-build7'
+      NAME: 'ChatGPTWeb-0.7.5-Build7.ipa'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact successful original signing run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          actual="$(gh run view "$SIGN_RUN" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha --jq '.status + ":" + (.conclusion // "") + ":" + .headSha')"
+          test "$actual" = "completed:success:$SIGN_SOURCE"
+      - name: Retrieve already signed archive from GitHub Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "$SIGN_RUN" --repo "$GITHUB_REPOSITORY" --name mirror-controls-075-signed-candidate --dir signed
+      - name: Verify ZIP, signing presence, SHA and exact bundle before making public
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os,plistlib,hashlib,zipfile,json,pathlib,shutil
+          paths=list(pathlib.Path('signed').rglob('candidate-signed.ipa'))
+          assert len(paths)==1,paths
+          original=paths[0]
+          digest=hashlib.sha256(original.read_bytes()).hexdigest()
+          assert digest==os.environ['SIGNED_SHA256'],('binary mismatch',digest)
+          with zipfile.ZipFile(original) as z:
+              assert z.testzip() is None
+              plist=plistlib.loads(z.read('Payload/ChatGPTWeb.app/Info.plist'))
+              assert (plist['CFBundleIdentifier'],plist['CFBundleShortVersionString'],str(plist['CFBundleVersion'])) == ('com.masakacj.chatgptweb',os.environ['VERSION'],os.environ['BUILD'])
+              for name in ('Payload/ChatGPTWeb.app/embedded.mobileprovision','Payload/ChatGPTWeb.app/_CodeSignature/CodeResources','Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/_CodeSignature/CodeResources','Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/embedded.mobileprovision'):
+                  assert name in z.namelist(),name
+          records=list(pathlib.Path('signed').rglob('candidate-sign-result.json'))
+          assert len(records)==1
+          record=json.loads(records[0].read_text())
+          assert record['source_sha']==os.environ['SIGN_SOURCE']
+          assert str(record['run_id'])==os.environ['SIGN_RUN']
+          assert record['version']==os.environ['VERSION'] and str(record['build'])==os.environ['BUILD']
+          pathlib.Path('direct').mkdir(exist_ok=True)
+          shutil.copyfile(original,pathlib.Path('direct')/os.environ['NAME'])
+          print(json.dumps({'sha256':digest,'bytes':original.stat().st_size,'signed':True}))
+          PY
+      - name: Publish permanent public GitHub Release asset (no Cloudflare download)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists: do not overwrite" >&2
+            exit 1
+          fi
+          gh release create "$TAG" "direct/$NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+             --title "ChatGPT Web 镜像版 $VERSION Build $BUILD (签名 IPA)" \
+             --notes "Verified signed iOS mirror archive. SHA256: $SIGNED_SHA256. Existing pairing keys are not included. This release is an alternative to Cloudflare Tunnel IPA downloads." \
+             --latest=false
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | [.name,.size] | @tsv' | grep -F "$NAME"
