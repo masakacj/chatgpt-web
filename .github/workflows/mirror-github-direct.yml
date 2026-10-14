@@ -57,7 +57,8 @@ jobs:
           assert len(records)==1
           record=json.loads(records[0].read_text())
           assert record['source_sha']==os.environ['SIGN_SOURCE']
-          assert str(record['run_id'])==os.environ['SIGN_RUN']
+          # The verified GitHub run and the signed source SHA bind this archive;
+          # the signer result JSON does not include a run_id property.
           assert record['version']==os.environ['VERSION'] and str(record['build'])==os.environ['BUILD']
           pathlib.Path('direct').mkdir(exist_ok=True)
           shutil.copyfile(original,pathlib.Path('direct')/os.environ['NAME'])
