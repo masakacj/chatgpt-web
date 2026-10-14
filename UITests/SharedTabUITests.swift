@@ -370,6 +370,11 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(counts.contains("CF上传：0"), counts)
         XCTAssertTrue(counts.contains("发送请求：0"), counts)
         XCTAssertTrue(app.staticTexts["shared.controlNotice"].label.contains("不会"))
+        app.buttons["shared.action.review"].tap()
+        app.buttons["已核对 PC，仅解除本地锁定"].tap()
+        wait("exists == false", on: app.buttons["shared.receipt"])
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("Home上传：1"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("CF上传：0"))
     }
     func testUnknownHomeModelChoiceChecksReceiptRatherThanClickingAgain() throws {
         let app = launch("--shared-fixture-home-model-unknown")
