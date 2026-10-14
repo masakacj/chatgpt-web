@@ -657,6 +657,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         } else { status = "发送结果待确认 · 不会自动重发" }
         save()
     }
+    /// User must check the official PC page before releasing an unresolved
+    /// non-send action. This only lifts the local UI lock; it never submits or
+    /// replays the old operation and never touches an unknown Send draft.
+    func acknowledgeActionAfterPCReview() {
+        guard !busy, actionPending != nil else { return }
+        actionPending = nil
+        controlNotice = "已按人工核对解除本地锁定；原操作没有重发"
+        save()
+    }
     func checkReceipts() async { guard !busy, let c = connection else { return }; busy = true; defer { busy = false }; await checkReceiptsInternal(using: c) }
     private func checkReceiptsInternal(using c: STConnection) async {
         for command in Array(ledger.pending.values).filter({ $0.server == c.identity }) {
