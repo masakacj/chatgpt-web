@@ -274,4 +274,90 @@ final class SharedTabUITests: XCTestCase {
         wait("label CONTAINS '交互：1'", on: app.staticTexts["shared.fixture.counters"])
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
+    func testAuthenticatedSameServerIdSelectsHomeWithoutChangingPCExecutor() throws {
+        let app = launch("--shared-fixture-dual")
+        wait("label CONTAINS 'Home HTTPS'", on: app.staticTexts["shared.route"])
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testHome502SwitchesOnlyGETToVerifiedCloudflare() throws {
+        let app = launch("--shared-fixture-home-502")
+        wait("label CONTAINS 'Cloudflare 443'", on: app.staticTexts["shared.route"], timeout: 12)
+        let counts = app.staticTexts["shared.fixture.counters"].label
+        XCTAssertTrue(counts.contains("Home读取：1"), counts)
+        XCTAssertTrue(counts.contains("CF读取："), counts)
+        XCTAssertTrue(counts.contains("发送请求：0"), counts)
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+    }
+    func testHomeNetworkLossFallsBackWithSameLoadedSnapshot() throws {
+        let app = launch("--shared-fixture-home-network-lost")
+        wait("label CONTAINS 'Cloudflare 443'", on: app.staticTexts["shared.route"], timeout: 12)
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testHome401RefusesPrimaryAndKeepsCloudflare() throws {
+        let app = launch("--shared-fixture-home-401")
+        XCTAssertTrue(app.staticTexts["shared.route"].label.contains("Cloudflare"))
+        XCTAssertTrue(app.staticTexts["shared.routeNotice"].label.contains("Home 配对认证失败"))
+        composer(app).tap(); composer(app).typeText("cf after refused home")
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：cf after refused home"].waitForExistence(timeout: 10))
+        let counts = app.staticTexts["shared.fixture.counters"].label
+        XCTAssertTrue(counts.contains("Home发送：0"), counts)
+        XCTAssertTrue(counts.contains("CF发送：1"), counts)
+    }
+    func testMismatchedOrUnprovenHomeIdentityNeverHandlesWrites() throws {
+        for flag in ["--shared-fixture-home-mismatch", "--shared-fixture-home-noid", "--shared-fixture-cf-noid"] {
+            let app = launch(flag)
+            XCTAssertTrue(app.staticTexts["shared.route"].label.contains("Cloudflare"))
+            XCTAssertTrue(app.staticTexts["shared.routeNotice"].exists)
+            XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+            app.terminate()
+        }
+    }
+    func testUnknownHomePOSTNeverReplaysAcrossLinesOrErasesDraft() throws {
+        let app = launch("--shared-fixture-home-unknown-post")
+        let input = composer(app)
+        input.tap(); input.typeText("unknown-home-send")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.buttons["shared.receipt"].waitForExistence(timeout: 10))
+        app.buttons["shared.receipt"].tap()
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        let counts = app.staticTexts["shared.fixture.counters"].label
+        XCTAssertTrue(counts.contains("Home发送：1"), counts)
+        XCTAssertTrue(counts.contains("CF发送：0"), counts)
+        XCTAssertTrue(String(describing: composer(app).value).contains("unknown-home-send"))
+        XCTAssertFalse(app.buttons["shared.send"].isEnabled)
+    }
+    func testLegacy58443OriginPreservesDraftAfterTransportRepointsTo443() throws {
+        let app = launch("--shared-fixture-legacy-origin")
+        XCTAssertTrue(String(describing: composer(app).value).contains("原58443未发送草稿"))
+        XCTAssertTrue(app.staticTexts["shared.route"].label.contains("Cloudflare"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        app.buttons["更多"].tap()
+        app.buttons["连接设置"].tap()
+        let origin = app.textFields["HTTPS 服务地址"]
+        XCTAssertTrue(origin.waitForExistence(timeout: 5))
+        XCTAssertEqual(origin.value as? String, "https://chatgpt-pc.781751.xyz:58443")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '原配对和本地草稿'")).firstMatch.exists)
+    }
+    func testAllReadLinesOfflinePreservesSnapshotAndDisablesSend() throws {
+        let app = launch("--shared-fixture-both-offline")
+        wait("label CONTAINS '离线'", on: app.staticTexts["shared.route"], timeout: 20)
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertFalse(app.buttons["shared.send"].isEnabled)
+        XCTAssertFalse(app.descendants(matching: .any)["shared.header.completed"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testLongPoll20SecondsDoesNotProducePrematureOfflineUI() throws {
+        let app = launch("--shared-fixture-20s-poll")
+        XCTAssertTrue(app.staticTexts["shared.route"].label.contains("Cloudflare"))
+        Thread.sleep(forTimeInterval: 21.5)
+        XCTAssertTrue(app.staticTexts["shared.route"].label.contains("Cloudflare"))
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertFalse(app.staticTexts["shared.route"].label.contains("离线"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+
 }
