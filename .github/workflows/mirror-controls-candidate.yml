@@ -1,4 +1,4 @@
-name: Mirror Controls 0.7.5 Signed Candidate
+name: Mirror Controls 0.7.6 Signed Candidate
 on:
   push:
     branches: ['feature/mirror-controls-075-20261013']
@@ -7,7 +7,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: mirror-controls-candidate-20261013
+  group: mirror-controls-candidate-076-20261014
   cancel-in-progress: false
 jobs:
   candidate:
@@ -15,10 +15,10 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 35
     env:
-      ACCEPTED_SOURCE: e716b404b3b65288008f0e6a92c5074824ca2ad1
-      ACCEPTED_RUN: '38423223523'
-      VERSION: '0.7.5'
-      BUILD: '7'
+      ACCEPTED_SOURCE: 6add9a91814d398c6bdef475d97093eafe976e8c
+      ACCEPTED_RUN: '38490525376'
+      VERSION: '0.7.6'
+      BUILD: '8'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,7 +85,7 @@ jobs:
           before=json.loads(Path('dist/stable-before.json').read_text())
           after=json.loads(Path('dist/stable-after.json').read_text())
           signed=json.loads(Path('dist/candidate-sign-result.json').read_text())
-          assert before==after and before['version']=='0.7.3' and str(before['build'])=='5'
+          assert before==after and before['version']=='0.7.5' and str(before['build'])=='7'
           assert signed['ok'] and signed['channel']=='candidate' and signed['promoted'] is False
           assert signed['source_sha']==os.environ['GITHUB_SHA']
           assert signed['bundle_id']=='com.masakacj.chatgptweb'
@@ -119,7 +119,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mirror-controls-075-signed-candidate
+          name: mirror-controls-076-signed-candidate
           path: |
             dist/candidate-signed.ipa
             dist/candidate-manifest.plist
