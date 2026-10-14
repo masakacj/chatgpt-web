@@ -38,12 +38,14 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") &&
             ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") &&
-            ["shared-tab.invalid", "fixture-home.invalid"].contains(request.url?.host ?? "")
+            ["shared-tab.invalid", "fixture-home.invalid", "chatgpt-pc.78175132.xyz"].contains(request.url?.host ?? "")
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let request = self.request
-        let delay: Double = request.httpMethod == "GET" && request.url?.path.contains("/sessions/") == true ? 0.18 : 0.03
+        let poll = request.httpMethod == "GET" && request.url?.path.contains("/sessions/") == true
+        let delay: Double = poll && ProcessInfo.processInfo.arguments.contains("--shared-fixture-20s-poll") ?
+            20.1 : poll ? 0.18 : 0.03
         DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             self.instanceLock.lock(); let cancelled = self.cancelled; self.instanceLock.unlock(); guard !cancelled else { return }
@@ -138,6 +140,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         let path = req.url?.path ?? "", input = body(req), args = ProcessInfo.processInfo.arguments
         let home = req.url?.host == "fixture-home.invalid"
         if path == "/v1/health" {
+            if !home && args.contains("--shared-fixture-cf-401") { return (401, ["error": "pairing_required"]) }
             if home && args.contains("--shared-fixture-home-401") { return (401, ["error": "pairing_required"]) }
             var value: [String: Any] = ["capabilities": ["shared-tab-v1", "compose-on-send", "model-selection", "mobile-upload", "recent-activity"]]
             if !(home && args.contains("--shared-fixture-home-noid")) &&
