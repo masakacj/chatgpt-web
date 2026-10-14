@@ -15,13 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      SIGN_RUN: '38424010320'
-      SIGN_SOURCE: 'ca97c79b4600f070b05e59003e4ac26339ca0c3d'
-      SIGNED_SHA256: '89c2fbf64be0dcbbc9221414df9f03f24deb1ca8b895b3a5c9a656ddccb9987d'
-      BUILD: '7'
-      VERSION: '0.7.5'
-      TAG: 'chatgpt-web-mirror-0.7.5-build7'
-      NAME: 'ChatGPTWeb-0.7.5-Build7.ipa'
+      SIGN_RUN: '38491711368'
+      SIGN_SOURCE: 'a9157614665eb68365eba140df86f087151dcc17'
+      SIGNED_SHA256: '518fc07d0ed88ac8445c36f4f58dd3d1f49409d7401b2f50b7b531fc99fa4659'
+      BUILD: '8'
+      VERSION: '0.7.6'
+      TAG: 'chatgpt-web-mirror-0.7.6-build8'
+      NAME: 'ChatGPTWeb-0.7.6-Build8.ipa'
     steps:
       - uses: actions/checkout@v4
       - name: Verify exact successful original signing run
@@ -36,7 +36,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh run download "$SIGN_RUN" --repo "$GITHUB_REPOSITORY" --name mirror-controls-075-signed-candidate --dir signed
+          gh run download "$SIGN_RUN" --repo "$GITHUB_REPOSITORY" --name mirror-controls-076-signed-candidate --dir signed
       - name: Verify ZIP, signing presence, SHA and exact bundle before making public
         run: |
           set -euo pipefail
