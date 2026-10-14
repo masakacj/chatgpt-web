@@ -7,8 +7,17 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 let empty = PCCompanionPolicy.hash("")
 let origin = try PCCompanionPolicy.origin(PCCompanionPolicy.defaultEndpoint)
 expect(origin.scheme == "https", "HTTPS required")
-expect(origin.port == 58443, "dedicated external port retained")
-expect(origin.host == "chatgpt-pc.781751.xyz", "existing domain reused")
+expect(origin.port == nil || origin.port == 443, "standard HTTPS port is the default")
+expect(origin.host == "chatgpt-pc.78175132.xyz", "healthy office tunnel is the default")
+let legacy = try PCCompanionPolicy.origin(PCCompanionPolicy.legacyEndpoint)
+expect(legacy.port == 58443, "the persisted legacy endpoint keeps its identity")
+expect(PCCompanionPolicy.transportOrigin(for: legacy) == origin, "legacy request uses healthy 443 transport")
+expect(PCCompanionPolicy.hash(legacy.absoluteString + "|pairing") != PCCompanionPolicy.hash(origin.absoluteString + "|pairing"), "transport fallback never silently rewrites draft identity")
+expect(PCCompanionPolicy.transportOrigin(for: origin) == origin, "healthy standard-443 origin is unchanged")
+let custom = try PCCompanionPolicy.origin("https://example.com:58443")
+expect(PCCompanionPolicy.transportOrigin(for: custom) == custom, "unrelated endpoints never forward private pairing")
+let lookalike = try PCCompanionPolicy.origin("https://chatgpt-pc.781751.xyz:58444")
+expect(PCCompanionPolicy.transportOrigin(for: lookalike) == lookalike, "wrong ports never inherit the legacy alias")
 for input in ["http://chatgpt-pc.781751.xyz:58443", "https://user:pass@example.com", "https://example.com/path", "https://example.com/?token=x", "https://example.com/#secret", "file:///tmp/a", "https://example.com:0"] {
     do { _ = try PCCompanionPolicy.origin(input); preconditionFailure("unsafe origin accepted") } catch { count += 1 }
 }
