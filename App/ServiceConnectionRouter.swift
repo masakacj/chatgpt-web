@@ -71,6 +71,10 @@ final class STServiceConnectionRouter {
     /// response. An untrusted Home self-assertion alone cannot establish trust.
     func attestCloudflare(_ serverId: String?) {
         guard fallback != nil else { return }
+        // Each resume must establish a fresh authenticated CF anchor before
+        // any previous Home verification can carry a new request.
+        homeVerified = false
+        if home != nil { lane = .cloudflare }
         guard let serverId, Self.isValidServerId(serverId) else {
             authenticatedServerId = nil; fallbackVerified = false; homeVerified = false
             if home != nil { notice = "Bridge 未提供已认证 serverId，Home 自动切换已禁用" }
@@ -124,8 +128,10 @@ final class STServiceConnectionRouter {
         probeInProgress = true
         nextHomeProbe = Date().addingTimeInterval(Self.recoveryDelay)
         defer { probeInProgress = false }
+        let generation = context
         do {
             let id = try await probe(home)
+            guard context == generation else { return }
             if id == authenticatedServerId && fallbackVerified {
                 lane = .home
                 notice = nil
@@ -134,7 +140,7 @@ final class STServiceConnectionRouter {
                 notice = "Home 身份已变化，禁止自动恢复"
             }
         } catch {
-            notice = "Home 恢复检测未通过，继续使用 Cloudflare"
+            if context == generation { notice = "Home 恢复检测未通过，继续使用 Cloudflare" }
         }
     }
 
@@ -144,11 +150,11 @@ final class STServiceConnectionRouter {
                     probe: (URL) async throws -> String?,
                     operation: (URL) async throws -> T) async throws -> T {
         if method == "GET" { await restoreHomeIfReady(probe: probe) }
-        let first = activeOrigin
+        let first = activeOrigin, generation = context
         do {
             return try await operation(first)
         } catch {
-            guard method == "GET", retryable(error), lane == .home,
+            guard generation == context, method == "GET", retryable(error), lane == .home,
                   fallbackVerified, let fallback, homeVerified else { throw error }
             lane = .cloudflare
             nextHomeProbe = Date().addingTimeInterval(Self.recoveryDelay)
