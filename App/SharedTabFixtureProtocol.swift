@@ -16,6 +16,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var actions = 0
     private static var reads = 0
     private static var healthReads = 0
+    private static var homeReads = 0
+    private static var cfReads = 0
+    private static var homeSends = 0
+    private static var cfSends = 0
     private static var newChats = 0
     private static var interactionClicks = 0
     private static var sentText: String?
@@ -25,14 +29,16 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks)"
+        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · Home读取：\(homeReads) · CF读取：\(cfReads) · Home发送：\(homeSends) · CF发送：\(cfSends)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; homeReads = 0; cfReads = 0; homeSends = 0; cfSends = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
     }
     override class func canInit(with request: URLRequest) -> Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") && request.url?.host == "shared-tab.invalid"
+        ProcessInfo.processInfo.arguments.contains("--ui-testing") &&
+            ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") &&
+            ["shared-tab.invalid", "fixture-home.invalid"].contains(request.url?.host ?? "")
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -45,10 +51,18 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             let health = request.url?.path == "/v1/health"
             let failOnce = health && ProcessInfo.processInfo.arguments.contains("--shared-fixture-resume-timeout") && Self.healthReads == 1
             if health { Self.healthReads += 1 }
-            let result = failOnce ? nil : Self.response(request)
+            let home = request.url?.host == "fixture-home.invalid"
+            let path = request.url?.path ?? ""
+            let poll = request.httpMethod == "GET" && path.hasPrefix("/v1/sessions/")
+            let homeLost = home && poll && ProcessInfo.processInfo.arguments.contains("--shared-fixture-home-network-lost")
+            let bothLost = poll && ProcessInfo.processInfo.arguments.contains("--shared-fixture-both-offline")
+            let result = failOnce || homeLost || bothLost ? nil : Self.response(request)
+            if (homeLost || bothLost) && poll {
+                if home { Self.homeReads += 1 } else { Self.cfReads += 1 }
+            }
             Self.lock.unlock()
-            if failOnce {
-                self.client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+            if failOnce || homeLost || bothLost {
+                self.client?.urlProtocol(self, didFailWithError: URLError(failOnce ? .timedOut : .networkConnectionLost))
                 return
             }
             guard let result, let url = request.url, let response = HTTPURLResponse(url: url, statusCode: result.0, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]), let data = try? JSONSerialization.data(withJSONObject: result.1) else { return }
@@ -122,7 +136,17 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     private static func response(_ req: URLRequest) -> (Int, [String: Any]) {
         let path = req.url?.path ?? "", input = body(req), args = ProcessInfo.processInfo.arguments
-        if path == "/v1/health" { return (200, ["capabilities": ["shared-tab-v1", "compose-on-send", "model-selection", "mobile-upload", "recent-activity"]]) }
+        let home = req.url?.host == "fixture-home.invalid"
+        if path == "/v1/health" {
+            if home && args.contains("--shared-fixture-home-401") { return (401, ["error": "pairing_required"]) }
+            var value: [String: Any] = ["capabilities": ["shared-tab-v1", "compose-on-send", "model-selection", "mobile-upload", "recent-activity"]]
+            if !(home && args.contains("--shared-fixture-home-noid")) &&
+               !(!home && args.contains("--shared-fixture-cf-noid")) {
+                value["serverId"] = home && args.contains("--shared-fixture-home-mismatch") ?
+                    "fixture-other-node-999" : "fixture-server-id-001"
+            }
+            return (200, value)
+        }
         if path == "/v1/tabs" { return (200, ["tabs": [["tabId": 7, "title": "测试共用标签页", "conversationId": current, "active": true]]]) }
         if path == "/v1/sessions" { return (200, envelope()) }
         if path.hasSuffix("/actions") {
@@ -147,7 +171,9 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                 let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": ["status": "interaction_clicked"]]; receipts[id] = value; return (200, value)
             }
             sends += 1
-            if args.contains("--shared-fixture-unknown") {
+            if home { homeSends += 1 } else { cfSends += 1 }
+            if args.contains("--shared-fixture-unknown") ||
+               (home && args.contains("--shared-fixture-home-unknown-post")) {
                 receipts[id] = ["ok": true, "commandId": id, "state": "unknown", "result": ["error": "pc_result_unknown"]]
                 return (504, ["error": "pc_result_unknown"])
             }
@@ -165,6 +191,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if path.contains("/sessions/") {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }
             reads += 1
+            if home { homeReads += 1 } else { cfReads += 1 }
+            if home && args.contains("--shared-fixture-home-502") {
+                return (502, ["error": "bad_gateway"])
+            }
             if args.contains("--shared-fixture-pc-switch") && reads == 15 { current = b; document = "fixture-PC-changed-B"; sentText = nil; revision += 1 }
             return (200, envelope())
         }
