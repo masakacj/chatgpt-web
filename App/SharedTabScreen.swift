@@ -151,20 +151,20 @@ struct SharedTabScreen: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 7) {
                     Text(model.projectTitle ?? "ChatGPT").font(.headline).lineLimit(1)
-                    if model.snapshot?.status == "running" {
+                    if model.online && model.snapshot?.status == "running" {
                         ProgressView().controlSize(.small)
                             .accessibilityLabel("PC 正在生成")
                             .accessibilityIdentifier("shared.header.running")
                         Text("生成中").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                    } else if model.snapshot?.status == "completed" {
+                    } else if model.online && model.snapshot?.status == "completed" {
                         Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
                             .symbolEffect(.bounce, value: model.snapshot?.status)
                             .accessibilityIdentifier("shared.header.completed")
-                    } else if model.snapshot?.status == "error" {
+                    } else if model.online && model.snapshot?.status == "error" {
                         Image(systemName: "exclamationmark.circle.fill").font(.caption).foregroundStyle(.red)
                             .symbolEffect(.pulse, value: model.snapshot?.status)
                             .accessibilityIdentifier("shared.header.error")
-                    } else if model.snapshot?.status == "waiting" {
+                    } else if model.online && model.snapshot?.status == "waiting" {
                         Image(systemName: "hand.raised.circle").font(.caption).foregroundStyle(.orange)
                         Text("待确认").font(.caption2.weight(.medium)).foregroundStyle(.secondary)
                             .accessibilityIdentifier("shared.header.waiting")
@@ -300,6 +300,13 @@ struct SharedTabScreen: View {
                     .accessibilityIdentifier("shared.controlNotice")
             }
             Text(model.status).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1).accessibilityIdentifier("shared.status")
+            Text((model.online ? "" : "离线 · ") + model.routeStatus)
+                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                .accessibilityIdentifier("shared.route")
+            if let routeNotice = model.routeNotice {
+                Text(routeNotice).font(.system(size: 10)).foregroundStyle(.secondary)
+                    .lineLimit(2).accessibilityIdentifier("shared.routeNotice")
+            }
             #if DEBUG
             if model.fixture {
                 Text(SharedTabFixtureProtocol.counters).font(.system(size: 9))
@@ -407,6 +414,15 @@ struct SharedTabScreen: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     SecureField("配对密钥", text: $model.pairingKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Toggle("启用 Home HTTPS 主线路", isOn: $model.homeEnabled)
+                        .accessibilityIdentifier("shared.home.enabled")
+                    TextField("Home HTTPS 地址（可选）", text: $model.homeEndpoint)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                        .accessibilityIdentifier("shared.home.endpoint")
+                    Text("Home 域名须由您确认可信；两条线路需在 Bearer 认证后返回相同 serverId，否则只连接现有 Cloudflare 443。切换不会重发未知写操作。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("应用线路配置并重新连接") { Task { await model.applyHomeSettings() } }
+                        .disabled(model.busy).accessibilityIdentifier("shared.home.apply")
                     Button {
                         Task { await model.chooseStageBridge() }
                     } label: {
