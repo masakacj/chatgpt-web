@@ -20,6 +20,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var cfReads = 0
     private static var homeSends = 0
     private static var cfSends = 0
+    private static var homeUploads = 0
+    private static var cfUploads = 0
+    private static var homeModels = 0
+    private static var cfModels = 0
     private static var newChats = 0
     private static var interactionClicks = 0
     private static var sentText: String?
@@ -29,11 +33,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · Home读取：\(homeReads) · CF读取：\(cfReads) · Home发送：\(homeSends) · CF发送：\(cfSends)"
+        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · Home读取：\(homeReads) · CF读取：\(cfReads) · Home发送：\(homeSends) · CF发送：\(cfSends) · Home上传：\(homeUploads) · CF上传：\(cfUploads) · Home模型：\(homeModels) · CF模型：\(cfModels)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; homeReads = 0; cfReads = 0; homeSends = 0; cfSends = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; homeReads = 0; cfReads = 0; homeSends = 0; cfSends = 0; homeUploads = 0; cfUploads = 0; homeModels = 0; cfModels = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
     }
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") &&
@@ -156,7 +160,16 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             let action = input["action"] as? String ?? ""
             if action == "catalog" || action == "project" { return (200, library()) }
             if action == "model_catalog" { return (200, ["available": true, "current": "GPT-6", "options": [["id": "fixture-model-option-0001", "label": "Thinking · High", "selected": false, "submenu": false]]]) }
-            if action == "model_select" { return (200, ["status": "option_clicked", "model": ["available": true, "name": "GPT-6 Thinking · High"], "options": []]) }
+            if action == "model_select" {
+                let command = input["commandId"] as? String ?? ""
+                if home { homeModels += 1 } else { cfModels += 1 }
+                if home && args.contains("--shared-fixture-home-model-unknown") {
+                    receipts[command] = ["commandId": command, "state": "unknown", "result": ["status": "action_unconfirmed"]]
+                    return (504, ["error": "pc_result_unknown"])
+                }
+                receipts[command] = ["commandId": command, "state": "done", "result": ["status": "option_clicked"]]
+                return (200, ["status": "option_clicked", "model": ["available": true, "name": "GPT-6 Thinking · High"], "options": []])
+            }
             if action == "search" { return (200, library(search: true)) }
             actions += 1; revision += 1; sentText = nil
             if action == "open" { current = input["targetConversationId"] as? String ?? b; projectID = nil }
@@ -164,7 +177,16 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             document = "fixture-document-\(revision)"
             return (200, ["ok": true, "snapshot": snapshot()])
         }
-        if path.hasSuffix("/uploads") { return (200, ["status": "handed_to_pc", "name": input["name"] ?? "test.png"]) }
+        if path.hasSuffix("/uploads") {
+            let uploadId = input["uploadId"] as? String ?? ""
+            if home { homeUploads += 1 } else { cfUploads += 1 }
+            if home && args.contains("--shared-fixture-home-upload-unknown") {
+                receipts[uploadId] = ["commandId": uploadId, "state": "unknown", "result": ["status": "upload_unconfirmed"]]
+                return (504, ["error": "pc_result_unknown"])
+            }
+            receipts[uploadId] = ["commandId": uploadId, "state": "done", "result": ["status": "handed_to_pc"]]
+            return (200, ["status": "handed_to_pc", "name": input["name"] ?? "test.png"])
+        }
         if path.hasSuffix("/commands") {
             let id = input["commandId"] as? String ?? "", action = input["action"] as? String ?? ""
             if let existing = receipts[id] { return (200, existing) }
