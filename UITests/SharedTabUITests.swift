@@ -360,4 +360,30 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
 
+    func testUnknownHomeUploadUsesOriginalUploadIdForReadOnlyReceiptLookup() throws {
+        let app = launch("--shared-fixture-home-upload-unknown")
+        app.buttons["shared.fixture.upload"].tap()
+        XCTAssertTrue(app.buttons["shared.receipt"].waitForExistence(timeout: 10))
+        app.buttons["shared.receipt"].tap()
+        let counts = app.staticTexts["shared.fixture.counters"].label
+        XCTAssertTrue(counts.contains("Home上传：1"), counts)
+        XCTAssertTrue(counts.contains("CF上传：0"), counts)
+        XCTAssertTrue(counts.contains("发送请求：0"), counts)
+        XCTAssertTrue(app.staticTexts["shared.controlNotice"].label.contains("不会"))
+    }
+    func testUnknownHomeModelChoiceChecksReceiptRatherThanClickingAgain() throws {
+        let app = launch("--shared-fixture-home-model-unknown")
+        app.buttons["shared.modelPicker"].tap()
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        option.tap()
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.buttons["shared.receipt"].waitForExistence(timeout: 10))
+        app.buttons["shared.receipt"].tap()
+        let counts = app.staticTexts["shared.fixture.counters"].label
+        XCTAssertTrue(counts.contains("Home模型：1"), counts)
+        XCTAssertTrue(counts.contains("CF模型：0"), counts)
+        XCTAssertTrue(counts.contains("发送请求：0"), counts)
+    }
+
 }
