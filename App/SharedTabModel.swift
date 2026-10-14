@@ -183,7 +183,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     var canUpload: Bool { online && !busy && !uploading && !loading && capabilities.contains("mobile-upload") && snapshot != nil && snapshot?.status != "waiting" }
     var canPickModel: Bool { online && !busy && capabilities.contains("model-selection") && snapshot?.model?.available == true }
-    var thinking: Bool { snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant" }
+    var thinking: Bool { online && (snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant") }
     var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
     private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
 
@@ -199,6 +199,13 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             SharedTabFixtureProtocol.reset()
             #endif
             endpoint = "https://shared-tab.invalid"; pairingKey = String(repeating: "T", count: 43); selectedTabId = 7
+            if ProcessInfo.processInfo.arguments.contains("--shared-fixture-legacy-origin") {
+                endpoint = PCCompanionPolicy.legacyEndpoint
+                let legacy = PCCompanionPolicy.hash(endpoint + "|" + pairingKey)
+                owner = legacy + "|11111111-1111-4111-8111-111111111111"
+                ledger.edit(owner, text: "原58443未发送草稿")
+                text = ledger.draft(owner).text
+            }
             homeEndpoint = "https://fixture-home.invalid"
             homeEnabled = ProcessInfo.processInfo.arguments.contains("--shared-fixture-dual") ||
                 ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--shared-fixture-home-") }
@@ -247,7 +254,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private func rawRequest<T: Decodable>(_ path: String, using c: STConnection,
                                            via origin: URL, body: [String: Any]? = nil,
                                            method: String? = nil) async throws -> T {
-        guard path.hasPrefix("/v1/"), !path.contains("\\\\"), let url = URL(string: path, relativeTo: origin)?.absoluteURL,
+        guard path.hasPrefix("/v1/"), !path.contains("\\"), let url = URL(string: path, relativeTo: origin)?.absoluteURL,
               url.host == origin.host, url.port == origin.port, url.scheme == "https" else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.httpMethod = method ?? (body == nil ? "GET" : "POST")
         req.setValue("Bearer " + c.key, forHTTPHeaderField: "Authorization")
