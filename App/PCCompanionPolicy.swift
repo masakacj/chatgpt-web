@@ -46,7 +46,16 @@ struct PCDraftBuffer: Codable {
 }
 
 enum PCCompanionPolicy {
-    static let defaultEndpoint = "https://chatgpt-pc.781751.xyz:58443"
+    // Use the stable standard-443 tunnel for new installs. The legacy 58443
+    // endpoint remains a logical identity for existing phone drafts/receipts.
+    static let defaultEndpoint = "https://chatgpt-pc.78175132.xyz"
+    static let legacyEndpoint = "https://chatgpt-pc.781751.xyz:58443"
+    static func transportOrigin(for origin: URL) -> URL {
+        // Exact old origin only: never redirect arbitrary custom/pairing hosts.
+        // Transport is switched BEFORE the request, including POST. There is no
+        // retry or second Send, and the caller's persisted identity stays intact.
+        origin.absoluteString == legacyEndpoint ? URL(string: defaultEndpoint)! : origin
+    }
     static func hash(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
@@ -76,7 +85,7 @@ struct PCCompanionError: Error, LocalizedError {
     let status: Int
     var errorDescription: String? {
         let labels = [
-            "invalid_endpoint": "请使用 HTTPS 服务地址并保留端口 58443，不要附加路径或密钥。",
+            "invalid_endpoint": "请使用不含路径或密钥的 HTTPS 服务地址。",
             "pairing_required": "配对密钥无效，请在 PC 本机配对页重新复制。",
             "invalid_pairing": "请输入 PC 本机配对页中的完整密钥。",
             "pc_offline": "PC 扩展暂时离线，已保留本地答案和草稿。",
