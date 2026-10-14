@@ -294,9 +294,14 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     /// responses attest to the same persistent serverId. Missing serverId
     /// keeps the legacy CF-only client operational.
     private func verifiedHealth(using c: STConnection) async throws -> STHealth {
+        // The visible settings fields are staging inputs. No bearer token is
+        // sent to a newly typed Home host until "应用线路配置" persists explicit
+        // user consent. UI fixtures use only intercepted .invalid hosts.
+        let allowedHome = fixture ? homeEnabled : UserDefaults.standard.bool(forKey: "SharedPC.homeEnabled")
+        let approvedHome = fixture ? homeEndpoint : (UserDefaults.standard.string(forKey: "SharedPC.homeEndpoint") ?? "")
         serviceRouter.configure(logicalOrigin: c.origin,
             transportOrigin: PCCompanionPolicy.transportOrigin(for: c.origin),
-            identity: c.identity, homeInput: homeEndpoint, homeEnabled: homeEnabled, fixture: fixture)
+            identity: c.identity, homeInput: approvedHome, homeEnabled: allowedHome, fixture: fixture)
         guard let cf = serviceRouter.cloudflareOrigin else { throw STError(code: "invalid_endpoint") }
         defer { updateRouteStatus() }
         let health: STHealth = try await rawRequest("/v1/health", using: c, via: cf)
