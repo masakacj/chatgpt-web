@@ -18,6 +18,7 @@ struct SharedTabScreen: View {
     @State private var interaction: STSelectedInteraction?
     @State private var showFilePicker = false
     @State private var showModelPicker = false
+    @State private var confirmReleaseAction = false
     @State private var photo: PhotosPickerItem?
     @FocusState private var editing: Bool
     let returnToWeb: () -> Void
@@ -68,6 +69,13 @@ struct SharedTabScreen: View {
             .simultaneousGesture(sidebarSwipe)
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $model.needsSettings) { settings }
+            .confirmationDialog("请先在 PC 官方页面人工核对这次操作的实际结果。只解除本地锁定，不会再次上传、点击或导航。",
+                isPresented: $confirmReleaseAction, titleVisibility: .visible) {
+                Button("已核对 PC，仅解除本地锁定", role: .destructive) {
+                    model.acknowledgeActionAfterPCReview()
+                }
+                Button("继续保留待确认", role: .cancel) {}
+            }
             .sheet(isPresented: $showModelPicker) {
                 NavigationStack {
                     List {
@@ -267,6 +275,10 @@ struct SharedTabScreen: View {
             if model.currentPending != nil || model.actionPending != nil {
                 Button("核对发送／操作回执") { Task { await model.checkReceipts() } }
                     .font(.caption).accessibilityIdentifier("shared.receipt")
+            }
+            if model.actionPending != nil {
+                Button("已在 PC 人工核对，解除操作锁定") { confirmReleaseAction = true }
+                    .font(.caption).accessibilityIdentifier("shared.action.review")
             }
             HStack(alignment: .bottom, spacing: 8) {
                 if model.canUpload {
