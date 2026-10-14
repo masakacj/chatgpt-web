@@ -103,7 +103,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
 
 @MainActor final class SharedTabModel: ObservableObject {
     static let stageEndpoint = "https://chatgpt-bridge-test.78175132.xyz"
-    @Published var endpoint = UserDefaults.standard.string(forKey: "PCCompanion.endpoint") ?? "https://chatgpt-pc.781751.xyz:58443"
+    @Published var endpoint = UserDefaults.standard.string(forKey: "PCCompanion.endpoint") ?? PCCompanionPolicy.defaultEndpoint
     @Published var pairingKey = ""
     @Published var tabs: [STTab] = []
     @Published var projects: [STProject] = []
@@ -129,6 +129,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published private(set) var ledger = STDraftLedger()
     @Published private(set) var actionPending: STActionPending?
     private(set) var selectedTabId: Int?
+    // Legacy settings retain their original ledger identity while HTTP uses
+    // the stable 443 endpoint. This avoids orphaning drafts and pending receipts.
+    var legacyEndpointRouted: Bool {
+        (try? PCCompanionPolicy.origin(endpoint))?.absoluteString == PCCompanionPolicy.legacyEndpoint
+    }
     private var owner = ""
     private var connection: STConnection?
     private var sessionID: String?
@@ -229,7 +234,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func edited(_ value: String) { text = value; ledger.edit(owner, text: value); saveSoon() }
     private func request<T: Decodable>(_ path: String, using c: STConnection, body: [String: Any]? = nil, method: String? = nil) async throws -> T {
-        guard path.hasPrefix("/v1/"), !path.contains("\\"), let url = URL(string: path, relativeTo: c.origin)?.absoluteURL, url.host == c.origin.host, url.port == c.origin.port, url.scheme == "https" else { throw URLError(.badURL) }
+        let transportOrigin = PCCompanionPolicy.transportOrigin(for: c.origin)
+        guard path.hasPrefix("/v1/"), !path.contains("\\"), let url = URL(string: path, relativeTo: transportOrigin)?.absoluteURL,
+              url.host == transportOrigin.host, url.port == transportOrigin.port, url.scheme == "https" else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.httpMethod = method ?? (body == nil ? "GET" : "POST")
         req.setValue("Bearer " + c.key, forHTTPHeaderField: "Authorization")
         if let body { req.httpBody = try JSONSerialization.data(withJSONObject: body); req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
