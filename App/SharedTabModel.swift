@@ -38,7 +38,7 @@ struct STLibrary: Decodable {
     var projects: [STProject]?; var chats: [STChat]?; var partial: Bool?; var source: String?
     var hasMore: Bool?; var loading: Bool?; var emptyConfirmed: Bool?; var snapshot: STSnapshot?
 }
-private struct STHealth: Decodable { let capabilities: [String]? }
+private struct STHealth: Decodable { let capabilities: [String]?; var serverId: String? }
 private struct STTabs: Decodable { let tabs: [STTab] }
 private struct STOK: Decodable { let ok: Bool? }
 private struct STFailure: Decodable { let error: String }
@@ -105,6 +105,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     static let stageEndpoint = "https://chatgpt-bridge-test.78175132.xyz"
     @Published var endpoint = UserDefaults.standard.string(forKey: "PCCompanion.endpoint") ?? PCCompanionPolicy.defaultEndpoint
     @Published var pairingKey = ""
+    @Published var homeEndpoint = UserDefaults.standard.string(forKey: "SharedPC.homeEndpoint") ?? ""
+    @Published var homeEnabled = UserDefaults.standard.bool(forKey: "SharedPC.homeEnabled")
+    @Published var routeStatus = "HTTPS · 单线路"
+    @Published var routeNotice: String?
     @Published var tabs: [STTab] = []
     @Published var projects: [STProject] = []
     @Published var chats: [STChat] = []
@@ -149,6 +153,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private var historyCursor: String?
     private var historyHasMore: Bool?
     private let redirect = STNoRedirect()
+    private let serviceRouter = STServiceConnectionRouter()
     let fixture: Bool
     private let clientID: String
     private lazy var transport: URLSession = {
@@ -194,6 +199,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             SharedTabFixtureProtocol.reset()
             #endif
             endpoint = "https://shared-tab.invalid"; pairingKey = String(repeating: "T", count: 43); selectedTabId = 7
+            homeEndpoint = "https://fixture-home.invalid"
+            homeEnabled = ProcessInfo.processInfo.arguments.contains("--shared-fixture-dual") ||
+                ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--shared-fixture-home-") }
             return
         }
         UserDefaults.standard.set(clientID, forKey: "SharedPC.clientID")
@@ -233,10 +241,14 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         saveTask?.cancel(); saveTask = Task { [weak self] in try? await Task.sleep(nanoseconds: 300_000_000); guard !Task.isCancelled else { return }; self?.save() }
     }
     func edited(_ value: String) { text = value; ledger.edit(owner, text: value); saveSoon() }
-    private func request<T: Decodable>(_ path: String, using c: STConnection, body: [String: Any]? = nil, method: String? = nil) async throws -> T {
-        let transportOrigin = PCCompanionPolicy.transportOrigin(for: c.origin)
-        guard path.hasPrefix("/v1/"), !path.contains("\\"), let url = URL(string: path, relativeTo: transportOrigin)?.absoluteURL,
-              url.host == transportOrigin.host, url.port == transportOrigin.port, url.scheme == "https" else { throw URLError(.badURL) }
+    /// The logical origin and Keychain key never change when a request takes
+    /// another physical HTTPS route. Raw transport is used for attestation and
+    /// for the router's strictly bounded, GET-only retry.
+    private func rawRequest<T: Decodable>(_ path: String, using c: STConnection,
+                                           via origin: URL, body: [String: Any]? = nil,
+                                           method: String? = nil) async throws -> T {
+        guard path.hasPrefix("/v1/"), !path.contains("\\\\"), let url = URL(string: path, relativeTo: origin)?.absoluteURL,
+              url.host == origin.host, url.port == origin.port, url.scheme == "https" else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.httpMethod = method ?? (body == nil ? "GET" : "POST")
         req.setValue("Bearer " + c.key, forHTTPHeaderField: "Authorization")
         if let body { req.httpBody = try JSONSerialization.data(withJSONObject: body); req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
@@ -249,11 +261,73 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         }
         return try JSONDecoder().decode(T.self, from: data)
     }
+    private func retryableGET(_ error: Error) -> Bool {
+        if let failure = error as? STError { return [408, 425, 500, 502, 503, 504].contains(failure.status) }
+        return PCCompanionPolicy.retryableRead(error)
+    }
+    private func updateRouteStatus() {
+        routeStatus = serviceRouter.label
+        routeNotice = serviceRouter.notice
+    }
+    private func request<T: Decodable>(_ path: String, using c: STConnection,
+                                        body: [String: Any]? = nil, method: String? = nil) async throws -> T {
+        let verb = method ?? (body == nil ? "GET" : "POST")
+        defer { updateRouteStatus() }
+        return try await serviceRouter.perform(method: verb, retryable: { self.retryableGET($0) },
+            probe: { origin in
+                let health: STHealth = try await self.rawRequest("/v1/health", using: c, via: origin)
+                guard health.capabilities?.contains("shared-tab-v1") == true else { return nil }
+                return health.serverId
+            }, operation: { origin in
+                try await self.rawRequest(path, using: c, via: origin, body: body, method: verb)
+            })
+    }
+    /// CF443 is the identity anchor. Home is only eligible after the user has
+    /// explicitly configured its HTTPS origin and both authenticated health
+    /// responses attest to the same persistent serverId. Missing serverId
+    /// keeps the legacy CF-only client operational.
+    private func verifiedHealth(using c: STConnection) async throws -> STHealth {
+        serviceRouter.configure(logicalOrigin: c.origin,
+            transportOrigin: PCCompanionPolicy.transportOrigin(for: c.origin),
+            identity: c.identity, homeInput: homeEndpoint, homeEnabled: homeEnabled, fixture: fixture)
+        guard let cf = serviceRouter.cloudflareOrigin else { throw STError(code: "invalid_endpoint") }
+        defer { updateRouteStatus() }
+        let health: STHealth = try await rawRequest("/v1/health", using: c, via: cf)
+        guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
+        serviceRouter.attestCloudflare(health.serverId)
+        if let home = serviceRouter.candidateHomeOrigin,
+           serviceRouter.authenticatedServerId != nil {
+            do {
+                let proof: STHealth = try await rawRequest("/v1/health", using: c, via: home)
+                guard proof.capabilities?.contains("shared-tab-v1") == true else {
+                    throw STError(code: "shared_bridge_required")
+                }
+                serviceRouter.attestHome(proof.serverId)
+            } catch {
+                serviceRouter.reportHomeHealthError(error)
+            }
+        }
+        return health
+    }
+    func applyHomeSettings() async {
+        if homeEnabled && (try? PCCompanionPolicy.origin(homeEndpoint)) == nil {
+            routeNotice = "请输入可信的 Home HTTPS 服务地址，未更改当前连接"
+            return
+        }
+        if !fixture {
+            UserDefaults.standard.set(homeEndpoint, forKey: "SharedPC.homeEndpoint")
+            UserDefaults.standard.set(homeEnabled, forKey: "SharedPC.homeEnabled")
+        }
+        // No new owner or pairing key is created. Pending command IDs survive
+        // suspension and are only reconciled by GET on resume.
+        pause()
+        await resume()
+    }
     private func current(_ generation: Int) throws { guard epoch == generation, foreground, !Task.isCancelled else { throw CancellationError() } }
     func loadTabs() async {
         guard !busy else { return }; busy = true; defer { busy = false }; error = nil
         do {
-            let c = try config(); let health: STHealth = try await request("/v1/health", using: c)
+            let c = try config(); let health = try await verifiedHealth(using: c)
             capabilities = Set(health.capabilities ?? [])
             guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
             let value: STTabs = try await request("/v1/tabs?shared=1", using: c); tabs = value.tabs
@@ -373,7 +447,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         error = nil
         do {
             let c = try config(); connection = c
-            let health: STHealth = try await request("/v1/health", using: c)
+            let health = try await verifiedHealth(using: c)
             capabilities = Set(health.capabilities ?? [])
             guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
             if let id = sessionID {
@@ -526,7 +600,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             var body: [String: Any] = ["commandId": command.id, "action": "compose", "documentId": snap.documentId, "baseDraftHash": snap.draftHash, "text": command.text]
             if let project = snap.projectId { body["projectId"] = project }
             let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: body)
-            resolve(receipt, using: c); try current(generation); try? await refresh(using: c)
+            try current(generation); resolve(receipt, using: c); try? await refresh(using: c)
         } catch { self.error = error.localizedDescription; if currentPending != nil { status = "发送结果待确认 · 不会自动重发" }; save() }
     }
     private func resolve(_ receipt: STReceipt, using c: STConnection) {
