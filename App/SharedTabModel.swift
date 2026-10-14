@@ -45,7 +45,7 @@ private struct STFailure: Decodable { let error: String }
 private struct STResult: Decodable { var status: String?; var error: String?; var conversationId: String?; var projectId: String? }
 private struct STReceipt: Decodable { let commandId: String; let state: String; var result: STResult? }
 private struct STHistory: Decodable { let documentId: String; let conversationId: String; let messages: [PCRemoteMessage]; var cursor: String?; let hasMore: Bool }
-struct STActionPending: Codable { let id: String; let server: String; let conversation: String }
+struct STActionPending: Codable { let id: String; let server: String; let conversation: String; var kind: String? = nil }
 private struct STSaved: Codable {
     var ledger: STDraftLedger; var tabId: Int?; var snapshot: STSnapshot?; var server: String?
     var actionPending: STActionPending?
@@ -177,12 +177,12 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     // Never override approval, PC-draft, navigation, or editing conflicts.
     var canSubmit: Bool {
         guard let snap = snapshot else { return false }
-        return online && !busy && !loading && currentPending == nil && snap.canSend == true &&
+        return online && !busy && !loading && currentPending == nil && actionPending == nil && snap.canSend == true &&
             snap.pcDraftOccupied != true && snap.composing != true &&
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    var canUpload: Bool { online && !busy && !uploading && !loading && capabilities.contains("mobile-upload") && snapshot != nil && snapshot?.status != "waiting" }
-    var canPickModel: Bool { online && !busy && capabilities.contains("model-selection") && snapshot?.model?.available == true }
+    var canUpload: Bool { online && !busy && !uploading && !loading && actionPending == nil && capabilities.contains("mobile-upload") && snapshot != nil && snapshot?.status != "waiting" }
+    var canPickModel: Bool { online && !busy && actionPending == nil && capabilities.contains("model-selection") && snapshot?.model?.available == true }
     var thinking: Bool { online && (snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant") }
     var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
     private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
@@ -511,6 +511,20 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         status = "测试通道 · 请复制 PC 13213 的配对密钥"
         needsSettings = true
     }
+    @discardableResult private func reserveAction(_ id: String, kind: String,
+                                                   using c: STConnection, snapshot: STSnapshot) -> Bool {
+        guard actionPending == nil else { controlNotice = "上次操作回执待确认；不会重复提交"; return false }
+        actionPending = STActionPending(id: id, server: c.identity, conversation: snapshot.conversationId, kind: kind)
+        if save() { return true }
+        actionPending = nil
+        controlNotice = STError(code: "local_storage_failed").localizedDescription
+        return false
+    }
+    private func settleAction(_ id: String) {
+        guard actionPending?.id == id else { return }
+        actionPending = nil
+        save()
+    }
     private func refresh(using c: STConnection) async throws {
         guard let id = sessionID else { return }; let generation = epoch
         let value: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try current(generation); try apply(value, using: c)
@@ -538,12 +552,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     func open(_ chat: STChat) async { await navigate("open", fields: ["targetConversationId": chat.id]) }
     func newChat(project: STProject? = nil) async { await navigate("new", fields: project.map { ["projectId": $0.id] } ?? [:]) }
     private func navigate(_ action: String, fields: [String: Any]) async {
-        guard online, !busy, !libraryLoading, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        guard online, !busy, !libraryLoading, actionPending == nil, let c = connection, let id = sessionID, let snap = snapshot else { return }
         busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text); save(); let generation = epoch
+        let commandId = UUID().uuidString
+        guard reserveAction(commandId, kind: "navigation", using: c, snapshot: snap) else { return }
         do {
-            var body: [String: Any] = ["action": action, "commandId": UUID().uuidString, "documentId": snap.documentId]; body.merge(fields) { _, value in value }
+            var body: [String: Any] = ["action": action, "commandId": commandId, "documentId": snap.documentId]; body.merge(fields) { _, value in value }
             let result: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
             try current(generation)
+            settleAction(commandId)
             // The action response already contains the page observed after the
             // native PC navigation. Only adopt its matching destination; GET
             // reconciliation below still handles any subsequent PC-side change.
@@ -554,7 +571,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 try display(fresh, using: c)
             }
             try await refresh(using: c)
-        } catch { self.error = error.localizedDescription; try? await refresh(using: c) }
+        } catch {
+            self.error = "对话切换结果待确认；只核对命令回执，不会重新执行。\(error.localizedDescription)"
+            try? await refresh(using: c)
+        }
     }
     func loadModelOptions() async {
         guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
@@ -569,15 +589,19 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     func chooseModel(_ option: STModelOption) async {
         guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
         modelPickerLoading = true; defer { modelPickerLoading = false }
+        let generation = epoch, commandId = UUID().uuidString
+        guard reserveAction(commandId, kind: "model", using: c, snapshot: snap) else { return }
         do {
             let result: STModelChoice = try await request("/v1/sessions/\(id)/actions", using: c,
-                body: ["action": "model_select", "commandId": UUID().uuidString,
+                body: ["action": "model_select", "commandId": commandId,
                        "documentId": snap.documentId, "optionId": option.id])
+            try current(generation)
             guard result.status == "option_clicked" else { throw STError(code: result.error ?? "model_option_changed") }
+            settleAction(commandId)
             modelOptions = result.options ?? []
             controlNotice = modelOptions.isEmpty ? "已在 PC 网页选择：\(option.label)" : "请选择 PC 网页实际提供的细分档位"
             try? await refresh(using: c)
-        } catch { controlNotice = error.localizedDescription }
+        } catch { controlNotice = "模型操作结果待确认；可核对回执，不会自动重复选择。\(error.localizedDescription)" }
     }
     func upload(_ data: Data, filename: String, mimeType: String) async {
         guard canUpload, let c = connection, let id = sessionID, let snap = snapshot else { return }
@@ -587,15 +611,21 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         uploading = true; defer { uploading = false }; controlNotice = "正在交给 PC 网页附件控件…"
         let safeName = String(filename.replacingOccurrences(of: #"[\\/\x00-\x1f]"#,
                          with: "_", options: .regularExpression).prefix(180))
+        let generation = epoch, uploadId = UUID().uuidString
+        guard reserveAction(uploadId, kind: "upload", using: c, snapshot: snap) else { return }
         do {
             let result: STUploadResult = try await request("/v1/sessions/\(id)/uploads", using: c,
-                body: ["uploadId": UUID().uuidString, "documentId": snap.documentId,
+                body: ["uploadId": uploadId, "documentId": snap.documentId,
                        "name": safeName, "mimeType": mimeType, "base64": data.base64EncodedString()])
-            controlNotice = result.status == "handed_to_pc" ?
-                "已交给 PC 网页附件控件，请确认处理完成后发送" :
-                "未确认 PC 附件上传：\(result.error ?? result.status)，请先核对 PC"
+            try current(generation)
+            if result.status == "handed_to_pc" {
+                settleAction(uploadId)
+                controlNotice = "已交给 PC 网页附件控件，云端完成状态仍需在 PC 确认"
+            } else {
+                controlNotice = "附件结果待确认：\(result.error ?? result.status)，不会自动重传"
+            }
         } catch {
-            controlNotice = "附件结果未确认：\(error.localizedDescription)。不会自动重传"
+            controlNotice = "附件结果待确认：\(error.localizedDescription)。仅通过原 uploadId 查询回执，不会自动重传"
         }
     }
     func send() async {
@@ -627,8 +657,21 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         for command in Array(ledger.pending.values).filter({ $0.server == c.identity }) {
             if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) { resolve(receipt, using: c) }
         }
-        if let pending = actionPending, pending.server == c.identity, let receipt: STReceipt = try? await request("/v1/commands/\(pending.id)", using: c) {
-            if receipt.state == "failed" || receipt.result?.status == "interaction_clicked" { actionPending = nil; save() }
+        if let pending = actionPending, pending.server == c.identity {
+            do {
+                let receipt: STReceipt = try await request("/v1/commands/\(pending.id)", using: c)
+                guard receipt.commandId == pending.id else { return }
+                if receipt.state == "done" || receipt.state == "failed" {
+                    settleAction(pending.id)
+                    controlNotice = receipt.state == "done" ?
+                        "PC 已确认操作回执（\(pending.kind ?? "action")）；不代表附件已完成云端上传" :
+                        "PC 确认本次操作未完成，仍可核对当前页面"
+                } else {
+                    controlNotice = "操作结果待确认，保留原 commandId，不会自动重试"
+                }
+            } catch {
+                controlNotice = "原命令回执尚未确认（\(error.localizedDescription)）；不会重新执行"
+            }
         }
     }
     func followRemoteLink(_ link: PCRemoteLink) async {
@@ -643,8 +686,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func interact(_ button: PCInteractionButton, document: String) async {
         guard online, !busy, actionPending == nil, let c = connection, let id = sessionID, let snap = snapshot, snap.documentId == document else { error = STError(code: "pc_route_changed").localizedDescription; return }
-        busy = true; defer { busy = false }; let pending = STActionPending(id: UUID().uuidString, server: c.identity, conversation: snap.conversationId); actionPending = pending
-        guard save() else { actionPending = nil; return }
+        busy = true; defer { busy = false }
+        let pending = STActionPending(id: UUID().uuidString, server: c.identity,
+                                      conversation: snap.conversationId, kind: "interaction")
+        guard reserveAction(pending.id, kind: "interaction", using: c, snapshot: snap) else { return }
         do {
             let result: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: ["action": "interact", "commandId": pending.id, "documentId": document, "interactionId": button.id, "interactionRevision": button.revision, "confirmed": true])
             if result.state == "failed" || result.result?.status == "interaction_clicked" { actionPending = nil; save() }
