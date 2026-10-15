@@ -2,12 +2,17 @@ name: Mirror 0.7.5 Model and Thinking CI
 on:
   push:
     branches: ['feature/mirror-model-thinking-effort-20261016']
-    paths: ['.github/workflows/mirror-model-effort-ci.yml']
+    paths:
+      - '.github/workflows/mirror-model-effort-ci.yml'
+      - 'App/SharedTabModel.swift'
+      - 'App/SharedTabScreen.swift'
+      - 'App/SharedTabFixtureProtocol.swift'
+      - 'UITests/SharedTabUITests.swift'
 permissions:
   contents: read
 concurrency:
   group: mirror-model-effort-075
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   iphone-release:
     runs-on: macos-15
