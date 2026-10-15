@@ -172,6 +172,19 @@ struct SharedTabScreen: View {
                 TextField("发送消息", text: Binding(get: { model.text }, set: { model.edited($0) }), axis: .vertical)
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
                     .accessibilityIdentifier("shared.composer")
+                if model.canStopGeneration {
+                    Button {
+                        dismissKeyboard()
+                        Task { await model.stopGeneration() }
+                    } label: {
+                        Image(systemName: "stop.fill").font(.system(size: 14, weight: .semibold))
+                            .frame(width: 36, height: 36)
+                            .foregroundStyle(Color(uiColor: .systemBackground))
+                            .background(Color.primary, in: Circle())
+                    }.padding(.bottom, 5)
+                     .accessibilityLabel("停止生成")
+                     .accessibilityIdentifier("shared.stop")
+                }
                 Button {
                     dismissKeyboard()
                     Task { await model.send() }

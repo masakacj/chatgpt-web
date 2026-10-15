@@ -11,6 +11,7 @@ struct STSnapshot: Codable {
     let messages: [PCRemoteMessage]; let status: String; let draftHash: String
     var sharedTab: Bool?; var route: String?; var projectId: String?; var temporary: Bool?
     var canSend: Bool?; var pcDraftOccupied: Bool?; var composing: Bool?; var responsePhase: String?
+    var canStop: Bool?; var stopTargetId: String?
     var interactions: [PCInteractionCard]?; var historyCursor: String?; var hasOlder: Bool?
 }
 struct STEnvelope: Decodable {
@@ -33,7 +34,7 @@ private struct STFailure: Decodable { let error: String }
 private struct STResult: Decodable { var status: String?; var error: String?; var conversationId: String?; var projectId: String? }
 private struct STReceipt: Decodable { let commandId: String; let state: String; var result: STResult? }
 private struct STHistory: Decodable { let documentId: String; let conversationId: String; let messages: [PCRemoteMessage]; var cursor: String?; let hasMore: Bool }
-struct STActionPending: Codable { let id: String; let server: String; let conversation: String }
+struct STActionPending: Codable { let id: String; let server: String; let conversation: String; var kind: String? = nil }
 private struct STSaved: Codable {
     var ledger: STDraftLedger; var tabId: Int?; var snapshot: STSnapshot?; var server: String?
     var actionPending: STActionPending?
@@ -48,11 +49,14 @@ struct STError: LocalizedError {
         let text = [
             "shared_bridge_required": "PC 桥接尚不支持共享标签页，请更新桥接后连接。",
             "pc_route_changed": "PC 已切换对话，正在读取当前页面；没有重发消息。",
-            "pc_draft_conflict": "PC 输入框有未发送内容，请先在电脑处理。手机草稿已保留。",
-            "pc_draft_blocks_navigation": "PC 输入框有未发送内容，请先处理后再切换。",
+            "pc_draft_conflict": "PC 桥接仍在使用旧版草稿拦截规则，请升级 PC Bridge。手机草稿已保留。",
+            "pc_draft_blocks_navigation": "PC 桥接仍在使用旧版导航拦截规则，请升级 PC Bridge。",
             "draft_conflict": "PC 输入已变化，手机草稿已保留。",
             "pc_composing": "PC 正在输入，请稍后发送。",
             "pc_busy_or_approval": "当前对话正在生成或等待确认，请稍后发送。",
+            "stop_target_changed": "PC 当前生成任务已变化，本次没有执行停止。",
+            "stop_not_available": "PC 当前没有可用的停止生成按钮。",
+            "stop_confirmation_required": "停止操作缺少确认信息，没有执行。",
             "send_unavailable": "PC 发送按钮尚未就绪，消息未发送。",
             "page_loading": "PC 页面正在加载。",
             "page_not_ready": "PC 页面尚未就绪，请检查电脑上的页面。",
@@ -111,6 +115,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var needsSettings = false
     @Published private(set) var ledger = STDraftLedger()
     @Published private(set) var actionPending: STActionPending?
+    @Published private(set) var stopRequestedTarget: String?
     private(set) var selectedTabId: Int?
     private var owner = ""
     private var connection: STConnection?
@@ -141,15 +146,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     var canLoadHistory: Bool { online && !historyLoading && (historyHasMore ?? snapshot?.hasOlder ?? false) }
     var currentPending: STPendingSend? { ledger.pendingFor(owner) }
-    // Mirror the bound official PC composer's eligibility, including native
-    // follow-up Sends offered while a previous response is still generating.
-    // Never override approval, PC-draft, navigation, or editing conflicts.
+    // Honor the official PC composer's current ability to send (including
+    // follow-up prompts during generation), without treating its parked draft
+    // as a global lock over an explicit phone input.
     var canSubmit: Bool {
         guard let snap = snapshot else { return false }
         return online && !busy && !loading && currentPending == nil && snap.canSend == true &&
-            snap.pcDraftOccupied != true && snap.composing != true &&
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            snap.composing != true && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    var canStopGeneration: Bool { online && !busy && !loading && actionPending == nil && snapshot?.canStop == true && snapshot?.stopTargetId != nil && snapshot?.stopTargetId != stopRequestedTarget }
     var thinking: Bool { snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant" }
     var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
     private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
@@ -254,18 +259,18 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard let fresh = envelope.snapshot else { return }
         try display(fresh, using: c)
     }
-    // Navigation returns a PC-observed snapshot directly. Display it immediately
-    // instead of waiting for a later cached session GET to catch up.
+    // A PC-observed navigation result is displayed without waiting for the
+    // next GET; retain current route guards, drafts and Stop-target ownership.
     private func display(_ fresh: STSnapshot, using c: STConnection) throws {
         guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 24 else { throw STError(code: "schema_invalid") }
         if snapshot?.documentId != fresh.documentId { older = []; historyCursor = nil; historyHasMore = nil }
+        if snapshot?.stopTargetId != fresh.stopTargetId { stopRequestedTarget = nil }
         let newOwner = ownerKey(fresh, c)
         let waitingForNewReceipt = busy && currentPending?.temporary == true && !fresh.conversationId.isEmpty
         if newOwner != owner && !waitingForNewReceipt { ledger.edit(owner, text: text); owner = newOwner; text = ledger.draft(owner).text }
         snapshot = fresh; loading = fresh.status == "loading"
-        status = loading ? "PC 页面加载中" : fresh.pcDraftOccupied == true ? "PC 有未发送内容" : fresh.status == "running" ? (fresh.canSend == true ? "PC 生成中 · 可继续发送" : "PC 生成中 · 手机草稿已保留") : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用此标签页"
-        // A prior definite busy rejection must not leave an obsolete red alert
-        // after the same PC page explicitly reports that composing is possible.
+        // The inactive PC composer is not a lock: the explicit phone action wins.
+        status = loading ? "PC 页面加载中" : fresh.status == "running" ? (fresh.canSend == true ? "PC 生成中 · 可继续发送" : "PC 生成中 · 手机草稿已保留") : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : fresh.status == "stopped" ? "PC 显示已停止生成" : "与 PC 共用此标签页"
         if fresh.canSend == true && error == STError(code: "pc_busy_or_approval").localizedDescription { error = nil }
         saveSoon()
     }
@@ -358,9 +363,6 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             var body: [String: Any] = ["action": action, "commandId": UUID().uuidString, "documentId": snap.documentId]; body.merge(fields) { _, value in value }
             let result: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
             try current(generation)
-            // The action response already contains the page observed after the
-            // native PC navigation. Only adopt its matching destination; GET
-            // reconciliation below still handles any subsequent PC-side change.
             if let fresh = result.snapshot,
                (action != "new" || fresh.conversationId.isEmpty),
                (action != "open" || fresh.conversationId == (fields["targetConversationId"] as? String ?? "")),
@@ -400,7 +402,46 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) { resolve(receipt, using: c) }
         }
         if let pending = actionPending, pending.server == c.identity, let receipt: STReceipt = try? await request("/v1/commands/\(pending.id)", using: c) {
-            if receipt.state == "failed" || receipt.result?.status == "interaction_clicked" { actionPending = nil; save() }
+            resolveAction(receipt, using: c)
+        }
+    }
+    private func resolveAction(_ receipt: STReceipt, using c: STConnection) {
+        guard let pending = actionPending, pending.server == c.identity, pending.id == receipt.commandId else { return }
+        if receipt.state == "failed" {
+            actionPending = nil
+            if pending.kind == "stop" { stopRequestedTarget = nil } // Definite zero-click failure permits a fresh explicit attempt.
+            error = STError(code: receipt.result?.error ?? "not_acted").localizedDescription
+            status = pending.kind == "stop" ? "没有执行停止操作" : "操作未执行"
+        } else if receipt.state == "done" && receipt.result?.status == "stop_clicked" && pending.kind == "stop" {
+            actionPending = nil
+            error = nil
+            status = "已点击 PC 停止 · 等待网页同步"
+        } else if receipt.state == "done" && receipt.result?.status == "interaction_clicked" {
+            actionPending = nil
+        } else {
+            status = pending.kind == "stop" ? "停止结果待核对 · 不会自动重试" : "操作结果待确认，请核对回执"
+        }
+        save()
+    }
+    func stopGeneration() async {
+        guard canStopGeneration, let c = connection, let id = sessionID, let snap = snapshot,
+              let target = snap.stopTargetId else { return }
+        busy = true; defer { busy = false }; error = nil
+        let pending = STActionPending(id: UUID().uuidString, server: c.identity, conversation: snap.conversationId, kind: "stop")
+        actionPending = pending
+        guard save() else { actionPending = nil; error = STError(code: "local_storage_failed").localizedDescription; return }
+        stopRequestedTarget = target
+        do {
+            let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: [
+                "action": "stop", "commandId": pending.id, "documentId": snap.documentId,
+                "conversationId": snap.conversationId, "stopTargetId": target, "confirmed": true
+            ])
+            resolveAction(receipt, using: c)
+            try? await refresh(using: c)
+        } catch {
+            self.error = "停止操作结果尚未确认；可核对回执，不会自动重复点击。"
+            status = "停止结果待核对 · 不会自动重试"
+            save()
         }
     }
     func followRemoteLink(_ link: PCRemoteLink) async {
@@ -419,8 +460,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard save() else { actionPending = nil; return }
         do {
             let result: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: ["action": "interact", "commandId": pending.id, "documentId": document, "interactionId": button.id, "interactionRevision": button.revision, "confirmed": true])
-            if result.state == "failed" || result.result?.status == "interaction_clicked" { actionPending = nil; save() }
-            else { status = "操作结果待确认，请核对回执" }
+            resolveAction(result, using: c)
         } catch { self.error = "操作结果待确认；不会重复点击。" }
     }
     func loadEarlier() async {

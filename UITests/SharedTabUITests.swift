@@ -71,6 +71,43 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("草稿同步：0"))
         XCTAssertFalse(String(describing: composer(app).value).contains("PC_TEXT"))
     }
+    func testPCParkedDraftDoesNotBlockPhoneSend() throws {
+        let app = launch("--shared-fixture-pc-draft")
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["shared.status"].label.contains("PC 有未发送内容"))
+        composer(app).tap(); composer(app).typeText("active phone message")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：active phone message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：1"))
+        XCTAssertFalse(String(describing: composer(app).value).contains("PC parked draft"))
+    }
+    func testNativeStopClicksOnceAndKeepsPhoneDraft() throws {
+        let app = launch("--shared-fixture-stop")
+        let stop = app.buttons["shared.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 8))
+        let input = composer(app)
+        input.tap(); input.typeText("do not discard phone draft")
+        stop.tap()
+        wait("label CONTAINS '停止：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertFalse(stop.exists)
+        XCTAssertTrue(String(describing: composer(app).value).contains("do not discard phone draft"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+    func testUnknownStopUsesReceiptWithoutReplaying() throws {
+        let app = launch("--shared-fixture-stop-unknown")
+        let stop = app.buttons["shared.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 8))
+        stop.tap()
+        let receipt = app.buttons["shared.receipt"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 8))
+        receipt.tap()
+        wait("label CONTAINS '停止：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertFalse(stop.exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertTrue(receipt.exists, "Unknown Stop stays reserved, never auto-retried")
+    }
     func testNewChatFirstMessageAcquiresRealConversation() throws {
         let app = launch(); app.buttons["shared.new"].tap()
         wait("label == '新聊天'", on: app.staticTexts["shared.title"])

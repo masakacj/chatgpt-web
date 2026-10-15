@@ -17,6 +17,9 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var reads = 0
     private static var newChats = 0
     private static var interactionClicks = 0
+    private static var stopClicks = 0
+    private static var stopActive = true
+    private static let stopTarget = "fixture-stop-target-001"
     private static var sentText: String?
     private static var receipts: [String: [String: Any]] = [:]
     private var cancelled = false
@@ -24,11 +27,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks)"
+        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 停止：\(stopClicks)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; newChats = 0; interactionClicks = 0; stopClicks = 0; stopActive = true; sentText = nil; receipts = [:]
     }
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") && request.url?.host == "shared-tab.invalid"
@@ -79,6 +82,16 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
 
         var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
+        if args.contains("--shared-fixture-stop") || args.contains("--shared-fixture-stop-unknown") {
+            s["status"] = stopActive ? "running" : "stopped"
+            s["responsePhase"] = stopActive ? "thinking" : "stopped"
+            s["canStop"] = stopActive
+            s["stopTargetId"] = stopActive ? stopTarget : NSNull()
+        }
+        if args.contains("--shared-fixture-pc-draft") {
+            s["pcDraftOccupied"] = true
+            s["draftHash"] = PCCompanionPolicy.hash("PC parked draft")
+        }
         if let projectID { s["projectId"] = projectID }
         if args.contains("--shared-fixture-busy-send") || args.contains("--shared-fixture-busy-blocked") {
             s["status"] = "running"; s["responsePhase"] = "responding"
@@ -114,6 +127,22 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             let id = input["commandId"] as? String ?? "", action = input["action"] as? String ?? ""
             if let existing = receipts[id] { return (200, existing) }
             if action == "draft" { draftWrites += 1; return (400, ["error": "draft_sync_not_supported"]) }
+            if action == "stop" {
+                guard stopActive, input["documentId"] as? String == document,
+                      input["conversationId"] as? String == current,
+                      input["stopTargetId"] as? String == stopTarget,
+                      input["confirmed"] as? Bool == true else {
+                    let value: [String: Any] = ["ok": false, "commandId": id, "state": "failed", "result": ["status": "not_acted", "error": "stop_target_changed"]]
+                    receipts[id] = value; return (200, value)
+                }
+                stopClicks += 1; stopActive = false; revision += 1
+                if args.contains("--shared-fixture-stop-unknown") {
+                    receipts[id] = ["ok": true, "commandId": id, "state": "unknown", "result": ["status": "stop_unconfirmed"]]
+                    return (504, ["error": "pc_result_unknown"])
+                }
+                let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": ["status": "stop_clicked"]]
+                receipts[id] = value; return (200, value)
+            }
             if action == "interact" {
                 interactionClicks += 1; revision += 1
                 let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": ["status": "interaction_clicked"]]; receipts[id] = value; return (200, value)
