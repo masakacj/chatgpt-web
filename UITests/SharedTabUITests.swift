@@ -108,6 +108,40 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
         XCTAssertTrue(receipt.exists, "Unknown Stop stays reserved, never auto-retried")
     }
+    func testModelAndThinkingStrengthComeFromCurrentPCMenu() throws {
+        let app = launch("--shared-fixture-model")
+        let input = composer(app)
+        input.tap(); input.typeText("unsent phone draft stays here")
+        let picker = app.buttons["shared.model.open"]
+        XCTAssertTrue(picker.isEnabled); picker.tap()
+        let thinking = app.buttons["shared.model.option.fixture-model-thinking-10001"]
+        XCTAssertTrue(thinking.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["GPT-6 Pro"].exists, "Never synthesize unavailable PC models")
+        thinking.tap()
+        let high = app.buttons["shared.model.option.fixture-effort-high-10001"]
+        XCTAssertTrue(high.waitForExistence(timeout: 10), "Thinking opens the native PC strength submenu")
+        high.tap()
+        XCTAssertTrue(app.staticTexts["GPT-6 Thinking · High"].waitForExistence(timeout: 10))
+        XCTAssertTrue(String(describing: composer(app).value).contains("unsent phone draft stays here"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型：2"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+    func testUnknownModelSelectionCanCheckReceiptWithoutRepeatingClick() throws {
+        let app = launch("--shared-fixture-model-unknown")
+        app.buttons["shared.model.open"].tap()
+        let thinking = app.buttons["shared.model.option.fixture-model-thinking-10001"]
+        XCTAssertTrue(thinking.waitForExistence(timeout: 10)); thinking.tap()
+        let high = app.buttons["shared.model.option.fixture-effort-high-10001"]
+        XCTAssertTrue(high.waitForExistence(timeout: 10)); high.tap()
+        let receipt = app.buttons["shared.receipt"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        XCTAssertFalse(high.isEnabled)
+        receipt.tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型：2"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertTrue(receipt.exists, "Unknown model click must not replay")
+    }
     func testNewChatFirstMessageAcquiresRealConversation() throws {
         let app = launch(); app.buttons["shared.new"].tap()
         wait("label == '新聊天'", on: app.staticTexts["shared.title"])

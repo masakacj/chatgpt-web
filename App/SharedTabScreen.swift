@@ -10,6 +10,7 @@ struct SharedTabScreen: View {
     @StateObject private var model = SharedTabModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var sidebar = false
+    @State private var modelSheet = false
     @State private var query = ""
     @State private var expanded = Set<String>()
     @State private var followLatest = true
@@ -47,6 +48,7 @@ struct SharedTabScreen: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $model.needsSettings) { settings }
+            .sheet(isPresented: $modelSheet) { modelPicker }
             .sheet(item: $interaction) { selected in
                 NavigationStack {
                     ScrollView {
@@ -77,8 +79,20 @@ struct SharedTabScreen: View {
                 Image(systemName: "line.3.horizontal").font(.system(size: 21)).frame(width: 44, height: 44)
             }.accessibilityLabel("打开侧边栏").accessibilityIdentifier("shared.sidebar")
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.projectTitle ?? "ChatGPT").font(.headline).lineLimit(1)
-                Text(model.snapshot?.title ?? (model.loading ? "正在切换对话" : "PC 共享标签页"))
+                Button {
+                    dismissKeyboard()
+                    modelSheet = true
+                    Task { await model.loadModelChoices() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(model.currentModelName).font(.headline).lineLimit(1)
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                    }.foregroundStyle(.primary)
+                }
+                .disabled(!model.canOpenModelPicker)
+                .accessibilityLabel("选择模型和思考强度")
+                .accessibilityIdentifier("shared.model.open")
+                Text((model.projectTitle.map { $0 + " · " } ?? "") + (model.snapshot?.title ?? (model.loading ? "正在切换对话" : "PC 共享标签页")))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("shared.title")
             }
             Spacer(minLength: 4)
@@ -90,6 +104,79 @@ struct SharedTabScreen: View {
                 Button("原网页模式", systemImage: "safari") { Task { await model.disconnect(); returnToWeb() } }
             } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }.accessibilityLabel("更多")
         }.foregroundStyle(.primary).padding(.horizontal, 8).padding(.top, 2).padding(.bottom, 4)
+    }
+    private var modelPicker: some View {
+        NavigationStack {
+            List {
+                Section("PC 当前设置") {
+                    HStack {
+                        Text("模型")
+                        Spacer()
+                        Text(model.currentModelName).foregroundStyle(.secondary).lineLimit(2)
+                            .accessibilityIdentifier("shared.model.current")
+                    }
+                    if let effort = model.currentThinkingEffort {
+                        HStack {
+                            Text("思考强度")
+                            Spacer()
+                            Text(effort).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("shared.model.effort")
+                        }
+                    }
+                }
+                Section("PC 网页提供的选项") {
+                    if model.modelLoading {
+                        HStack(spacing: 10) { ProgressView(); Text("正在读取模型菜单…") }
+                    } else if !model.modelMenuAvailable || model.modelOptions.isEmpty {
+                        Text("暂无可选择的模型或思考强度").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(model.modelOptions) { option in
+                            Button {
+                                Task {
+                                    let confirmed = await model.chooseModelOption(option)
+                                    if confirmed { modelSheet = false }
+                                }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Text(option.label).foregroundStyle(.primary)
+                                    Spacer()
+                                    if option.selected == true { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                                    if option.submenu == true { Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
+                                }.contentShape(Rectangle())
+                            }
+                            .disabled(model.modelLoading || model.actionPending != nil)
+                            .accessibilityIdentifier("shared.model.option.\(option.id)")
+                        }
+                    }
+                }
+                if let notice = model.modelPickerNotice {
+                    Section { Text(notice).font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("shared.model.notice") }
+                }
+                Section {
+                    Text("模型和思考强度均来自当前 PC ChatGPT 网页；没有出现在官方菜单中的选项无法从手机启用。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("模型与思考强度")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("完成") { modelSheet = false }
+                        .accessibilityIdentifier("shared.model.close")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await model.loadModelChoices() }
+                    } label: { Image(systemName: "arrow.clockwise") }
+                        .disabled(model.modelLoading || !model.canOpenModelPicker)
+                        .accessibilityLabel("重新读取 PC 模型菜单")
+                        .accessibilityIdentifier("shared.model.refresh")
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
     private var transcript: some View {
         GeometryReader { geometry in

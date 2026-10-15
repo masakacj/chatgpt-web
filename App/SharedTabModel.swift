@@ -6,12 +6,31 @@ struct STTab: Codable, Identifiable {
     let tabId: Int; let title: String; let conversationId: String; let active: Bool
     var id: Int { tabId }
 }
+struct STPCThinking: Codable {
+    var observed: Bool?; var effort: String?
+}
+struct STPCModel: Codable {
+    var available: Bool; var name: String; var thinking: STPCThinking?; var source: String?
+}
+struct STModelOption: Decodable, Identifiable {
+    let id: String; let label: String
+    var selected: Bool?; var submenu: Bool?
+}
+private struct STModelCatalog: Decodable {
+    let available: Bool; let current: String; let options: [STModelOption]
+}
+private struct STModelSelection: Decodable {
+    let status: String
+    var error: String?; var model: STPCModel?; var options: [STModelOption]?
+    var selectionObserved: Bool?; var selectionEvidence: String?; var submenuOpened: Bool?
+}
 struct STSnapshot: Codable {
     let schema: Int; let documentId: String; let conversationId: String; let title: String
     let messages: [PCRemoteMessage]; let status: String; let draftHash: String
     var sharedTab: Bool?; var route: String?; var projectId: String?; var temporary: Bool?
     var canSend: Bool?; var pcDraftOccupied: Bool?; var composing: Bool?; var responsePhase: String?
     var canStop: Bool?; var stopTargetId: String?
+    var model: STPCModel?
     var interactions: [PCInteractionCard]?; var historyCursor: String?; var hasOlder: Bool?
 }
 struct STEnvelope: Decodable {
@@ -57,6 +76,9 @@ struct STError: LocalizedError {
             "stop_target_changed": "PC 当前生成任务已变化，本次没有执行停止。",
             "stop_not_available": "PC 当前没有可用的停止生成按钮。",
             "stop_confirmation_required": "停止操作缺少确认信息，没有执行。",
+            "pc_model_unavailable": "PC 当前未提供模型切换入口。",
+            "model_option_changed": "PC 模型选项已变化，请重新读取菜单。",
+            "invalid_model_option": "PC 模型选项已失效，请重新打开选择器。", 
             "send_unavailable": "PC 发送按钮尚未就绪，消息未发送。",
             "page_loading": "PC 页面正在加载。",
             "page_not_ready": "PC 页面尚未就绪，请检查电脑上的页面。",
@@ -116,6 +138,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published private(set) var ledger = STDraftLedger()
     @Published private(set) var actionPending: STActionPending?
     @Published private(set) var stopRequestedTarget: String?
+    @Published private(set) var modelOptions: [STModelOption] = []
+    @Published private(set) var modelLoading = false
+    @Published private(set) var modelMenuAvailable = false
+    @Published private(set) var modelPickerCurrent = ""
+    @Published private(set) var modelPickerNotice: String?
     private(set) var selectedTabId: Int?
     private var owner = ""
     private var connection: STConnection?
@@ -155,6 +182,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             snap.composing != true && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     var canStopGeneration: Bool { online && !busy && !loading && actionPending == nil && snapshot?.canStop == true && snapshot?.stopTargetId != nil && snapshot?.stopTargetId != stopRequestedTarget }
+    var canOpenModelPicker: Bool { online && !busy && !loading && actionPending == nil && snapshot != nil && snapshot?.model?.available != false }
+    var currentModelName: String {
+        let name = snapshot?.model?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? "选择模型" : name
+    }
+    var currentThinkingEffort: String? {
+        guard snapshot?.model?.thinking?.observed == true else { return nil }
+        return snapshot?.model?.thinking?.effort
+    }
     var thinking: Bool { snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant" }
     var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
     private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
@@ -262,6 +298,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     // A PC-observed navigation result is displayed without waiting for the
     // next GET; retain current route guards, drafts and Stop-target ownership.
     private func display(_ fresh: STSnapshot, using c: STConnection) throws {
+        if snapshot?.documentId != fresh.documentId {
+            modelOptions = []; modelPickerNotice = nil; modelMenuAvailable = false
+        }
         guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 24 else { throw STError(code: "schema_invalid") }
         if snapshot?.documentId != fresh.documentId { older = []; historyCursor = nil; historyHasMore = nil }
         if snapshot?.stopTargetId != fresh.stopTargetId { stopRequestedTarget = nil }
@@ -338,6 +377,91 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard let id = sessionID else { return }; let generation = epoch
         let value: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try current(generation); try apply(value, using: c)
     }
+    // The native phone never invents model or thinking-effort entitlements.
+    // Both menu levels come from controls visible in the bound PC ChatGPT tab.
+    func loadModelChoices() async {
+        guard canOpenModelPicker, !modelLoading, let c = connection,
+              let id = sessionID, let snap = snapshot else { return }
+        modelLoading = true; defer { modelLoading = false }
+        modelPickerNotice = nil
+        let generation = epoch
+        do {
+            let result: STModelCatalog = try await request("/v1/sessions/\(id)/actions", using: c, body: [
+                "action": "model_catalog", "commandId": UUID().uuidString,
+                "documentId": snap.documentId
+            ])
+            try current(generation)
+            guard snapshot?.documentId == snap.documentId else { throw STError(code: "pc_route_changed") }
+            modelMenuAvailable = result.available
+            modelOptions = result.options
+            modelPickerCurrent = result.current
+            if !result.available { modelPickerNotice = "PC 当前没有可用的模型菜单" }
+            else if result.options.isEmpty { modelPickerNotice = "PC 菜单没有可选择的选项" }
+        } catch {
+            modelOptions = []
+            modelPickerNotice = error.localizedDescription
+        }
+    }
+    @discardableResult func chooseModelOption(_ option: STModelOption) async -> Bool {
+        guard canOpenModelPicker, modelMenuAvailable, !modelLoading,
+              modelOptions.contains(where: { $0.id == option.id }),
+              let c = connection, let id = sessionID, let snap = snapshot else { return false }
+        modelLoading = true; defer { modelLoading = false }
+        modelPickerNotice = nil
+        let generation = epoch
+        let pending = STActionPending(id: UUID().uuidString, server: c.identity,
+                                      conversation: snap.conversationId, kind: "model")
+        actionPending = pending
+        guard save() else {
+            actionPending = nil
+            modelPickerNotice = STError(code: "local_storage_failed").localizedDescription
+            return false
+        }
+        do {
+            let result: STModelSelection = try await request("/v1/sessions/\(id)/actions", using: c, body: [
+                "action": "model_select", "commandId": pending.id,
+                "documentId": snap.documentId, "optionId": option.id
+            ])
+            try current(generation)
+            guard snapshot?.documentId == snap.documentId else { throw STError(code: "pc_route_changed") }
+            if result.status == "not_selected" {
+                actionPending = nil; save()
+                modelPickerNotice = STError(code: result.error ?? "model_option_changed").localizedDescription
+                return false
+            }
+            guard result.status == "option_clicked" else {
+                modelPickerNotice = "模型操作状态尚未确认，请核对回执，不会自动重复点击"
+                save()
+                return false
+            }
+            actionPending = nil; save()
+            if let options = result.options { modelOptions = options }
+            if result.selectionObserved == true, let actual = result.model {
+                // This is a positive PC-native observation, never an inferred setting.
+                snapshot?.model = actual
+                modelPickerCurrent = actual.name
+                saveSoon()
+            }
+            if result.submenuOpened == true {
+                modelPickerNotice = "已展开 PC 菜单，请选择模型或思考强度"
+                return false
+            }
+            if result.selectionObserved == true {
+                modelPickerNotice = "PC 已确认当前模型设置"
+                try? await refresh(using: c)
+                return true
+            }
+            modelPickerNotice = "已点击 PC 选项，当前设置尚未由网页确认"
+            try? await refresh(using: c)
+            return false
+        } catch {
+            // An unknown command may already have clicked in Chrome. Never
+            // create another command automatically, even after reconnect.
+            modelPickerNotice = "模型切换结果待核对，不会自动重复点击"
+            save()
+            return false
+        }
+    }
     func catalog() async { await libraryAction("catalog") }
     func search(_ query: String, more: Bool = false) async { await libraryAction("search", fields: ["query": query, "more": more], append: more) }
     func expand(_ project: STProject, more: Bool = false) async { await libraryAction("project", fields: ["projectId": project.id, "more": more]) }
@@ -411,15 +535,18 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             actionPending = nil
             if pending.kind == "stop" { stopRequestedTarget = nil } // Definite zero-click failure permits a fresh explicit attempt.
             error = STError(code: receipt.result?.error ?? "not_acted").localizedDescription
-            status = pending.kind == "stop" ? "没有执行停止操作" : "操作未执行"
+            status = pending.kind == "stop" ? "没有执行停止操作" : pending.kind == "model" ? "模型选择未执行" : "操作未执行"
         } else if receipt.state == "done" && receipt.result?.status == "stop_clicked" && pending.kind == "stop" {
             actionPending = nil
             error = nil
             status = "已点击 PC 停止 · 等待网页同步"
         } else if receipt.state == "done" && receipt.result?.status == "interaction_clicked" {
             actionPending = nil
+        } else if receipt.state == "done" && receipt.result?.status == "option_clicked" && pending.kind == "model" {
+            actionPending = nil
+            modelPickerNotice = "PC 已收到模型操作，可刷新查看当前设置"
         } else {
-            status = pending.kind == "stop" ? "停止结果待核对 · 不会自动重试" : "操作结果待确认，请核对回执"
+            status = pending.kind == "stop" ? "停止结果待核对 · 不会自动重试" : pending.kind == "model" ? "模型结果待核对 · 不会自动重试" : "操作结果待确认，请核对回执"
         }
         save()
     }

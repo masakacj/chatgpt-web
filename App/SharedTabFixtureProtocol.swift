@@ -20,6 +20,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var stopClicks = 0
     private static var stopActive = true
     private static let stopTarget = "fixture-stop-target-001"
+    private static var modelMenuLevel = 0
+    private static var modelSelections = 0
+    private static var modelCatalogReads = 0
+    private static var modelName = "GPT-6 Thinking · Medium"
     private static var sentText: String?
     private static var receipts: [String: [String: Any]] = [:]
     private var cancelled = false
@@ -27,11 +31,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 停止：\(stopClicks)"
+        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 停止：\(stopClicks) · 模型：\(modelSelections) · 菜单：\(modelCatalogReads)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; newChats = 0; interactionClicks = 0; stopClicks = 0; stopActive = true; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; newChats = 0; interactionClicks = 0; stopClicks = 0; stopActive = true; modelMenuLevel = 0; modelSelections = 0; modelCatalogReads = 0; modelName = "GPT-6 Thinking · Medium"; sentText = nil; receipts = [:]
     }
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") && request.url?.host == "shared-tab.invalid"
@@ -61,6 +65,26 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static func message(_ id: String, _ role: String, _ text: String) -> [String: Any] {
         ["id": id, "role": role, "text": text, "blocks": [["kind": "text", "text": text]], "links": [], "truncated": false]
     }
+    private static func currentModel() -> [String: Any] {
+        var result: [String: Any] = ["available": true, "name": modelName, "source": "pc_model_trigger"]
+        if modelName.contains("Thinking") {
+            result["thinking"] = ["observed": true, "effort": modelName.contains("Extra High") ? "Extra High" : modelName.contains("High") ? "High" : "Medium"]
+        }
+        return result
+    }
+    private static func modelOptions() -> [[String: Any]] {
+        if modelMenuLevel == 1 {
+            return [
+                ["id": "fixture-effort-medium-10001", "label": "Medium", "selected": modelName.hasSuffix("Medium"), "submenu": false],
+                ["id": "fixture-effort-high-10001", "label": "High", "selected": modelName.hasSuffix("· High"), "submenu": false],
+                ["id": "fixture-effort-extra-high-10001", "label": "Extra High", "selected": modelName.hasSuffix("Extra High"), "submenu": false]
+            ]
+        }
+        return [
+            ["id": "fixture-model-instant-10001", "label": "GPT-6 Instant", "selected": modelName == "GPT-6 Instant", "submenu": false],
+            ["id": "fixture-model-thinking-10001", "label": "GPT-6 Thinking", "selected": modelName.contains("Thinking"), "submenu": true]
+        ]
+    }
     private static func snapshot() -> [String: Any] {
         let args = ProcessInfo.processInfo.arguments
         let title = current.isEmpty ? "新聊天" : current == a ? "测试对话 A" : current == b ? "历史对话 B" : "已创建的新聊天"
@@ -87,6 +111,9 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             s["responsePhase"] = stopActive ? "thinking" : "stopped"
             s["canStop"] = stopActive
             s["stopTargetId"] = stopActive ? stopTarget : NSNull()
+        }
+        if args.contains("--shared-fixture-model") || args.contains("--shared-fixture-model-unknown") {
+            s["model"] = currentModel()
         }
         if args.contains("--shared-fixture-pc-draft") {
             s["pcDraftOccupied"] = true
@@ -117,6 +144,39 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             let action = input["action"] as? String ?? ""
             if action == "catalog" || action == "project" { return (200, library()) }
             if action == "search" { return (200, library(search: true)) }
+            if action == "model_catalog" {
+                modelCatalogReads += 1; modelMenuLevel = 0
+                return (200, ["ok": true, "available": true, "current": modelName, "options": modelOptions()])
+            }
+            if action == "model_select" {
+                let commandID = input["commandId"] as? String ?? ""
+                if let saved = receipts[commandID], let status = (saved["result"] as? [String: Any])?["status"] as? String {
+                    return (200, ["ok": true, "status": status, "model": currentModel(), "options": modelOptions()])
+                }
+                let option = input["optionId"] as? String ?? ""
+                guard input["documentId"] as? String == document,
+                      modelOptions().contains(where: { ($0["id"] as? String) == option }) else {
+                    receipts[commandID] = ["ok": false, "commandId": commandID, "state": "failed", "result": ["status": "not_selected", "error": "model_option_changed"]]
+                    return (200, ["ok": true, "status": "not_selected", "error": "model_option_changed"])
+                }
+                modelSelections += 1
+                if option == "fixture-model-thinking-10001" {
+                    modelMenuLevel = 1
+                    receipts[commandID] = ["ok": true, "commandId": commandID, "state": "done", "result": ["status": "option_clicked"]]
+                    return (200, ["ok": true, "status": "option_clicked", "model": currentModel(), "options": modelOptions(), "selectionObserved": false, "submenuOpened": true])
+                }
+                if option == "fixture-model-instant-10001" { modelName = "GPT-6 Instant" }
+                else if option == "fixture-effort-medium-10001" { modelName = "GPT-6 Thinking · Medium" }
+                else if option == "fixture-effort-high-10001" { modelName = "GPT-6 Thinking · High" }
+                else if option == "fixture-effort-extra-high-10001" { modelName = "GPT-6 Thinking · Extra High" }
+                revision += 1
+                if args.contains("--shared-fixture-model-unknown") {
+                    receipts[commandID] = ["ok": true, "commandId": commandID, "state": "unknown", "result": ["status": "action_unconfirmed"]]
+                    return (504, ["error": "pc_result_unknown"])
+                }
+                receipts[commandID] = ["ok": true, "commandId": commandID, "state": "done", "result": ["status": "option_clicked"]]
+                return (200, ["ok": true, "status": "option_clicked", "model": currentModel(), "options": modelOptions(), "selectionObserved": true, "selectionEvidence": "native_model_trigger", "submenuOpened": false])
+            }
             actions += 1; revision += 1; sentText = nil
             if action == "open" { current = input["targetConversationId"] as? String ?? b; projectID = nil }
             if action == "new" { current = ""; projectID = input["projectId"] as? String }
