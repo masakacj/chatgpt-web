@@ -1,0 +1,50 @@
+name: Mirror 0.7.4 Device Build Verification
+on:
+  push:
+    branches: ['fix/mirror-send-state-20261015-stop']
+    paths:
+      - '.github/workflows/mirror-active-stop-build.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mirror-stop-074-device-build
+  cancel-in-progress: false
+jobs:
+  build-device:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Source and policy checks
+        run: |
+          set -euo pipefail
+          npm run check
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/shared-draft-policy"
+          "$RUNNER_TEMP/shared-draft-policy"
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/pc-policy"
+          "$RUNNER_TEMP/pc-policy"
+      - name: Generate Xcode project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Compile iPhone 0.7.4 Build 6, unsigned only
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/Mirror074Device" MARKETING_VERSION=0.7.4 CURRENT_PROJECT_VERSION=6 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          APP="$RUNNER_TEMP/Mirror074Device/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = 0.7.4
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = 6
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = com.masakacj.chatgptweb
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
+      - name: Upload unsigned compilation proof (not installable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-active-stop-074-unsigned
+          path: dist/candidate-unsigned.ipa
+          if-no-files-found: error
