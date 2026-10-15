@@ -121,7 +121,7 @@ final class SharedTabUITests: XCTestCase {
         let high = app.buttons["shared.model.option.fixture-effort-high-10001"]
         XCTAssertTrue(high.waitForExistence(timeout: 10), "Thinking opens the native PC strength submenu")
         high.tap()
-        XCTAssertTrue(app.staticTexts["GPT-6 Thinking · High"].waitForExistence(timeout: 10))
+        wait("label CONTAINS 'GPT-6 Thinking · High'", on: picker, timeout: 10)
         XCTAssertTrue(String(describing: composer(app).value).contains("unsent phone draft stays here"))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型：2"))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
