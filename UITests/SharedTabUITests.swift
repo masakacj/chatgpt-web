@@ -134,9 +134,10 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(thinking.waitForExistence(timeout: 10)); thinking.tap()
         let high = app.buttons["shared.model.option.fixture-effort-high-10001"]
         XCTAssertTrue(high.waitForExistence(timeout: 10)); high.tap()
+        XCTAssertFalse(high.isEnabled)
+        app.buttons["shared.model.close"].tap()
         let receipt = app.buttons["shared.receipt"]
         XCTAssertTrue(receipt.waitForExistence(timeout: 10))
-        XCTAssertFalse(high.isEnabled)
         receipt.tap()
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型：2"))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
