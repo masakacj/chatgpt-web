@@ -1,0 +1,75 @@
+name: Mirror 0.7.5 Model and Thinking CI
+on:
+  push:
+    branches: ['feature/mirror-model-thinking-effort-20261016']
+    paths: ['.github/workflows/mirror-model-effort-ci.yml']
+permissions:
+  contents: read
+concurrency:
+  group: mirror-model-effort-075
+  cancel-in-progress: false
+jobs:
+  iphone-release:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Static and draft policy checks
+        run: |
+          set -euo pipefail
+          npm run check
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/mirror-draft-policy"
+          "$RUNNER_TEMP/mirror-draft-policy"
+      - name: Generate Xcode project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Compile device Release 0.7.5 Build 7
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/ModelEffortDevice" MARKETING_VERSION=0.7.5 CURRENT_PROJECT_VERSION=7 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          APP="$RUNNER_TEMP/ModelEffortDevice/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = 0.7.5
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = 7
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = com.masakacj.chatgptweb
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry mirror-075-model-effort-unsigned.ipa Payload && rm -rf Payload)
+      - name: Upload unsigned proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-075-model-effort-device-unsigned
+          path: dist/mirror-075-model-effort-unsigned.ipa
+          if-no-files-found: error
+  simulator-model-picker:
+    runs-on: macos-15
+    timeout-minutes: 36
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: |
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+      - name: Boot available iPhone simulator
+        id: simulator
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+      - name: Native model and Thinking strength UI acceptance
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=${{ steps.simulator.outputs.udid }}" -derivedDataPath "$RUNNER_TEMP/ModelEffortSimulator" -resultBundlePath "$RUNNER_TEMP/ModelEffortUITests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 -only-testing:ChatGPTWebUITests/SharedTabUITests/testModelAndThinkingStrengthComeFromCurrentPCMenu -only-testing:ChatGPTWebUITests/SharedTabUITests/testUnknownModelSelectionCanCheckReceiptWithoutRepeatingClick CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Upload simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-075-model-effort-simulator-evidence
+          path: ${{ runner.temp }}/ModelEffortUITests.xcresult
+          if-no-files-found: ignore
