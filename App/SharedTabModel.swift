@@ -167,14 +167,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     var canLoadHistory: Bool { online && !historyLoading && (historyHasMore ?? snapshot?.hasOlder ?? false) }
     var currentPending: STPendingSend? { ledger.pendingFor(owner) }
-    // Mirror the bound official PC composer's eligibility, including native
-    // follow-up Sends offered while a previous response is still generating.
-    // Never override approval, PC-draft, navigation, or editing conflicts.
+    // Phone-local draft always owns explicit Send. A parked PC draft and the
+    // remote native button's disabled/IME state are NOT phone-side vetoes.
+    // The PC Bridge will temporarily park/restore PC draft and independently
+    // reject a real document change, approval gate or concurrent edit race.
     var canSubmit: Bool {
         guard let snap = snapshot else { return false }
-        return online && !busy && !loading && currentPending == nil && snap.canSend == true &&
-            snap.pcDraftOccupied != true && snap.composing != true &&
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let blockedByPage = ["loading", "waiting", "searching"].contains(snap.status)
+        return online && !busy && !loading && currentPending == nil &&
+            !blockedByPage && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     var canUpload: Bool { online && !busy && !uploading && !loading && capabilities.contains("mobile-upload") && snapshot != nil && snapshot?.status != "waiting" }
     var canPickModel: Bool { online && !busy && capabilities.contains("model-selection") && snapshot?.model?.available == true }
@@ -314,10 +315,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 return chat
             }
         }
-        status = loading ? "PC 页面加载中" : fresh.pcDraftOccupied == true ? "PC 有未发送内容" : fresh.status == "running" ? (fresh.canSend == true ? "PC 生成中 · 可继续发送" : "PC 生成中 · 手机草稿已保留") : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用此标签页"
+        status = loading ? "PC 页面加载中" : fresh.status == "running" ? "PC 生成中 · 手机可独立发送" : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用标签页 · 手机独立草稿"
         // A prior definite busy rejection must not leave an obsolete red alert
         // after the same PC page explicitly reports that composing is possible.
-        if fresh.canSend == true && error == STError(code: "pc_busy_or_approval").localizedDescription { error = nil }
+        if fresh.status != "waiting" && error == STError(code: "pc_busy_or_approval").localizedDescription { error = nil }
         saveSoon()
     }
     private func scheduleReconnect() {
