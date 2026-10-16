@@ -2,7 +2,12 @@ name: Mirror Phone Composer 0.7.7 Signed Candidate
 on:
   push:
     branches: ['feature/shared-tab-native-070-20261011']
-    paths: ['.github/workflows/shared-tab-candidate.yml']
+    paths:
+      - '.github/workflows/shared-tab-candidate.yml'
+      - 'App/SharedTabModel.swift'
+      - 'App/SharedTabFixtureProtocol.swift'
+      - 'UITests/SharedTabUITests.swift'
+      - 'project.yml'
   workflow_dispatch:
 permissions:
   contents: read
