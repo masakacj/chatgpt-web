@@ -96,6 +96,14 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
 
         var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "model": ["available": true, "name": "GPT-6"], "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
+        if args.contains("--shared-fixture-pc-draft-native-blocked") {
+            // The phone must be allowed to Send its own text even if the PC
+            // has a parked local draft and reports disabled native controls.
+            s["pcDraftOccupied"] = true
+            s["draftHash"] = PCCompanionPolicy.hash("PC parked draft")
+            s["canSend"] = false
+            s["composing"] = true
+        }
         if let projectID { s["projectId"] = projectID }
         if args.contains("--shared-fixture-sidebar") {
             s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
