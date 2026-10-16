@@ -70,7 +70,7 @@ jobs:
       - name: Native model and Thinking strength UI acceptance
         run: |
           set -euo pipefail
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=${{ steps.simulator.outputs.udid }}" -derivedDataPath "$RUNNER_TEMP/ModelEffortSimulator" -resultBundlePath "$RUNNER_TEMP/ModelEffortUITests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 -only-testing:ChatGPTWebUITests/SharedTabUITests/testModelAndThinkingStrengthComeFromCurrentPCMenu -only-testing:ChatGPTWebUITests/SharedTabUITests/testUnknownModelSelectionCanCheckReceiptWithoutRepeatingClick CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=${{ steps.simulator.outputs.udid }}" -derivedDataPath "$RUNNER_TEMP/ModelEffortSimulator" -resultBundlePath "$RUNNER_TEMP/ModelEffortUITests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 300 -only-testing:ChatGPTWebUITests/SharedTabUITests/testModelAndThinkingStrengthComeFromCurrentPCMenu -only-testing:ChatGPTWebUITests/SharedTabUITests/testUnknownModelSelectionCanCheckReceiptWithoutRepeatingClick -only-testing:ChatGPTWebUITests/SharedTabUITests/testNewChatInsideSelectedProject CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
       - name: Upload simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
