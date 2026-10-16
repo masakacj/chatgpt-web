@@ -315,7 +315,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 return chat
             }
         }
-        status = loading ? "PC 页面加载中" : fresh.status == "running" ? "PC 生成中 · 手机可独立发送" : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用标签页 · 手机独立草稿"
+        status = loading ? "PC 页面加载中" : fresh.status == "running" ? "PC 生成中 · 手机可独立发送" : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用此标签页"
         // A prior definite busy rejection must not leave an obsolete red alert
         // after the same PC page explicitly reports that composing is possible.
         if fresh.status != "waiting" && error == STError(code: "pc_busy_or_approval").localizedDescription { error = nil }
