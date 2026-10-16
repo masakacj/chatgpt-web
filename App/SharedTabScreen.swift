@@ -92,7 +92,7 @@ struct SharedTabScreen: View {
                 .disabled(!model.canOpenModelPicker)
                 .accessibilityLabel("选择模型和思考强度，当前：\(model.currentModelName)")
                 .accessibilityIdentifier("shared.model.open")
-                Text((model.projectTitle.map { $0 + " · " } ?? "") + (model.snapshot?.title ?? (model.loading ? "正在切换对话" : "PC 共享标签页")))
+                Text(model.snapshot?.title ?? (model.loading ? "正在切换对话" : "PC 共享标签页"))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("shared.title")
             }
             Spacer(minLength: 4)
