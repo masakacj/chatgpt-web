@@ -129,10 +129,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published private(set) var ledger = STDraftLedger()
     @Published private(set) var actionPending: STActionPending?
     private(set) var selectedTabId: Int?
-    // Legacy settings retain their original ledger identity while HTTP uses
-    // the stable 443 endpoint. This avoids orphaning drafts and pending receipts.
-    var legacyEndpointRouted: Bool {
-        (try? PCCompanionPolicy.origin(endpoint))?.absoluteString == PCCompanionPolicy.legacyEndpoint
+    // Existing CF settings retain their original local ledger/Keychain identity.
+    // Their actual network requests now use the trusted home gateway.
+    var retiredCloudflareEndpointRouted: Bool {
+        (try? PCCompanionPolicy.origin(endpoint))?.absoluteString == PCCompanionPolicy.retiredCloudflareEndpoint
     }
     private var owner = ""
     private var connection: STConnection?
