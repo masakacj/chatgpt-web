@@ -157,14 +157,24 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS '127.0.0.1:13213/local/pair'")).firstMatch.exists)
         XCTAssertEqual(app.webViews.count, 0)
     }
-    func testRunningPCWithDisabledNativeSendPreservesLocalDraft() throws {
+    func testRunningPCWithDisabledNativeSendAllowsPhoneFollowUp() throws {
         let app = launch("--shared-fixture-busy-blocked")
         let input = composer(app)
-        input.tap(); input.typeText("do not send while PC is responding")
-        XCTAssertFalse(app.buttons["shared.send"].isEnabled)
-        XCTAssertTrue(String(describing: composer(app).value).contains("do not send while PC is responding"))
-        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '生成中'")).firstMatch.exists)
+        input.tap(); input.typeText("phone follow-up owns composer")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：phone follow-up owns composer"].waitForExistence(timeout: 10))
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+    }
+    func testParkedPCDraftWithDisabledNativeControlsNeverBlocksPhoneSend() throws {
+        let app = launch("--shared-fixture-pc-draft-native-blocked")
+        let input = composer(app)
+        input.tap(); input.typeText("phone draft only")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：phone draft only"].waitForExistence(timeout: 10))
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertFalse(String(describing: composer(app).value).contains("PC parked draft"))
     }
     func testRunningPCWithEnabledNativeSendAcceptsFollowUpOnce() throws {
         let app = launch("--shared-fixture-busy-send")
