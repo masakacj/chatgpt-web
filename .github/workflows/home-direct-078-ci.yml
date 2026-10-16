@@ -1,0 +1,47 @@
+name: Mirror 0.7.8 Home Direct Regression
+on:
+  push:
+    branches: ['fix/home-direct-078-20261016']
+    paths:
+      - 'App/PCCompanionPolicy.swift'
+      - 'App/SharedTabModel.swift'
+      - 'App/SharedTabScreen.swift'
+      - 'scripts/pc-companion-policy-tests/main.swift'
+      - 'project.yml'
+      - '.github/workflows/home-direct-078-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mirror-home-direct-078-verify
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'masakacj/chatgpt-web'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify release identity and native direct connection invariants
+        run: |
+          set -euo pipefail
+          test "$(grep -c 'MARKETING_VERSION: 0.7.8' project.yml)" -eq 2
+          test "$(grep -c 'CURRENT_PROJECT_VERSION: 10' project.yml)" -eq 2
+          grep -q 'static let defaultEndpoint = "https://chatgpt-pc.781751.xyz:58443"' App/PCCompanionPolicy.swift
+          npm run check
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/direct-policy"
+          "$RUNNER_TEMP/direct-policy"
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/draft"
+          "$RUNNER_TEMP/draft"
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/resilience"
+          "$RUNNER_TEMP/resilience"
+      - name: Compile real iOS device and simulator without signing
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' MARKETING_VERSION=0.7.8 CURRENT_PROJECT_VERSION=10 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
