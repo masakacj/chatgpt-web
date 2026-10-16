@@ -46,15 +46,15 @@ struct PCDraftBuffer: Codable {
 }
 
 enum PCCompanionPolicy {
-    // Use the stable standard-443 tunnel for new installs. The legacy 58443
-    // endpoint remains a logical identity for existing phone drafts/receipts.
-    static let defaultEndpoint = "https://chatgpt-pc.78175132.xyz"
-    static let legacyEndpoint = "https://chatgpt-pc.781751.xyz:58443"
+    // Home HTTPS is the only production transport. Preserve the saved
+    // origin for draft/receipt identity, with no retry or command replay.
+    static let defaultEndpoint = "https://chatgpt-pc.781751.xyz:58443"
+    static let legacyEndpoint = defaultEndpoint
+    static let retiredCloudflareEndpoint = "https://chatgpt-pc.78175132.xyz"
     static func transportOrigin(for origin: URL) -> URL {
-        // Exact old origin only: never redirect arbitrary custom/pairing hosts.
-        // Transport is switched BEFORE the request, including POST. There is no
-        // retry or second Send, and the caller's persisted identity stays intact.
-        origin.absoluteString == legacyEndpoint ? URL(string: defaultEndpoint)! : origin
+        // Only the precise former CF origin is remapped to the home gateway.
+        // All other custom/test origins retain their explicit destination.
+        origin.absoluteString == retiredCloudflareEndpoint ? URL(string: defaultEndpoint)! : origin
     }
     static func hash(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
