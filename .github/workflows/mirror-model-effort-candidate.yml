@@ -8,15 +8,15 @@ permissions:
   actions: read
 concurrency:
   group: mirror-model-effort-candidate-20261016
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   candidate:
     if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/mirror-model-thinking-effort-20261016'
     runs-on: macos-latest
     timeout-minutes: 35
     env:
-      ACCEPTED_SOURCE: 0414f344da59f938cf943e5cd8dcb7d5a28c6778
-      ACCEPTED_RUN: '38826655955'
+      ACCEPTED_SOURCE: eb77e673be875b94ad2c0cd31662bf69734879e9
+      ACCEPTED_RUN: '38827284891'
       VERSION: '0.7.5'
       BUILD: '7'
     steps:
