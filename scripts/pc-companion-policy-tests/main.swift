@@ -69,4 +69,17 @@ expect(!PCCompanionPolicy.retryableRead(URLError(.serverCertificateUntrusted)), 
 expect(!PCCompanionPolicy.retryableRead(CancellationError()), "app pause does not schedule reconnect")
 expect(PCCompanionPolicy.validReceipt(UUID().uuidString), "opaque receipt accepted")
 expect(!PCCompanionPolicy.validReceipt("../bad?token=123"), "receipt path injection rejected")
+let officialStop = "pc-stop-native-control-00112233"
+expect(PCCompanionPolicy.nativeStopTarget(canStop: true, id: officialStop, hasCapability: true) == officialStop,
+       "positively observed native Stop is authorized")
+expect(PCCompanionPolicy.nativeStopTarget(canStop: false, id: officialStop, hasCapability: true) == nil,
+       "PC absence of Stop must never be guessed from running status")
+expect(PCCompanionPolicy.nativeStopTarget(canStop: nil, id: officialStop, hasCapability: true) == nil,
+       "unknown PC Stop availability is not positive evidence")
+expect(PCCompanionPolicy.nativeStopTarget(canStop: true, id: officialStop, hasCapability: false) == nil,
+       "older Bridge capability cannot show unsupported Stop")
+expect(PCCompanionPolicy.nativeStopTarget(canStop: true, id: "../bad", hasCapability: true) == nil,
+       "invalid native target cannot be forwarded")
+expect(PCCompanionPolicy.nativeStopTarget(canStop: true, id: nil, hasCapability: true) == nil,
+       "missing native target may not trigger Stop")
 print("PC native policy PASS: \(count) assertions; draft race, persistence, origin and retry classification verified")
