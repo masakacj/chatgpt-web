@@ -191,6 +191,59 @@ final class SharedTabUITests: XCTestCase {
         wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("草稿同步：0"))
     }
+    func testNativeStopReplacesSendAndRestoresItAfterPCStops() throws {
+        let app = launch("--shared-fixture-native-stop")
+        let stop = app.buttons["shared.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 8))
+        XCTAssertTrue(stop.isEnabled)
+        XCTAssertFalse(app.buttons["shared.send"].exists)
+        stop.tap()
+        wait("label CONTAINS '中止请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.buttons["shared.send"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["shared.stop"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testGeneratingPCOffersStopAndIndependentPhoneFollowUpSend() throws {
+        let app = launch("--shared-fixture-native-stop")
+        XCTAssertTrue(app.buttons["shared.stop"].waitForExistence(timeout: 8))
+        let input = composer(app)
+        input.tap(); input.typeText("mobile follow up while PC generates")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        XCTAssertTrue(app.buttons["shared.stop"].isEnabled)
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：mobile follow up while PC generates"].waitForExistence(timeout: 10))
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("中止请求：0"))
+        XCTAssertTrue(app.buttons["shared.stop"].exists)
+    }
+    func testStaleNativeStopNeverClicksAnotherGeneration() throws {
+        let app = launch("--shared-fixture-stale-stop")
+        let stop = app.buttons["shared.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 8)); stop.tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("中止请求：0"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertFalse(app.buttons["shared.receipt"].exists)
+    }
+    func testUnknownStopKeepsReceiptAndNeverRepeatsTheNativeClick() throws {
+        let app = launch("--shared-fixture-stop-unknown")
+        let stop = app.buttons["shared.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 8)); stop.tap()
+        let receipt = app.buttons["shared.receipt"]
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["shared.stop"].isEnabled)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("中止请求：1"))
+        receipt.tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("中止请求：1"))
+        XCTAssertFalse(app.buttons["shared.stop"].isEnabled)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testRunningWithoutPCStopControlNeverInventsStopButton() throws {
+        let app = launch("--shared-fixture-busy-send")
+        XCTAssertTrue(app.staticTexts["生成中"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["shared.stop"].exists)
+        XCTAssertTrue(app.buttons["shared.send"].exists)
+    }
     func testWaitingPCApprovalDisablesSendAndKeepsDraft() throws {
         let app = launch("--shared-fixture-interaction")
         let input = composer(app)
