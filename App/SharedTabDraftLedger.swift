@@ -28,9 +28,12 @@ struct STDraftLedger: Codable {
     // Identical text (even retyped) is never treated as a new send.
     func canReserve(_ owner: String) -> Bool {
         let value = draft(owner)
-        guard !owner.isEmpty, !value.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let proposed = value.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !owner.isEmpty, !proposed.isEmpty else { return false }
         return pending.values.filter { $0.owner == owner }.allSatisfy {
-            value.revision > $0.revision && value.text != $0.text
+            // Whitespace-only edits must not unlock an uncertain replay.
+            value.revision > $0.revision &&
+                proposed != $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 
