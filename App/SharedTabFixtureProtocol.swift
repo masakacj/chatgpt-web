@@ -12,6 +12,8 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var document = "fixture-document-A"
     private static var revision = 0
     private static var sends = 0
+    private static var stops = 0
+    private static let nativeStopId = "fixture-native-stop-control-001122"
     private static var draftWrites = 0
     private static var actions = 0
     private static var reads = 0
@@ -25,11 +27,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks)"
+        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
     }
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") && request.url?.host == "shared-tab.invalid"
@@ -105,6 +107,18 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             s["composing"] = true
         }
         if let projectID { s["projectId"] = projectID }
+        if args.contains("--shared-fixture-native-stop") ||
+           args.contains("--shared-fixture-stop-unknown") ||
+           args.contains("--shared-fixture-stale-stop") {
+            let finished = stops > 0 && !args.contains("--shared-fixture-stop-unknown")
+            s["status"] = finished ? "stopped" : "running"
+            s["responsePhase"] = finished ? "stopped" : "responding"
+            s["canStop"] = !finished
+            s["stopTargetId"] = finished ? NSNull() : nativeStopId
+            // Match the actual PC controls: while generating, the ordinary
+            // send control may be disabled, but the phone may still type.
+            s["canSend"] = false
+        }
         if args.contains("--shared-fixture-sidebar") {
             s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
                                        ["id": b, "status": "running", "readState": "unknown"]]
@@ -130,7 +144,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     private static func response(_ req: URLRequest) -> (Int, [String: Any]) {
         let path = req.url?.path ?? "", input = body(req), args = ProcessInfo.processInfo.arguments
-        if path == "/v1/health" { return (200, ["capabilities": ["shared-tab-v1", "compose-on-send", "model-selection", "mobile-upload", "recent-activity"]]) }
+        if path == "/v1/health" { return (200, ["capabilities": ["shared-tab-v1", "compose-on-send", "model-selection", "mobile-upload", "recent-activity", "native-stop-generation"]]) }
         if path == "/v1/tabs" { return (200, ["tabs": [["tabId": 7, "title": "测试共用标签页", "conversationId": current, "active": true]]]) }
         if path == "/v1/sessions" { return (200, envelope()) }
         if path.hasSuffix("/actions") {
@@ -150,6 +164,27 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             let id = input["commandId"] as? String ?? "", action = input["action"] as? String ?? ""
             if let existing = receipts[id] { return (200, existing) }
             if action == "draft" { draftWrites += 1; return (400, ["error": "draft_sync_not_supported"]) }
+            if action == "stop" {
+                let matching = input["documentId"] as? String == document &&
+                    input["conversationId"] as? String == current &&
+                    input["stopTargetId"] as? String == nativeStopId &&
+                    input["confirmed"] as? Bool == true &&
+                    stops == 0 && !args.contains("--shared-fixture-stale-stop")
+                if !matching {
+                    let value: [String: Any] = ["ok": false, "commandId": id,
+                        "state": "failed", "result": ["status": "not_acted", "error": "stop_target_changed"]]
+                    receipts[id] = value; return (200, value)
+                }
+                stops += 1; revision += 1
+                if args.contains("--shared-fixture-stop-unknown") {
+                    receipts[id] = ["ok": true, "commandId": id,
+                                    "state": "unknown", "result": ["error": "pc_result_unknown"]]
+                    return (504, ["error": "pc_result_unknown"])
+                }
+                let value: [String: Any] = ["ok": true, "commandId": id,
+                    "state": "done", "result": ["status": "stop_clicked", "conversationId": current]]
+                receipts[id] = value; return (200, value)
+            }
             if action == "interact" {
                 interactionClicks += 1; revision += 1
                 let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": ["status": "interaction_clicked"]]; receipts[id] = value; return (200, value)
