@@ -1,0 +1,132 @@
+name: Mirror 0.7.10 Gray Send Recovery Signed Candidate
+on:
+  push:
+    branches: ['fix/native-send-grey-0710-20261017']
+    paths:
+      - '.github/workflows/native-send-grey-0710-candidate.yml'
+      - 'App/PCCompanionPolicy.swift'
+      - 'App/SharedTabScreen.swift'
+      - 'scripts/pc-companion-policy-tests/main.swift'
+      - 'App/SharedTabDraftLedger.swift'
+      - 'scripts/shared-tab-policy-tests/main.swift'
+      - 'App/SharedTabModel.swift'
+      - 'App/SharedTabFixtureProtocol.swift'
+      - 'UITests/SharedTabUITests.swift'
+      - 'project.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mirror-grey-send-candidate-0710
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/fix/native-send-grey-0710-20261017'
+    runs-on: macos-latest
+    timeout-minutes: 55
+    env:
+      VERSION: '0.7.10'
+      BUILD: '12'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify mirror policies and version
+        run: |
+          set -euo pipefail
+          test "$(grep -c 'MARKETING_VERSION: 0.7.10' project.yml)" -eq 2
+          test "$(grep -c 'CURRENT_PROJECT_VERSION: 12' project.yml)" -eq 2
+          grep -q 'let blockedByPage =' App/SharedTabModel.swift
+          grep -q 'func stopGeneration() async' App/SharedTabModel.swift
+          grep -q 'stopTargetId' App/SharedTabModel.swift
+          grep -q 'shared.stop' App/SharedTabScreen.swift
+          grep -q 'testUnknownStopKeepsReceiptAndNeverRepeatsTheNativeClick' UITests/SharedTabUITests.swift
+          grep -q 'func canReserve' App/SharedTabDraftLedger.swift
+          grep -q 'sendDisabledReason' App/SharedTabModel.swift
+          grep -q 'testUnknownSendMakesReasonVisibleAndAllowsOnlyDifferentNewText' UITests/SharedTabUITests.swift
+          grep -q 'testStopAndUncertainSendCanCoexistWithoutPermanentlyGrayFollowUp' UITests/SharedTabUITests.swift
+          npm run check
+          swiftc App/SharedTabDraftLedger.swift scripts/shared-tab-policy-tests/main.swift -o "$RUNNER_TEMP/draft"
+          "$RUNNER_TEMP/draft"
+          swiftc App/PCCompanionPolicy.swift scripts/pc-companion-policy-tests/main.swift -o "$RUNNER_TEMP/policy"
+          "$RUNNER_TEMP/policy"
+          swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native"
+          "$RUNNER_TEMP/native"
+      - name: Simulator regression for native mirror
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys;print(next(d["udid"] for g in json.load(sys.stdin)["devices"].values() for d in g if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/PhoneSimulator" -resultBundlePath "$RUNNER_TEMP/PhoneUI.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Build unsigned mirror IPA
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/PhoneDevice" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          APP="$RUNNER_TEMP/PhoneDevice/Build/Products/Release-iphoneos/ChatGPTWeb.app"
+          test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = com.masakacj.chatgptweb
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = "$BUILD"
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
+      - name: Sign mirror candidate without modifying stable latest
+        env:
+          GH_RUN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 20 https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
+          curl --fail-with-body --max-time 240 -X POST -H "Authorization: Bearer $GH_RUN_TOKEN" -H "X-GitHub-Repository: $GITHUB_REPOSITORY" -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" -H "X-GitHub-Sha: $GITHUB_SHA" -H 'X-App-Key: chatgpt-web' -H 'Content-Type: application/octet-stream' --data-binary @dist/candidate-unsigned.ipa 'https://ipa.78175132.xyz/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
+          curl -fsS --max-time 20 https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-after.json
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          a=json.loads(Path('dist/stable-before.json').read_text())
+          b=json.loads(Path('dist/stable-after.json').read_text())
+          c=json.loads(Path('dist/candidate-sign-result.json').read_text())
+          assert a==b and a['version']=='0.7.9' and str(a['build'])=='11'
+          assert c['ok'] and c['channel']=='candidate' and c['promoted'] is False
+          assert c['source_sha']==os.environ['GITHUB_SHA'] and c['bundle_id']=='com.masakacj.chatgptweb'
+          assert c['version']==os.environ['VERSION'] and str(c['build'])==os.environ['BUILD']
+          print(json.dumps({'candidate':c['install_page'],'stableUnchanged':True}))
+          PY
+      - name: Verify signatures and install manifest
+        run: |
+          set -euo pipefail
+          MANIFEST="$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["manifest_url"])')"
+          IPA="$(python3 -c 'import json;print(json.load(open("dist/candidate-sign-result.json"))["ipa_url"])')"
+          curl -fsS --max-time 30 "$MANIFEST" > dist/signed-manifest.plist
+          curl -fsS --max-time 90 "$IPA" > dist/signed.ipa
+          python3 - <<'PY'
+          import os,json,plistlib,zipfile,hashlib
+          from pathlib import Path
+          meta=json.loads(Path('dist/candidate-sign-result.json').read_text())
+          manifest=plistlib.loads(Path('dist/signed-manifest.plist').read_bytes())
+          assert manifest['items'][0]['assets'][0]['url']==meta['ipa_url']
+          assert meta['ipa_url'].startswith('https://ipa.781751.xyz:58443/ipa/')
+          assert meta['manifest_url'].startswith('https://ipa.781751.xyz:58443/manifest/')
+          with zipfile.ZipFile('dist/signed.ipa') as z:
+              assert z.testzip() is None
+              info=plistlib.loads(z.read('Payload/ChatGPTWeb.app/Info.plist'))
+              assert info['CFBundleIdentifier']=='com.masakacj.chatgptweb'
+              assert info['CFBundleShortVersionString']==os.environ['VERSION']
+              assert str(info['CFBundleVersion'])==os.environ['BUILD']
+              for name in ('Payload/ChatGPTWeb.app/embedded.mobileprovision','Payload/ChatGPTWeb.app/_CodeSignature/CodeResources','Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/_CodeSignature/CodeResources','Payload/ChatGPTWeb.app/PlugIns/ChatGPTScriptAction.appex/embedded.mobileprovision'):
+                  assert name in z.namelist(), name
+          print(json.dumps({'signed':True,'sha256':hashlib.sha256(Path('dist/signed.ipa').read_bytes()).hexdigest()}))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mirror-grey-send-0710-signed
+          path: |
+            dist/signed.ipa
+            dist/signed-manifest.plist
+            dist/candidate-sign-result.json
+            ${{ runner.temp }}/PhoneUI.xcresult
+          if-no-files-found: ignore
