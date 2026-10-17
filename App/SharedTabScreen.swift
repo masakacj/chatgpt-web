@@ -289,7 +289,9 @@ struct SharedTabScreen: View {
                     // Positive PC-native Stop evidence owns the main button.
                     // A typed follow-up remains independently sendable while
                     // the original assistant response is still generating.
-                    if model.canSubmit {
+                    if !model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        // Keep the Send control visible even when a previous
+                        // receipt is unknown; explain the exact blocker below.
                         Button {
                             dismissKeyboard()
                             Task { await model.send() }
@@ -297,8 +299,9 @@ struct SharedTabScreen: View {
                             Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
                                 .frame(width: 34, height: 34)
                                 .foregroundStyle(Color(uiColor: .systemBackground))
-                                .background(Color.primary, in: Circle())
-                        }.accessibilityLabel("发送后续消息")
+                                .background(Color.primary.opacity(model.canSubmit ? 1 : 0.3), in: Circle())
+                        }.disabled(!model.canSubmit)
+                            .accessibilityLabel("发送后续消息")
                             .accessibilityIdentifier("shared.send")
                             .padding(.bottom, 6)
                     }
@@ -329,6 +332,11 @@ struct SharedTabScreen: View {
                         .accessibilityLabel("发送").accessibilityIdentifier("shared.send")
                 }
             }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 25))
+            if let reason = model.sendDisabledReason {
+                Text(reason).font(.caption2).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("shared.send.disabledReason")
+            }
             if let notice = model.controlNotice {
                 Text(notice).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                     .accessibilityIdentifier("shared.controlNotice")
