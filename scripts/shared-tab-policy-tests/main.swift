@@ -79,6 +79,8 @@ expect(recovered.draft("server|uncertain").text.isEmpty, "confirmed new draft cl
 expect(recovered.pendingFor("server|uncertain")?.id == uncertain.id, "unknown original is still queryable after newer confirmation")
 recovered.edit("server|uncertain", text: "original unknown text")
 expect(!recovered.canReserve("server|uncertain"), "retyping any still-uncertain identical text never replays it")
+recovered.edit("server|uncertain", text: "original unknown text   ")
+expect(!recovered.canReserve("server|uncertain"), "whitespace-only edit cannot bypass unknown-send anti-replay")
 recovered.edit("server|uncertain", text: "a third, different message")
 expect(recovered.canReserve("server|uncertain"), "a later explicit distinct message does not inherit a permanent lock")
 print("Shared-tab draft policy: \(assertions) assertions PASS")
