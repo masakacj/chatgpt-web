@@ -114,7 +114,8 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             s["status"] = finished ? "stopped" : "running"
             s["responsePhase"] = finished ? "stopped" : "responding"
             s["canStop"] = !finished
-            s["stopTargetId"] = finished ? NSNull() : nativeStopId
+            if finished { s["stopTargetId"] = NSNull() }
+            else { s["stopTargetId"] = nativeStopId }
             // Match the actual PC controls: while generating, the ordinary
             // send control may be disabled, but the phone may still type.
             s["canSend"] = false
