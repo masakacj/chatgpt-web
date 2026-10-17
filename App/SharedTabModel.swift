@@ -10,7 +10,8 @@ struct STSnapshot: Codable {
     let schema: Int; let documentId: String; let conversationId: String; let title: String
     let messages: [PCRemoteMessage]; let status: String; let draftHash: String
     var sharedTab: Bool?; var route: String?; var projectId: String?; var temporary: Bool?
-    var canSend: Bool?; var pcDraftOccupied: Bool?; var composing: Bool?; var responsePhase: String?
+    var canSend: Bool?; var canStop: Bool?; var stopTargetId: String?
+    var pcDraftOccupied: Bool?; var composing: Bool?; var responsePhase: String?
     var interactions: [PCInteractionCard]?; var historyCursor: String?; var hasOlder: Bool?
     var sidebarIndicators: [STSidebarSignal]?
     var model: STPCModel?
@@ -45,7 +46,12 @@ private struct STFailure: Decodable { let error: String }
 private struct STResult: Decodable { var status: String?; var error: String?; var conversationId: String?; var projectId: String? }
 private struct STReceipt: Decodable { let commandId: String; let state: String; var result: STResult? }
 private struct STHistory: Decodable { let documentId: String; let conversationId: String; let messages: [PCRemoteMessage]; var cursor: String?; let hasMore: Bool }
-struct STActionPending: Codable { let id: String; let server: String; let conversation: String }
+struct STActionPending: Codable {
+    let id: String; let server: String; let conversation: String
+    // Optional to preserve previously stored interaction receipts unchanged.
+    var kind: String? = nil
+    var stopTargetId: String? = nil
+}
 private struct STSaved: Codable {
     var ledger: STDraftLedger; var tabId: Int?; var snapshot: STSnapshot?; var server: String?
     var actionPending: STActionPending?
@@ -128,6 +134,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var needsSettings = false
     @Published private(set) var ledger = STDraftLedger()
     @Published private(set) var actionPending: STActionPending?
+    // A successful native click is not proof that generation has stopped.
+    // Don't expose the same PC Stop control for a second click until it changes.
+    @Published private(set) var stopAcknowledgedTarget: String?
     private(set) var selectedTabId: Int?
     // Existing CF settings retain their original local ledger/Keychain identity.
     // Their actual network requests now use the trusted home gateway.
@@ -176,6 +185,16 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         let blockedByPage = ["loading", "waiting", "searching"].contains(snap.status)
         return online && !busy && !loading && currentPending == nil &&
             !blockedByPage && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private var nativeStopTarget: String? {
+        guard online, !loading, let snap = snapshot, !snap.conversationId.isEmpty else { return nil }
+        return PCCompanionPolicy.nativeStopTarget(canStop: snap.canStop, id: snap.stopTargetId,
+                                                   hasCapability: capabilities.contains("native-stop-generation"))
+    }
+    var showsNativeStop: Bool { nativeStopTarget != nil }
+    var canStopGeneration: Bool {
+        guard let target = nativeStopTarget else { return false }
+        return !busy && actionPending == nil && stopAcknowledgedTarget != target
     }
     var canUpload: Bool { online && !busy && !uploading && !loading && capabilities.contains("mobile-upload") && snapshot != nil && snapshot?.status != "waiting" }
     var canPickModel: Bool { online && !busy && capabilities.contains("model-selection") && snapshot?.model?.available == true }
@@ -297,6 +316,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         let newOwner = ownerKey(fresh, c)
         let waitingForNewReceipt = busy && currentPending?.temporary == true && !fresh.conversationId.isEmpty
         if newOwner != owner && !waitingForNewReceipt { ledger.edit(owner, text: text); owner = newOwner; text = ledger.draft(owner).text }
+        if let acknowledged = stopAcknowledgedTarget,
+           fresh.documentId != snapshot?.documentId || fresh.canStop != true || fresh.stopTargetId != acknowledged {
+            stopAcknowledgedTarget = nil
+            if controlNotice == "已点击 PC 中止控件，等待网页确认停止" { controlNotice = nil }
+        }
         snapshot = fresh; loading = fresh.status == "loading"
         // Only official visible sidebar badges are projected. An unknown row
         // is unknown, not a guessed completion or inferred read receipt.
@@ -426,6 +450,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         selectedTabId = nil
         tabs = []; chats = []; projects = []; recentActive = []; modelOptions = []
         snapshot = nil; older = []; historyCursor = nil; historyHasMore = nil
+        stopAcknowledgedTarget = nil
         owner = ""; text = ""
         error = nil
         status = "测试通道 · 请复制 PC 13213 的配对密钥"
