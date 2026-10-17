@@ -75,6 +75,12 @@ enum PCCompanionPolicy {
         return e.domain == NSURLErrorDomain && [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost,
             NSURLErrorNotConnectedToInternet, NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost].contains(e.code)
     }
+    // Mirror only a stop control positively observed on the bound PC page.
+    // A generic "running" status is not permission to stop a conversation.
+    static func nativeStopTarget(canStop: Bool?, id: String?, hasCapability: Bool) -> String? {
+        guard hasCapability, canStop == true, let id, validReceipt(id) else { return nil }
+        return id
+    }
     static func validReceipt(_ id: String) -> Bool {
         id.range(of: "^[A-Za-z0-9_-]{16,100}$", options: .regularExpression) != nil
     }
