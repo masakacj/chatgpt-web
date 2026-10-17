@@ -183,8 +183,25 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     var canSubmit: Bool {
         guard let snap = snapshot else { return false }
         let blockedByPage = ["loading", "waiting", "searching"].contains(snap.status)
-        return online && !busy && !loading && currentPending == nil &&
-            !blockedByPage && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // An UNKNOWN older command must remain queryable, not become a permanent
+        // lock on a deliberately edited *different* new message.
+        return online && !busy && !loading && !blockedByPage && ledger.canReserve(owner)
+    }
+    var sendDisabledReason: String? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        if !online { return "PC 连接未恢复，手机草稿已保留" }
+        if busy { return "当前操作正在执行，请稍后发送" }
+        guard let snap = snapshot else { return "PC 页面尚未加载，请先选择或重连标签页" }
+        if loading || snap.status == "loading" { return "PC 页面加载中，请稍后发送" }
+        if snap.status == "waiting" { return "PC 正在等待工具确认；先处理确认再发送" }
+        if snap.status == "searching" { return "请先关闭 PC 搜索界面再发送" }
+        if !ledger.canReserve(owner) {
+            if currentPending != nil {
+                return "这条消息结果尚未确认；不要重复发送。核对回执，或编辑成不同的新消息"
+            }
+            return "手机草稿尚未绑定到当前 PC 对话；请刷新连接"
+        }
+        return nil
     }
     private var nativeStopTarget: String? {
         guard online, !loading, let snap = snapshot, !snap.conversationId.isEmpty else { return nil }
@@ -340,6 +357,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             }
         }
         status = loading ? "PC 页面加载中" : fresh.status == "running" ? "PC 生成中 · 手机可独立发送" : fresh.status == "waiting" ? "PC 等待确认 · 手机草稿已保留" : "与 PC 共用此标签页"
+        if ledger.pendingFor(owner) != nil { status += " · 发送回执待确认" }
         // A prior definite busy rejection must not leave an obsolete red alert
         // after the same PC page explicitly reports that composing is possible.
         if fresh.status != "waiting" && error == STError(code: "pc_busy_or_approval").localizedDescription { error = nil }
@@ -614,7 +632,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             let actualOwner = receipt.result?.conversationId.map { c.identity + "|" + $0 }
             ledger.confirmed(command.id, actualOwner: actualOwner)
             if command.temporary, owner == command.owner, let actualOwner { owner = actualOwner }
-            text = ledger.draft(owner).text; status = "消息已发送"; error = nil
+            text = ledger.draft(owner).text
+            status = ledger.pendingFor(owner) == nil ? "消息已发送" : "新消息已发送 · 另有旧回执待确认"
+            error = nil
         } else if receipt.state == "failed" {
             ledger.definitelyNotSent(command.id); error = STError(code: receipt.result?.error ?? "not_sent").localizedDescription; status = "确定未发送 · 草稿已保留"
         } else { status = "发送结果待确认 · 不会自动重发" }
