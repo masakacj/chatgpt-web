@@ -555,6 +555,59 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             resolve(receipt, using: c); try current(generation); try? await refresh(using: c)
         } catch { self.error = error.localizedDescription; if currentPending != nil { status = "发送结果待确认 · 不会自动重发" }; save() }
     }
+    // One explicit tap maps to ONE PC-native Stop button; never infer a stop
+    // from generic in_progress status, and never replay an uncertain click.
+    func stopGeneration() async {
+        guard canStopGeneration, let target = nativeStopTarget,
+              let c = connection, let id = sessionID, let snap = snapshot else { return }
+        let pending = STActionPending(id: UUID().uuidString, server: c.identity,
+                                      conversation: snap.conversationId,
+                                      kind: "stop", stopTargetId: target)
+        actionPending = pending
+        guard save() else {
+            actionPending = nil
+            error = STError(code: "local_storage_failed").localizedDescription
+            return
+        }
+        busy = true; defer { busy = false }
+        error = nil
+        do {
+            let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c,
+                body: ["action": "stop", "commandId": pending.id,
+                       "documentId": snap.documentId, "conversationId": snap.conversationId,
+                       "stopTargetId": target, "confirmed": true])
+            resolveAction(receipt, using: c)
+            // The command receipt proves a physical click, NOT that the
+            // official generation finished. Refresh native state separately.
+            try? await refresh(using: c)
+        } catch {
+            self.error = "中止结果待确认；不会再次点击。请核对回执或 PC 页面。"
+            status = "中止结果待确认 · 不会自动重试"
+            save()
+        }
+    }
+    private func resolveAction(_ receipt: STReceipt, using c: STConnection) {
+        guard let pending = actionPending, pending.id == receipt.commandId,
+              pending.server == c.identity else { return }
+        if receipt.state == "failed" {
+            actionPending = nil
+            error = STError(code: receipt.result?.error ?? "pc_operation_failed").localizedDescription
+        } else if receipt.state == "done" && receipt.result?.status == "stop_clicked" && pending.kind == "stop" {
+            if snapshot?.conversationId == pending.conversation {
+                stopAcknowledgedTarget = pending.stopTargetId
+                controlNotice = "已点击 PC 中止控件，等待网页确认停止"
+            }
+            actionPending = nil
+            status = "已点击 PC 中止 · 等待原生状态"
+        } else if receipt.state == "done" && receipt.result?.status == "interaction_clicked" &&
+                  pending.kind != "stop" {
+            actionPending = nil
+        } else {
+            status = pending.kind == "stop" ? "中止结果待确认 · 不会自动重试" :
+                                             "操作结果待确认 · 不会自动重试"
+        }
+        save()
+    }
     private func resolve(_ receipt: STReceipt, using c: STConnection) {
         guard let command = ledger.pending[receipt.commandId], command.server == c.identity else { return }
         if receipt.state == "done" && receipt.result?.status == "sent_confirmed" {
@@ -572,8 +625,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         for command in Array(ledger.pending.values).filter({ $0.server == c.identity }) {
             if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) { resolve(receipt, using: c) }
         }
-        if let pending = actionPending, pending.server == c.identity, let receipt: STReceipt = try? await request("/v1/commands/\(pending.id)", using: c) {
-            if receipt.state == "failed" || receipt.result?.status == "interaction_clicked" { actionPending = nil; save() }
+        if let pending = actionPending, pending.server == c.identity,
+           let receipt: STReceipt = try? await request("/v1/commands/\(pending.id)", using: c) {
+            resolveAction(receipt, using: c)
         }
     }
     func followRemoteLink(_ link: PCRemoteLink) async {
@@ -592,8 +646,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard save() else { actionPending = nil; return }
         do {
             let result: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: ["action": "interact", "commandId": pending.id, "documentId": document, "interactionId": button.id, "interactionRevision": button.revision, "confirmed": true])
-            if result.state == "failed" || result.result?.status == "interaction_clicked" { actionPending = nil; save() }
-            else { status = "操作结果待确认，请核对回执" }
+            resolveAction(result, using: c)
         } catch { self.error = "操作结果待确认；不会重复点击。" }
     }
     func loadEarlier() async {
