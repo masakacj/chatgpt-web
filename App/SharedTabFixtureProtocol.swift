@@ -109,7 +109,8 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if let projectID { s["projectId"] = projectID }
         if args.contains("--shared-fixture-native-stop") ||
            args.contains("--shared-fixture-stop-unknown") ||
-           args.contains("--shared-fixture-stale-stop") {
+           args.contains("--shared-fixture-stale-stop") ||
+           args.contains("--shared-fixture-stop-and-unknown-send") {
             let finished = stops > 0 && !args.contains("--shared-fixture-stop-unknown")
             s["status"] = finished ? "stopped" : "running"
             s["responsePhase"] = finished ? "stopped" : "responding"
@@ -191,7 +192,8 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                 let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": ["status": "interaction_clicked"]]; receipts[id] = value; return (200, value)
             }
             sends += 1
-            if args.contains("--shared-fixture-unknown") {
+            if args.contains("--shared-fixture-unknown") ||
+               args.contains("--shared-fixture-stop-and-unknown-send") {
                 receipts[id] = ["ok": true, "commandId": id, "state": "unknown", "result": ["error": "pc_result_unknown"]]
                 return (504, ["error": "pc_result_unknown"])
             }
