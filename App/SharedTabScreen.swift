@@ -285,15 +285,49 @@ struct SharedTabScreen: View {
                 TextField("发送消息", text: Binding(get: { model.text }, set: { model.edited($0) }), axis: .vertical)
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
                     .accessibilityIdentifier("shared.composer")
-                Button {
-                    dismissKeyboard()
-                    Task { await model.send() }
-                } label: {
-                    Group { if model.busy { ProgressView().tint(Color(uiColor: .systemBackground)) } else { Image(systemName: "arrow.up").font(.system(size: 18, weight: .semibold)) } }
-                        .frame(width: 36, height: 36).foregroundStyle(Color(uiColor: .systemBackground))
-                        .background(Color.primary.opacity(model.canSubmit ? 1 : 0.3), in: Circle())
-                }.disabled(!model.canSubmit).padding(.bottom, 5).padding(.trailing, 6)
-                    .accessibilityLabel("发送").accessibilityIdentifier("shared.send")
+                if model.showsNativeStop {
+                    // Positive PC-native Stop evidence owns the main button.
+                    // A typed follow-up remains independently sendable while
+                    // the original assistant response is still generating.
+                    if model.canSubmit {
+                        Button {
+                            dismissKeyboard()
+                            Task { await model.send() }
+                        } label: {
+                            Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
+                                .frame(width: 34, height: 34)
+                                .foregroundStyle(Color(uiColor: .systemBackground))
+                                .background(Color.primary, in: Circle())
+                        }.accessibilityLabel("发送后续消息")
+                            .accessibilityIdentifier("shared.send")
+                            .padding(.bottom, 6)
+                    }
+                    Button {
+                        dismissKeyboard()
+                        Task { await model.stopGeneration() }
+                    } label: {
+                        Group {
+                            if model.busy { ProgressView().tint(Color(uiColor: .systemBackground)) }
+                            else { Image(systemName: "stop.fill").font(.system(size: 13, weight: .semibold)) }
+                        }
+                        .frame(width: 36, height: 36)
+                        .foregroundStyle(Color(uiColor: .systemBackground))
+                        .background(Color.primary.opacity(model.canStopGeneration ? 1 : 0.3), in: Circle())
+                    }.disabled(!model.canStopGeneration)
+                        .padding(.bottom, 5).padding(.trailing, 6)
+                        .accessibilityLabel("中止 PC 当前回复")
+                        .accessibilityIdentifier("shared.stop")
+                } else {
+                    Button {
+                        dismissKeyboard()
+                        Task { await model.send() }
+                    } label: {
+                        Group { if model.busy { ProgressView().tint(Color(uiColor: .systemBackground)) } else { Image(systemName: "arrow.up").font(.system(size: 18, weight: .semibold)) } }
+                            .frame(width: 36, height: 36).foregroundStyle(Color(uiColor: .systemBackground))
+                            .background(Color.primary.opacity(model.canSubmit ? 1 : 0.3), in: Circle())
+                    }.disabled(!model.canSubmit).padding(.bottom, 5).padding(.trailing, 6)
+                        .accessibilityLabel("发送").accessibilityIdentifier("shared.send")
+                }
             }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 25))
             if let notice = model.controlNotice {
                 Text(notice).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
