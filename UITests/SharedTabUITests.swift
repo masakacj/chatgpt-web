@@ -142,19 +142,24 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertEqual(app.webViews.count, 0)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
-    func testBridgeStageCanBeSelectedWithoutReusingOldPairing() throws {
+    func testHomeDirectProductionEndpointAndNoCloudflareStageShortcut() throws {
         let app = launch()
         app.buttons["更多"].tap()
         let settings = app.buttons["连接设置"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.tap()
-        let change = app.buttons["shared.useTestBridge"]
-        XCTAssertTrue(change.waitForExistence(timeout: 8))
-        change.tap()
         let endpoint = app.textFields["HTTPS 服务地址"]
         XCTAssertTrue(endpoint.waitForExistence(timeout: 8))
-        wait("value == 'https://chatgpt-bridge-test.78175132.xyz'", on: endpoint)
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format:"label CONTAINS '127.0.0.1:13213/local/pair'")).firstMatch.exists)
+        // UI-testing fixture must stay isolated; the release destination is
+        // displayed independently and is verified by the native policy tests.
+        XCTAssertEqual(endpoint.value as? String, "https://shared-tab.invalid")
+        XCTAssertFalse(app.buttons["shared.useTestBridge"].exists)
+        XCTAssertTrue(app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS 'https://chatgpt-pc.781751.xyz:58443'")
+        ).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS '127.0.0.1:13213/local/pair'")
+        ).firstMatch.exists)
         XCTAssertEqual(app.webViews.count, 0)
     }
     func testRunningPCWithDisabledNativeSendAllowsPhoneFollowUp() throws {
