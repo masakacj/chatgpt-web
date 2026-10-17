@@ -109,6 +109,45 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.buttons["shared.send"].isEnabled)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：1"))
     }
+    func testUnknownSendMakesReasonVisibleAndAllowsOnlyDifferentNewText() throws {
+        let app = launch("--shared-fixture-unknown")
+        let input = composer(app)
+        input.tap(); input.typeText("an unconfirmed old message")
+        let send = app.buttons["shared.send"]
+        XCTAssertTrue(send.isEnabled)
+        send.tap()
+        XCTAssertTrue(app.buttons["shared.receipt"].waitForExistence(timeout: 10))
+        XCTAssertFalse(send.isEnabled, "never replay the same text while its result is unknown")
+        let notice = app.staticTexts["shared.send.disabledReason"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 8))
+        XCTAssertTrue(notice.label.contains("结果尚未确认"))
+        input.tap(); input.typeText(" -- genuinely new follow-up")
+        XCTAssertTrue(send.isEnabled, "editing to a different message must release the gray Send button")
+        send.tap()
+        wait("label CONTAINS '发送请求：2'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.buttons["shared.receipt"].exists, "the first unknown receipt remains queryable")
+    }
+    func testStopAndUncertainSendCanCoexistWithoutPermanentlyGrayFollowUp() throws {
+        let app = launch("--shared-fixture-stop-and-unknown-send")
+        let stop = app.buttons["shared.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 8))
+        XCTAssertTrue(stop.isEnabled)
+        let input = composer(app)
+        input.tap(); input.typeText("uncertain during generation")
+        let send = app.buttons["shared.send"]
+        XCTAssertTrue(send.isEnabled)
+        send.tap()
+        XCTAssertTrue(app.buttons["shared.receipt"].waitForExistence(timeout: 10))
+        XCTAssertTrue(send.exists)
+        XCTAssertFalse(send.isEnabled)
+        XCTAssertTrue(stop.isEnabled, "uncertain Send must not block a separately observed PC Stop")
+        input.tap(); input.typeText(" -- next distinct input")
+        XCTAssertTrue(send.isEnabled, "Stop and a new eligible Send are independent")
+        send.tap()
+        wait("label CONTAINS '发送请求：2'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("中止请求：0"))
+        XCTAssertTrue(app.buttons["shared.receipt"].exists)
+    }
     func testPCNavigationFollowsBoundTabWithoutNewBinding() throws {
         let app = launch("--shared-fixture-pc-switch")
         XCTAssertTrue(app.staticTexts["原生历史答案 B"].waitForExistence(timeout: 15))
