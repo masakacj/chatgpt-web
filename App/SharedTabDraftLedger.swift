@@ -21,6 +21,18 @@ struct STDraftLedger: Codable {
 
     func draft(_ owner: String) -> STLocalDraft { drafts[owner] ?? STLocalDraft() }
     func pendingFor(_ owner: String) -> STPendingSend? { pending.values.first { $0.owner == owner } }
+    func pendingCount(_ owner: String) -> Int { pending.values.filter { $0.owner == owner }.count }
+
+    // A reservation with an UNKNOWN result must remain queryable, but it
+    // must not indefinitely lock an explicitly different phone draft.
+    // Identical text (even retyped) is never treated as a new send.
+    func canReserve(_ owner: String) -> Bool {
+        let value = draft(owner)
+        guard !owner.isEmpty, !value.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return pending.values.filter { $0.owner == owner }.allSatisfy {
+            value.revision > $0.revision && value.text != $0.text
+        }
+    }
 
     mutating func edit(_ owner: String, text: String) {
         guard !owner.isEmpty else { return }
@@ -29,9 +41,9 @@ struct STDraftLedger: Codable {
         drafts[owner] = STLocalDraft(text: text, revision: old.revision + 1)
     }
     mutating func reserve(_ owner: String, server: String, temporary: Bool, id: String = UUID().uuidString) throws -> STPendingSend {
-        guard pendingFor(owner) == nil else { throw STLedgerError.pendingSend }
         let value = draft(owner)
         guard !value.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw STLedgerError.emptyDraft }
+        guard canReserve(owner) else { throw STLedgerError.pendingSend }
         let command = STPendingSend(id: id, owner: owner, text: value.text, revision: value.revision, server: server, temporary: temporary)
         pending[id] = command
         return command
