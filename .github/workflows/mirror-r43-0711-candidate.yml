@@ -28,6 +28,8 @@ jobs:
       BUILD: '13'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -52,15 +54,35 @@ jobs:
           "$RUNNER_TEMP/policy"
           swiftc App/ConversationResilienceStore.swift scripts/native-parity-test/main.swift -o "$RUNNER_TEMP/native"
           "$RUNNER_TEMP/native"
-      - name: Simulator regression for native mirror
+      - name: Verify green macOS Simulator CI on identical application source
+        env:
+          GH_RUN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          PROVEN_SHA=110478bb2266ac649fd2364b9030ac5376bc1f46
+          PROVEN_RUN=39265829946
+          git cat-file -e "$PROVEN_SHA^{commit}"
+          # Since the complete macOS UI/Release run passed for PROVEN_SHA,
+          # only candidate signing workflow changes may differ today.
+          git diff --name-only "$PROVEN_SHA" "$GITHUB_SHA" > "$RUNNER_TEMP/r43-diff.txt"
+          test -s "$RUNNER_TEMP/r43-diff.txt"
+          if grep -vFx '.github/workflows/mirror-r43-0711-candidate.yml' "$RUNNER_TEMP/r43-diff.txt"; then
+            echo 'APP_SOURCE_CHANGED_NEW_FULL_SIMULATOR_REQUIRED'
+            exit 1
+          fi
+          curl -fsS --max-time 15 -H "Authorization: Bearer $GH_RUN_TOKEN"             -H 'Accept: application/vnd.github+json'             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$PROVEN_RUN"             > "$RUNNER_TEMP/r43-proven-run.json"
+          PROVEN_SHA="$PROVEN_SHA" PROVEN_RUN="$PROVEN_RUN" python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=json.loads(Path(os.environ['RUNNER_TEMP'],'r43-proven-run.json').read_text())
+          assert r['id']==int(os.environ['PROVEN_RUN'])
+          assert r['head_sha']==os.environ['PROVEN_SHA']
+          assert r['repository']['full_name']==os.environ['GITHUB_REPOSITORY']
+          assert r['status']=='completed' and r['conclusion']=='success'
+          print('R43_PREVIOUS_MACOS_UI_AND_RELEASE_GREEN_FOR_IDENTICAL_APP')
+          PY
           command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate
-          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys;print(next(d["udid"] for g in json.load(sys.stdin)["devices"].values() for d in g if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
-          xcrun simctl boot "$UDID" || true
-          xcrun simctl bootstatus "$UDID" -b
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/PhoneSimulator" -resultBundlePath "$RUNNER_TEMP/PhoneUI.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
       - name: Build unsigned mirror IPA
         run: |
           set -euo pipefail
