@@ -508,7 +508,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     // Navigation returns a PC-observed snapshot directly. Display it immediately
     // instead of waiting for a later cached session GET to catch up.
     private func display(_ fresh: STSnapshot, using c: STConnection) throws {
-        guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 24 else { throw STError(code: "schema_invalid") }
+        // A mounted long conversation can legitimately contain more than 24 turns.
+        // Bound the payload without rejecting the 30-message native fixture or
+        // real currently mounted history. LazyVStack keeps rendering demand-led.
+        guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 80 else { throw STError(code: "schema_invalid") }
         if snapshot?.documentId != fresh.documentId || snapshot?.conversationId != fresh.conversationId {
             older = []; historyCursor = nil; historyHasMore = nil
             verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
@@ -838,9 +841,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func isChatUnread(_ chat: STChat) -> Bool {
         guard chat.readState != "unknown", chat.readState == "unread" else { return false }
-        if let snap = snapshot, snap.conversationId == chat.id {
-            return false
-        }
+        // Binding or refreshing a tab is not a positive *read* action.
+        // Clear an observed unread state only after an explicit open/ACK,
+        // so initial project/sidebar unread and newly arrived replies survive.
         guard let ack = readAcknowledgements[chat.id] else {
             return true
         }
@@ -867,9 +870,6 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func isChatPendingRefresh(_ chat: STChat) -> Bool {
         guard chat.readState != "unknown", chat.readState == "unread" else { return false }
-        if let snap = snapshot, snap.conversationId == chat.id {
-            return false
-        }
         guard let ack = readAcknowledgements[chat.id] else {
             return false
         }

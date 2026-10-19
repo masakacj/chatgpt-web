@@ -85,6 +85,15 @@ struct SharedTabScreen: View {
                                     .accessibilityIdentifier("shared.picker.currentEffort")
                             }
                         }
+                        // Keep native selection outcome visible in the first
+                        // viewport of a medium sheet, above lazy option rows.
+                        // An unconfirmed PC click must never look successful.
+                        if let notice = model.controlNotice {
+                            Section {
+                                Text(notice).font(.caption).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("shared.picker.notice")
+                            }
+                        }
                         if model.modelPickerLoading {
                             ProgressView("读取 PC 模型与思考选项…")
                         }
@@ -156,12 +165,6 @@ struct SharedTabScreen: View {
                             }
                             if model.modelOptions.isEmpty && !model.modelPickerLoading {
                                 Text(model.controlNotice ?? "PC 网页暂未提供可切换选项").foregroundStyle(.secondary)
-                            }
-                        }
-                        if let notice = model.controlNotice {
-                            Section {
-                                Text(notice).font(.caption).foregroundStyle(.secondary)
-                                    .accessibilityIdentifier("shared.picker.notice")
                             }
                         }
                     }.navigationTitle("模型与思考档位")
@@ -475,6 +478,14 @@ struct SharedTabScreen: View {
             Text(model.status).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1).accessibilityIdentifier("shared.status")
             #if DEBUG
             if model.fixture {
+                if ProcessInfo.processInfo.arguments.contains("--shared-fixture-pc-model-switch") {
+                    // DEBUG only: the simulated PC changes its own model.
+                    // The phone must observe the next snapshot without issuing
+                    // a model_select action or changing its local draft.
+                    Button("模拟 PC 模型变化") {
+                        SharedTabFixtureProtocol.simulatePCModelSwitch()
+                    }.accessibilityIdentifier("shared.fixture.pcModelChange")
+                }
                 Text(SharedTabFixtureProtocol.counters).font(.system(size: 9))
                     .accessibilityIdentifier("shared.fixture.counters")
                 Button("测试附件交付") {

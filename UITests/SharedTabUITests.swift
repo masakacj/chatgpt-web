@@ -519,9 +519,15 @@ final class SharedTabUITests: XCTestCase {
         let modelLabel = app.staticTexts["shared.header.modelName"]
         XCTAssertTrue(modelLabel.waitForExistence(timeout: 8))
         XCTAssertEqual(modelLabel.label, "GPT-6")
+        // Simulate the PC side updating the model AFTER the initial iOS
+        // snapshot is displayed. No phone model_select or Send is issued.
+        let pcChanged = app.buttons["shared.fixture.pcModelChange"]
+        XCTAssertTrue(pcChanged.waitForExistence(timeout: 8))
+        pcChanged.tap()
         wait("label == 'GPT-4o'", on: modelLabel, timeout: 15)
         let effortLabel = app.staticTexts["shared.header.effortName"]
         wait("label == '无独立强度/不适用'", on: effortLabel, timeout: 8)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：0"))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
     func testModelSwitchPreservesPhoneDraftAndSendState() throws {

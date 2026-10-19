@@ -39,6 +39,14 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]
     }
+    static func simulatePCModelSwitch() {
+        lock.lock(); defer { lock.unlock() }
+        guard ProcessInfo.processInfo.arguments.contains("--shared-fixture-pc-model-switch") else { return }
+        modelName = "GPT-4o"
+        effortName = nil
+        effortObserved = false
+        revision += 1
+    }
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") && request.url?.host == "shared-tab.invalid"
     }
@@ -117,8 +125,6 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             modelPayload = ["available": true, "name": "GPT-6 Thinking · High", "thinking": ["observed": false, "confidence": "unconfirmed"]]
         } else if args.contains("--shared-fixture-model-non-thinking") {
             modelPayload["name"] = "GPT-4o"
-        } else if args.contains("--shared-fixture-pc-model-switch") && reads >= 6 {
-            modelPayload = ["available": true, "name": "GPT-4o"]
         } else if args.contains("--shared-fixture-doc-change-invalidates-effort") && reads >= 6 {
             document = "fixture-document-switched"
             modelPayload = ["available": true, "name": "GPT-6", "thinking": ["observed": false, "confidence": "unconfirmed"]]
@@ -156,8 +162,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
         if args.contains("--shared-fixture-sidebar") || args.contains("--shared-fixture-sidebar-both") || args.contains("--shared-fixture-sidebar-read-ack") || args.contains("--shared-fixture-sidebar-new-unread") || args.contains("--shared-fixture-sidebar-colors") || args.contains("--shared-fixture-sidebar-completed-over-running") {
             if args.contains("--shared-fixture-sidebar-completed-over-running") {
+                // Only bound chat A is stale-running. B must not add an
+                // unrelated running section after A is completed in snapshot.
                 s["sidebarIndicators"] = [["id": a, "status": "running", "readState": "read"],
-                                           ["id": b, "status": "running", "readState": "unknown"]]
+                                           ["id": b, "status": "completed", "readState": "read"]]
             } else if args.contains("--shared-fixture-sidebar-both") {
                 s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "read"],
                                            ["id": b, "status": "running", "readState": "unread"]]
@@ -190,7 +198,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if args.contains("--shared-fixture-sidebar-completed-over-running") {
             return ["ok": true, "projects": [["id": project, "title": "Project Alpha", "collapsed": false, "hasMore": false]], "chats": [
                 ["id": a, "title": "测试对话 A", "projectId": project, "status": "running", "readState": "read", "activityAt": 1000.0],
-                ["id": b, "title": "历史对话 B", "status": "running", "readState": "unknown", "activityAt": 2000.0]
+                ["id": b, "title": "历史对话 B", "status": "completed", "readState": "read", "activityAt": 2000.0]
             ], "partial": true, "source": "official_sidebar", "hasMore": false, "loading": false]
         }
         let selected: [[String: Any]] = search ? [["id": b, "title": "历史对话 B", "status": "completed", "readState": "read"]] :
@@ -362,7 +370,6 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }
             reads += 1
             if args.contains("--shared-fixture-pc-switch") && reads == 15 { current = b; document = "fixture-PC-changed-B"; sentText = nil; revision += 1 }
-            if args.contains("--shared-fixture-pc-model-switch") && reads >= 6 { modelName = "GPT-4o"; effortName = nil; effortObserved = false; revision += 1 }
             if args.contains("--shared-fixture-doc-change-invalidates-effort") && reads >= 6 { document = "fixture-document-switched"; effortName = nil; effortObserved = false; revision += 1 }
             return (200, envelope())
         }
