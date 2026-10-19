@@ -1,5 +1,11 @@
 name: Mirror 0.7.11 R43 Signed Candidate
 on:
+  # One-shot candidate signing: the source-check workflow must already
+  # have passed. Only a dedicated workflow-file commit may trigger this.
+  push:
+    branches: ['feature/mirror-r43-0711-20261019']
+    paths:
+      - '.github/workflows/mirror-r43-0711-candidate.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -9,7 +15,12 @@ concurrency:
   cancel-in-progress: false
 jobs:
   candidate:
-    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/mirror-r43-0711-20261019'
+    if: >-
+      github.repository == 'masakacj/chatgpt-web' &&
+      github.ref == 'refs/heads/feature/mirror-r43-0711-20261019' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' &&
+        github.event.head_commit.message == 'ci(ios): R43 sign candidate once after macOS tests'))
     runs-on: macos-latest
     timeout-minutes: 55
     env:
