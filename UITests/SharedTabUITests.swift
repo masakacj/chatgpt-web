@@ -381,4 +381,409 @@ final class SharedTabUITests: XCTestCase {
         wait("label CONTAINS '交互：1'", on: app.staticTexts["shared.fixture.counters"])
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
+    func testSeparateModelAndEffortDisplayInHeader() throws {
+        let app = launch()
+        let modelLabel = app.staticTexts["shared.header.modelName"]
+        XCTAssertTrue(modelLabel.waitForExistence(timeout: 8))
+        XCTAssertEqual(modelLabel.label, "GPT-6")
+        let effortLabel = app.staticTexts["shared.header.effortName"]
+        XCTAssertTrue(effortLabel.waitForExistence(timeout: 8))
+        XCTAssertEqual(effortLabel.label, "High")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.exists)
+        picker.tap()
+        let currentModel = app.staticTexts["shared.picker.currentModel"]
+        XCTAssertTrue(currentModel.waitForExistence(timeout: 8))
+        XCTAssertEqual(currentModel.label, "GPT-6")
+        let currentEffort = app.staticTexts["shared.picker.currentEffort"]
+        XCTAssertTrue(currentEffort.waitForExistence(timeout: 8))
+        XCTAssertEqual(currentEffort.label, "High")
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testUnknownEffortClearlyDisplaysUnconfirmed() throws {
+        let app = launch("--shared-fixture-model-effort-unknown")
+        let effortLabel = app.staticTexts["shared.header.effortName"]
+        XCTAssertTrue(effortLabel.waitForExistence(timeout: 8))
+        XCTAssertEqual(effortLabel.label, "强度未确认")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.exists)
+        picker.tap()
+        let currentEffort = app.staticTexts["shared.picker.currentEffort"]
+        XCTAssertTrue(currentEffort.waitForExistence(timeout: 8))
+        XCTAssertEqual(currentEffort.label, "强度未确认")
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testNonThinkingModelDisplaysNotApplicable() throws {
+        let app = launch("--shared-fixture-model-non-thinking")
+        let modelLabel = app.staticTexts["shared.header.modelName"]
+        XCTAssertTrue(modelLabel.waitForExistence(timeout: 8))
+        XCTAssertEqual(modelLabel.label, "GPT-4o")
+        let effortLabel = app.staticTexts["shared.header.effortName"]
+        XCTAssertTrue(effortLabel.waitForExistence(timeout: 8))
+        XCTAssertEqual(effortLabel.label, "无独立强度/不适用")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.exists)
+        picker.tap()
+        let currentEffort = app.staticTexts["shared.picker.currentEffort"]
+        XCTAssertTrue(currentEffort.waitForExistence(timeout: 8))
+        XCTAssertEqual(currentEffort.label, "无独立强度/不适用")
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testDynamicModelSelectionUpdatesSnapshotWithEvidence() throws {
+        let app = launch()
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let gpt4o = app.buttons["shared.model.fixture-model-option-gpt4o"]
+        XCTAssertTrue(gpt4o.waitForExistence(timeout: 8))
+        gpt4o.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
+        app.buttons["完成"].tap()
+        let modelLabel = app.staticTexts["shared.header.modelName"]
+        wait("label == 'GPT-4o'", on: modelLabel, timeout: 8)
+        let effortLabel = app.staticTexts["shared.header.effortName"]
+        wait("label == '无独立强度/不适用'", on: effortLabel, timeout: 8)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testNestedSubmenuForThinkingEffortLevels() throws {
+        let app = launch("--shared-fixture-nested-effort-submenu")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let thinkingSubmenu = app.buttons["shared.model.fixture-option-gpt6-thinking"]
+        XCTAssertTrue(thinkingSubmenu.waitForExistence(timeout: 8))
+        thinkingSubmenu.tap()
+        let mediumOption = app.buttons["shared.model.fixture-effort-medium"]
+        XCTAssertTrue(mediumOption.waitForExistence(timeout: 8))
+        mediumOption.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
+        app.buttons["完成"].tap()
+        let effortLabel = app.staticTexts["shared.header.effortName"]
+        wait("label == 'Medium'", on: effortLabel, timeout: 8)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testEffortSliderWithDynamicMinMaxAndValue() throws {
+        let app = launch("--shared-fixture-effort-slider")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let slider = app.sliders["shared.slider.fixture-slider-effort"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["More reasoning steps for complex problems"].exists)
+        let valueText = app.staticTexts["shared.slider.value.fixture-slider-effort"]
+        XCTAssertTrue(valueText.exists)
+        XCTAssertEqual(valueText.label, "High (Level 3)")
+        let setButton = app.buttons["shared.model.fixture-slider-effort"]
+        XCTAssertTrue(setButton.exists)
+        setButton.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testOptionClickedWithoutSelectionObservedShowsUnconfirmed() throws {
+        let app = launch("--shared-fixture-option-clicked-unobserved")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        option.tap()
+        let notice = app.staticTexts["shared.picker.notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 8))
+        XCTAssertTrue(notice.label.contains("未确认 PC 已切换选项"))
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.exists)
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testModelSelectTimeoutOr504DoesNotRetryPostAndKeepsReceipt() throws {
+        let app = launch("--shared-fixture-model-select-timeout")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        option.tap()
+        let notice = app.staticTexts["shared.picker.notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 8))
+        XCTAssertTrue(notice.label.contains("选择结果待确认") && notice.label.contains("不会自动重试"))
+        wait("label CONTAINS '模型选择：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.status"].label.contains("选择结果待确认"))
+    }
+    func testPCOnlineModelSwitchAutomaticallyUpdatesPhoneWithoutUserAction() throws {
+        let app = launch("--shared-fixture-pc-model-switch")
+        let modelLabel = app.staticTexts["shared.header.modelName"]
+        XCTAssertTrue(modelLabel.waitForExistence(timeout: 8))
+        XCTAssertEqual(modelLabel.label, "GPT-6")
+        wait("label == 'GPT-4o'", on: modelLabel, timeout: 15)
+        let effortLabel = app.staticTexts["shared.header.effortName"]
+        wait("label == '无独立强度/不适用'", on: effortLabel, timeout: 8)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testModelSwitchPreservesPhoneDraftAndSendState() throws {
+        let app = launch()
+        let input = composer(app)
+        input.tap()
+        input.typeText("local draft stays untouched across model change")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let high = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(high.waitForExistence(timeout: 8))
+        high.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
+        app.buttons["完成"].tap()
+        XCTAssertTrue(String(describing: composer(app).value).contains("local draft stays untouched across model change"))
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testDisabledModelOptionCannotBeSelected() throws {
+        let app = launch("--shared-fixture-option-disabled")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let disabledOption = app.buttons["shared.model.fixture-option-disabled-pro"]
+        XCTAssertTrue(disabledOption.waitForExistence(timeout: 8))
+        XCTAssertFalse(disabledOption.isEnabled)
+        XCTAssertTrue(app.staticTexts["当前账号不可用"].exists)
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    private func launchLong(_ extra: String? = nil) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-testing", "--shared-tab-fixture", "--shared-fixture-long"] + (extra.map { [$0] } ?? [])
+        app.launch()
+        let tailAnswer = app.staticTexts.containing(NSPredicate(format: "label CONTAINS '长对话回答 第 15 轮'")).firstMatch
+        XCTAssertTrue(tailAnswer.waitForExistence(timeout: 15))
+        XCTAssertEqual(app.webViews.count, 0)
+        return app
+    }
+    func testOpenLongChatPositionsLatestAnswerInViewport() throws {
+        let app = launchLong()
+        let transcript = app.scrollViews["shared.transcript"].frame
+        let editor = composer(app).frame
+        let latestAnswer = app.staticTexts.containing(NSPredicate(format: "label CONTAINS '长对话回答 第 15 轮'")).firstMatch
+        XCTAssertTrue(latestAnswer.waitForExistence(timeout: 8))
+        XCTAssertTrue(latestAnswer.isHittable || (latestAnswer.frame.maxY <= editor.minY + 20 && latestAnswer.frame.minY >= transcript.minY))
+        XCTAssertLessThanOrEqual(latestAnswer.frame.minY, editor.minY)
+        XCTAssertGreaterThanOrEqual(latestAnswer.frame.maxY, transcript.minY)
+    }
+    func testSendFollowsNewLatestMessageToVisibleTail() throws {
+        let app = launchLong()
+        let input = composer(app)
+        input.tap()
+        input.typeText("new tail question")
+        let send = app.buttons["shared.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        XCTAssertTrue(send.isEnabled)
+        send.tap()
+        let reply = app.staticTexts["原生回复：new tail question"]
+        XCTAssertTrue(reply.waitForExistence(timeout: 10))
+        let transcript = app.scrollViews["shared.transcript"].frame
+        let editor = composer(app).frame
+        XCTAssertTrue(reply.isHittable || (reply.frame.maxY <= editor.minY + 20 && reply.frame.minY >= transcript.minY))
+        XCTAssertLessThanOrEqual(reply.frame.minY, editor.minY)
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+    }
+    func testManualHistoryScrollPausesAndResumeReturnsToLatest() throws {
+        let app = launchLong()
+        let transcript = app.scrollViews["shared.transcript"]
+        transcript.swipeDown()
+        let resumeButton = app.buttons["回到最新消息"]
+        XCTAssertTrue(resumeButton.waitForExistence(timeout: 8))
+        resumeButton.tap()
+        wait("exists == false", on: resumeButton, timeout: 6)
+        let latestAnswer = app.staticTexts.containing(NSPredicate(format: "label CONTAINS '长对话回答 第 15 轮'")).firstMatch
+        XCTAssertTrue(latestAnswer.waitForExistence(timeout: 8))
+        let editor = composer(app).frame
+        XCTAssertTrue(latestAnswer.isHittable || latestAnswer.frame.maxY <= editor.minY + 20)
+    }
+    func testShortChatViewportPositionsAnswerAboveComposerWithoutHugeOverscroll() throws {
+        let app = launch()
+        let answer = app.staticTexts["原生测试答案 A"]
+        XCTAssertTrue(answer.waitForExistence(timeout: 8))
+        XCTAssertTrue(answer.isHittable)
+        let transcript = app.scrollViews["shared.transcript"].frame
+        let editor = composer(app).frame
+        XCTAssertGreaterThanOrEqual(answer.frame.minY, transcript.minY - 10)
+        XCTAssertLessThanOrEqual(answer.frame.maxY, editor.minY)
+        XCTAssertLessThan(answer.frame.minY, transcript.minY + transcript.height * 0.6)
+    }
+    func testSidebarPriorityTopSectionsRunningAndUnreadOrder() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        let runningHeader = app.staticTexts["进行中"]
+        let unreadHeader = app.staticTexts["未读"]
+        let recentHeader = app.staticTexts["最近活跃（含项目对话）"]
+        XCTAssertTrue(runningHeader.waitForExistence(timeout: 8))
+        XCTAssertTrue(unreadHeader.waitForExistence(timeout: 8))
+        XCTAssertTrue(recentHeader.waitForExistence(timeout: 8))
+        XCTAssertLessThan(runningHeader.frame.minY, unreadHeader.frame.minY)
+        XCTAssertLessThan(unreadHeader.frame.minY, recentHeader.frame.minY)
+        let runningChat = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"].firstMatch
+        XCTAssertTrue(runningChat.exists)
+        XCTAssertEqual(runningChat.value as? String, "生成中")
+        let unreadChat = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(unreadChat.exists)
+        XCTAssertEqual(unreadChat.value as? String, "未读")
+    }
+    func testSidebarRunningTakesPrecedenceOverUnreadWithoutDuplicate() throws {
+        let app = launch("--shared-fixture-sidebar-both")
+        app.buttons["shared.sidebar"].tap()
+        XCTAssertTrue(app.staticTexts["进行中"].waitForExistence(timeout: 8))
+        let chatB = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"]
+        XCTAssertTrue(chatB.firstMatch.waitForExistence(timeout: 8))
+        XCTAssertEqual(chatB.count, 1, "Chat running and unread must appear only once in priority sections")
+        XCTAssertEqual(chatB.firstMatch.value as? String, "生成中")
+    }
+    func testSidebarPriorityIncludesProjectChat() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        XCTAssertTrue(app.staticTexts["进行中"].waitForExistence(timeout: 8))
+        let runningChat = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"].firstMatch
+        XCTAssertTrue(runningChat.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Project Alpha"].waitForExistence(timeout: 8))
+        XCTAssertEqual(runningChat.value as? String, "生成中")
+    }
+    func testSidebarReadAckClearsUnreadImmediatelyOnOpen() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        XCTAssertEqual(chatA.value as? String, "未读")
+        chatA.tap()
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
+        app.buttons["shared.sidebar"].tap()
+        let reloadedChatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(reloadedChatA.waitForExistence(timeout: 8))
+        XCTAssertNotEqual(reloadedChatA.value as? String, "未读", "Opened chat unread dot must be cleared immediately")
+    }
+    func testSidebarReadAckPreventsStalePCUnreadReplay() throws {
+        let app = launch("--shared-fixture-sidebar-read-ack")
+        app.buttons["shared.sidebar"].tap()
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        chatA.tap()
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
+        app.buttons["shared.sidebar"].tap()
+        let checkedChatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(checkedChatA.waitForExistence(timeout: 8))
+        XCTAssertNotEqual(checkedChatA.value as? String, "未读", "Stale PC unread replay must remain suppressed by local acknowledgement")
+    }
+    func testSidebarUnreadReappearsOnNewPositiveEvent() throws {
+        let app = launch("--shared-fixture-sidebar-new-unread")
+        app.buttons["shared.sidebar"].tap()
+        let unreadHeader = app.staticTexts["未读"]
+        XCTAssertTrue(unreadHeader.waitForExistence(timeout: 8))
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        XCTAssertEqual(chatA.value as? String, "未读")
+    }
+    func testSidebarPriorityPreservesSearchIsolation() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        XCTAssertTrue(app.staticTexts["进行中"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["未读"].waitForExistence(timeout: 8))
+        let searchInput = app.textFields["shared.search.input"]
+        XCTAssertTrue(searchInput.waitForExistence(timeout: 5))
+        searchInput.tap()
+        searchInput.typeText("older")
+        app.buttons["shared.search"].tap()
+        XCTAssertTrue(app.staticTexts["搜索结果"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["进行中"].exists)
+        XCTAssertFalse(app.staticTexts["未读"].exists)
+    }
+    func testSidebarReadAckCompatibleWithSavedCodable() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        chatA.tap()
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
+        app.buttons["shared.sidebar"].tap()
+        let openedA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(openedA.waitForExistence(timeout: 8))
+        XCTAssertNotEqual(openedA.value as? String, "未读")
+    }
+    func testSidebarUnreadShowsGreenForCompletedAndBlueForOther() throws {
+        let app = launch("--shared-fixture-sidebar-colors")
+        app.buttons["shared.sidebar"].tap()
+        XCTAssertTrue(app.staticTexts["未读"].waitForExistence(timeout: 8))
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        let chatD = app.buttons["shared.chat.44444444-4444-4444-8444-444444444444"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        XCTAssertTrue(chatD.waitForExistence(timeout: 8))
+        XCTAssertEqual(chatA.value as? String, "未读")
+        XCTAssertEqual(chatD.value as? String, "未读")
+    }
+    func testR35ReviewFixNewUnreadAfterAck() throws {
+        let app = launch("--shared-fixture-sidebar-new-unread")
+        app.buttons["shared.sidebar"].tap()
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        XCTAssertEqual(chatA.value as? String, "未读")
+        chatA.tap()
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
+        app.buttons["shared.sidebar"].tap()
+        let ackedChatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(ackedChatA.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["聊天"].waitForExistence(timeout: 5))
+    }
+    func testR35ReviewFixReadAckPairIsolation() throws {
+        let app = launch("--shared-fixture-sidebar")
+        app.buttons["shared.sidebar"].tap()
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        chatA.tap()
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
+        app.buttons["更多"].tap()
+        let settings = app.buttons["连接设置"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        XCTAssertTrue(app.textFields["HTTPS 服务地址"].waitForExistence(timeout: 8))
+        XCTAssertEqual(app.webViews.count, 0)
+    }
+    func testR35ReviewFixModelSelectNilEvidenceRemainsUnconfirmed() throws {
+        let app = launch("--shared-fixture-model-select-nil-evidence")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        option.tap()
+        let notice = app.staticTexts["shared.picker.notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 8))
+        XCTAssertTrue(notice.label.contains("选择结果待确认"))
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.exists)
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.status"].label.contains("选择结果待确认"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
+    }
+    func testR35ReviewFixThinkingExplicitUnobservedOverridesHigh() throws {
+        let app = launch("--shared-fixture-model-thinking-unobserved-high")
+        let effortLabel = app.staticTexts["shared.header.effortName"]
+        XCTAssertTrue(effortLabel.waitForExistence(timeout: 8))
+        XCTAssertEqual(effortLabel.label, "强度未确认", "observed=false must override model.name 'GPT-6 Thinking · High'")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.exists)
+        picker.tap()
+        let currentEffort = app.staticTexts["shared.picker.currentEffort"]
+        XCTAssertTrue(currentEffort.waitForExistence(timeout: 8))
+        XCTAssertEqual(currentEffort.label, "强度未确认")
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testR35ReviewFixSidebarCompletedOverRunningInAllListPaths() throws {
+        let app = launch("--shared-fixture-sidebar-completed-over-running")
+        app.buttons["shared.sidebar"].tap()
+        XCTAssertTrue(app.staticTexts["聊天"].waitForExistence(timeout: 8))
+        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
+        XCTAssertNotEqual(chatA.value as? String, "生成中", "snapshot completed must override stale catalog running spinner")
+        XCTAssertFalse(app.staticTexts["进行中"].exists, "completed chat must not be placed in running group")
+    }
 }

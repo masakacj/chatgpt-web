@@ -16,15 +16,85 @@ struct STSnapshot: Codable {
     var sidebarIndicators: [STSidebarSignal]?
     var model: STPCModel?
 }
-struct STPCModel: Codable { let available: Bool; let name: String }
-struct STModelOption: Codable, Identifiable { let id: String; let label: String; var selected: Bool?; var submenu: Bool? }
-private struct STModelCatalog: Decodable { let available: Bool; let current: String; let options: [STModelOption] }
-private struct STModelChoice: Decodable { let status: String; var error: String?; var model: STPCModel?; var options: [STModelOption]? }
+struct STPCThinking: Codable, Equatable {
+    var observed: Bool?
+    var effort: String?
+    var value: Double?
+    var source: String?
+    var observedAt: Double?
+    var confidence: String?
+}
+struct STPCModel: Codable, Equatable {
+    let available: Bool
+    let name: String
+    var source: String?
+    var thinking: STPCThinking?
+
+    enum CodingKeys: String, CodingKey {
+        case available, name, source, thinking
+    }
+
+    init(available: Bool, name: String, source: String? = nil, thinking: STPCThinking? = nil) {
+        self.available = available
+        self.name = name
+        self.source = source
+        self.thinking = thinking
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        available = try container.decode(Bool.self, forKey: .available)
+        name = try container.decode(String.self, forKey: .name)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        if let th = try? container.decodeIfPresent(STPCThinking.self, forKey: .thinking) {
+            thinking = th
+        } else if let boolVal = try? container.decodeIfPresent(Bool.self, forKey: .thinking) {
+            thinking = STPCThinking(observed: boolVal, effort: nil, value: nil, source: nil, observedAt: nil, confidence: nil)
+        } else {
+            thinking = nil
+        }
+    }
+}
+struct STModelOption: Codable, Identifiable, Equatable {
+    let id: String
+    let label: String
+    var selected: Bool?
+    var submenu: Bool?
+    var kind: String?
+    var value: Double?
+    var description: String?
+    var disabled: Bool?
+    var selectionEvidence: String?
+    var min: Double?
+    var max: Double?
+    var step: Double?
+    var valueText: String?
+}
+struct STModelCatalog: Decodable {
+    let available: Bool
+    let current: String
+    let options: [STModelOption]
+    var effort: String?
+    var thinking: STPCThinking?
+    var kind: String?
+}
+struct STModelChoice: Decodable {
+    let status: String
+    var error: String?
+    var model: STPCModel?
+    var options: [STModelOption]?
+    var submenuOpened: Bool?
+    var selectionObserved: Bool?
+    var selectionEvidence: String?
+}
 private struct STUploadResult: Decodable { let status: String; var error: String?; var name: String? }
 struct STSidebarSignal: Codable {
     let id: String
     let status: String
     let readState: String
+    var activityAt: Double?
+    var watermark: String?
+    var lastMessageId: String?
 }
 struct STEnvelope: Decodable {
     let ok: Bool; let sessionId: String; let revision: Int
@@ -34,6 +104,8 @@ struct STProject: Codable, Identifiable { let id: String; let title: String; let
 struct STChat: Codable, Identifiable {
     let id: String; let title: String
     var projectId: String?; var current: Bool?; var status: String?; var readState: String?; var activityAt: Double?
+    var watermark: String?
+    var lastMessageId: String?
 }
 struct STLibrary: Decodable {
     var projects: [STProject]?; var chats: [STChat]?; var partial: Bool?; var source: String?
@@ -43,7 +115,19 @@ private struct STHealth: Decodable { let capabilities: [String]? }
 private struct STTabs: Decodable { let tabs: [STTab] }
 private struct STOK: Decodable { let ok: Bool? }
 private struct STFailure: Decodable { let error: String }
-private struct STResult: Decodable { var status: String?; var error: String?; var conversationId: String?; var projectId: String? }
+private struct STResult: Decodable {
+    var status: String?
+    var error: String?
+    var conversationId: String?
+    var projectId: String?
+    var commandId: String?
+    var documentId: String?
+    var selectionObserved: Bool?
+    var selectionEvidence: String?
+    var model: STPCModel?
+    var options: [STModelOption]?
+    var submenuOpened: Bool?
+}
 private struct STReceipt: Decodable { let commandId: String; let state: String; var result: STResult? }
 private struct STHistory: Decodable { let documentId: String; let conversationId: String; let messages: [PCRemoteMessage]; var cursor: String?; let hasMore: Bool }
 struct STActionPending: Codable {
@@ -51,10 +135,28 @@ struct STActionPending: Codable {
     // Optional to preserve previously stored interaction receipts unchanged.
     var kind: String? = nil
     var stopTargetId: String? = nil
+    var documentId: String? = nil
+    var optionId: String? = nil
+    var targetLabel: String? = nil
 }
-private struct STSaved: Codable {
+struct STReadAcknowledgement: Codable, Equatable {
+    let conversationId: String
+    var server: String?
+    var activityAt: Double?
+    var observedAt: Double?
+    var status: String?
+    var revision: Int?
+    var watermark: String?
+    var lastMessageId: String?
+}
+struct STSaved: Codable {
     var ledger: STDraftLedger; var tabId: Int?; var snapshot: STSnapshot?; var server: String?
     var actionPending: STActionPending?
+    var verifiedEffort: String?
+    var verifiedEffortDocId: String?
+    var verifiedEffortConvId: String?
+    var readAcknowledgements: [String: STReadAcknowledgement]?
+    var scopedReadAcknowledgements: [String: [String: STReadAcknowledgement]]?
 }
 private struct STConnection {
     let origin: URL; let key: String
@@ -137,6 +239,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     // A successful native click is not proof that generation has stopped.
     // Don't expose the same PC Stop control for a second click until it changes.
     @Published private(set) var stopAcknowledgedTarget: String?
+    @Published var verifiedEffort: String?
+    @Published private(set) var readAcknowledgements: [String: STReadAcknowledgement] = [:]
+    private var scopedReadAcknowledgements: [String: [String: STReadAcknowledgement]] = [:]
+    private(set) var verifiedEffortDocId: String?
+    private(set) var verifiedEffortConvId: String?
     private(set) var selectedTabId: Int?
     // Existing CF settings retain their original local ledger/Keychain identity.
     // Their actual network requests now use the trusted home gateway.
@@ -215,6 +322,57 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     var canUpload: Bool { online && !busy && !uploading && !loading && capabilities.contains("mobile-upload") && snapshot != nil && snapshot?.status != "waiting" }
     var canPickModel: Bool { online && !busy && capabilities.contains("model-selection") && snapshot?.model?.available == true }
+    static func parseModelAndEffort(rawName: String) -> (model: String, effort: String?) {
+        if rawName.contains(" Thinking · ") {
+            let parts = rawName.components(separatedBy: " Thinking · ")
+            return (parts[0].trimmingCharacters(in: .whitespaces), parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : nil)
+        }
+        if rawName.contains(" · ") {
+            let parts = rawName.components(separatedBy: " · ")
+            return (parts[0].trimmingCharacters(in: .whitespaces), parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : nil)
+        }
+        return (rawName.trimmingCharacters(in: .whitespaces), nil)
+    }
+    var isThinkingModel: Bool {
+        guard let snap = snapshot, let m = snap.model else { return false }
+        if m.thinking != nil { return true }
+        let parsed = Self.parseModelAndEffort(rawName: m.name)
+        if parsed.effort != nil { return true }
+        let lower = m.name.lowercased()
+        return lower.contains("thinking") || lower.contains("o1") || lower.contains("o3") || lower.contains("o4") || lower.contains("gpt-6")
+    }
+    var displayedModelName: String {
+        guard let snap = snapshot, let m = snap.model else { return "模型" }
+        let parsed = Self.parseModelAndEffort(rawName: m.name)
+        return parsed.model.isEmpty ? m.name : parsed.model
+    }
+    var displayedEffortName: String {
+        guard let snap = snapshot, let m = snap.model else { return "不适用" }
+        guard isThinkingModel else { return "无独立强度/不适用" }
+        if let th = m.thinking {
+            if th.observed == false || th.confidence == "unconfirmed" {
+                return "强度未确认"
+            }
+            if th.observed == true, let effort = th.effort, !effort.isEmpty {
+                return effort
+            }
+        }
+        if let verified = verifiedEffort,
+           verifiedEffortDocId == snap.documentId,
+           verifiedEffortConvId == snap.conversationId {
+            return verified
+        }
+        if m.thinking == nil {
+            let parsed = Self.parseModelAndEffort(rawName: m.name)
+            if let pe = parsed.effort, !pe.isEmpty {
+                return pe
+            }
+        }
+        return "强度未确认"
+    }
+    var isEffortUnconfirmed: Bool {
+        isThinkingModel && displayedEffortName == "强度未确认"
+    }
     var thinking: Bool { snapshot?.responsePhase == "thinking" || snapshot?.status == "running" && snapshot?.messages.last?.role != "assistant" }
     var projectTitle: String? { projects.first { $0.id == snapshot?.projectId }?.title }
     private var stateFile: URL? { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("SharedPCCompanion/state.json") }
@@ -237,7 +395,19 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         pairingKey = STKeychain.load()
         if let file = stateFile, let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(STSaved.self, from: data) {
             ledger = saved.ledger; selectedTabId = saved.tabId; actionPending = saved.actionPending
-            if let c = try? config(), saved.server == c.identity { snapshot = saved.snapshot; if let snap = snapshot { owner = ownerKey(snap, c); text = ledger.draft(owner).text }; status = "本地快照 · 正在连接 PC" }
+            verifiedEffort = saved.verifiedEffort
+            verifiedEffortDocId = saved.verifiedEffortDocId
+            verifiedEffortConvId = saved.verifiedEffortConvId
+            scopedReadAcknowledgements = saved.scopedReadAcknowledgements ?? [:]
+            if let legacy = saved.readAcknowledgements, let srv = saved.server, scopedReadAcknowledgements[srv] == nil {
+                scopedReadAcknowledgements[srv] = legacy
+            }
+            if let c = try? config(), saved.server == c.identity {
+                snapshot = saved.snapshot
+                readAcknowledgements = saved.readAcknowledgements ?? scopedReadAcknowledgements[c.identity] ?? [:]
+                if let snap = snapshot { owner = ownerKey(snap, c); text = ledger.draft(owner).text }
+                status = "本地快照 · 正在连接 PC"
+            }
         } else { importLegacyDraft() }
         if selectedTabId == nil, let data = UserDefaults.standard.data(forKey: "PCCompanion.lastTab"), let tab = try? JSONDecoder().decode(PCRemoteTab.self, from: data) { selectedTabId = tab.tabId }
     }
@@ -262,7 +432,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         do {
             let parent = file.deletingLastPathComponent(); try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
             var directory = parent; var values = URLResourceValues(); values.isExcludedFromBackup = true; try directory.setResourceValues(values)
-            let saved = STSaved(ledger: ledger, tabId: selectedTabId, snapshot: snapshot, server: connection?.identity ?? (try? config().identity), actionPending: actionPending)
+            let saved = STSaved(ledger: ledger, tabId: selectedTabId, snapshot: snapshot, server: connection?.identity ?? (try? config().identity), actionPending: actionPending, verifiedEffort: verifiedEffort, verifiedEffortDocId: verifiedEffortDocId, verifiedEffortConvId: verifiedEffortConvId, readAcknowledgements: readAcknowledgements, scopedReadAcknowledgements: scopedReadAcknowledgements)
             try JSONEncoder().encode(saved).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]); return true
         } catch { self.error = STError(code: "local_storage_failed").localizedDescription; return false }
     }
@@ -290,7 +460,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     func loadTabs() async {
         guard !busy else { return }; busy = true; defer { busy = false }; error = nil
         do {
-            let c = try config(); let health: STHealth = try await request("/v1/health", using: c)
+            let c = try config()
+            if connection?.identity != c.identity {
+                readAcknowledgements = scopedReadAcknowledgements[c.identity] ?? [:]
+            }
+            let health: STHealth = try await request("/v1/health", using: c)
             capabilities = Set(health.capabilities ?? [])
             guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
             let value: STTabs = try await request("/v1/tabs?shared=1", using: c); tabs = value.tabs
@@ -301,7 +475,13 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     func bind(_ tab: STTab) async {
         guard !busy else { return }; busy = true; defer { busy = false }; error = nil
         ledger.edit(owner, text: text); save()
-        do { let c = try config(); await disconnectSession(); selectedTabId = tab.tabId; connection = c; foreground = true; try await subscribe(using: c); needsSettings = false; startPolling(); }
+        do {
+            let c = try config()
+            if connection?.identity != c.identity {
+                readAcknowledgements = scopedReadAcknowledgements[c.identity] ?? [:]
+            }
+            await disconnectSession(); selectedTabId = tab.tabId; connection = c; foreground = true; try await subscribe(using: c); needsSettings = false; startPolling();
+        }
         catch { online = false; self.error = error.localizedDescription }
     }
     private func subscribe(using c: STConnection) async throws {
@@ -329,7 +509,28 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     // instead of waiting for a later cached session GET to catch up.
     private func display(_ fresh: STSnapshot, using c: STConnection) throws {
         guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 24 else { throw STError(code: "schema_invalid") }
-        if snapshot?.documentId != fresh.documentId { older = []; historyCursor = nil; historyHasMore = nil }
+        if snapshot?.documentId != fresh.documentId || snapshot?.conversationId != fresh.conversationId {
+            older = []; historyCursor = nil; historyHasMore = nil
+            verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
+        }
+        let prevModel = displayedModelName
+        let newParsed = Self.parseModelAndEffort(rawName: fresh.model?.name ?? "")
+        if prevModel != "模型" && !prevModel.isEmpty && !newParsed.model.isEmpty && newParsed.model != prevModel {
+            verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
+        }
+        if let th = fresh.model?.thinking {
+            if th.observed == true, let effort = th.effort, !effort.isEmpty {
+                verifiedEffort = effort
+                verifiedEffortDocId = fresh.documentId
+                verifiedEffortConvId = fresh.conversationId
+            } else if th.observed == false || th.confidence == "unconfirmed" {
+                verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
+            }
+        } else if let parsedEffort = newParsed.effort, !parsedEffort.isEmpty {
+            verifiedEffort = parsedEffort
+            verifiedEffortDocId = fresh.documentId
+            verifiedEffortConvId = fresh.conversationId
+        }
         let newOwner = ownerKey(fresh, c)
         let waitingForNewReceipt = busy && currentPending?.temporary == true && !fresh.conversationId.isEmpty
         if newOwner != owner && !waitingForNewReceipt { ledger.edit(owner, text: text); owner = newOwner; text = ledger.draft(owner).text }
@@ -348,11 +549,53 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 var chat = original
                 chat.status = marker.status
                 chat.readState = marker.readState
+                if let act = marker.activityAt { chat.activityAt = act }
+                if let wm = marker.watermark { chat.watermark = wm }
+                if let mid = marker.lastMessageId { chat.lastMessageId = mid }
                 return chat
             }
             recentActive = recentActive.map { original in
                 guard let marker = byId[original.id] else { return original }
-                var chat = original; chat.status = marker.status; chat.readState = marker.readState
+                var chat = original
+                chat.status = marker.status
+                chat.readState = marker.readState
+                if let act = marker.activityAt { chat.activityAt = act }
+                if let wm = marker.watermark { chat.watermark = wm }
+                if let mid = marker.lastMessageId { chat.lastMessageId = mid }
+                return chat
+            }
+            for marker in indicators {
+                if marker.status == "running", var ack = readAcknowledgements[marker.id] {
+                    ack.status = "running"
+                    readAcknowledgements[marker.id] = ack
+                    scopedReadAcknowledgements[c.identity, default: [:]][marker.id] = ack
+                }
+            }
+        }
+        if !fresh.conversationId.isEmpty {
+            let assistantMsgId = fresh.messages.last(where: { $0.role == "assistant" })?.id
+            chats = chats.map { original in
+                guard original.id == fresh.conversationId else { return original }
+                var chat = original
+                if ["completed", "stopped", "error", "waiting", "running"].contains(fresh.status) {
+                    chat.status = fresh.status
+                }
+                if let assistantMsgId {
+                    chat.watermark = assistantMsgId
+                    chat.lastMessageId = assistantMsgId
+                }
+                return chat
+            }
+            recentActive = recentActive.map { original in
+                guard original.id == fresh.conversationId else { return original }
+                var chat = original
+                if ["completed", "stopped", "error", "waiting", "running"].contains(fresh.status) {
+                    chat.status = fresh.status
+                }
+                if let assistantMsgId {
+                    chat.watermark = assistantMsgId
+                    chat.lastMessageId = assistantMsgId
+                }
                 return chat
             }
         }
@@ -452,6 +695,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     private func disconnectSession() async {
         epoch += 1; pollTask?.cancel(); online = false; revision = -1
+        verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
         let id = sessionID; sessionID = nil
         if let id, let c = connection { let _: STOK? = try? await request("/v1/sessions/\(id)", using: c, method: "DELETE") }
     }
@@ -469,6 +713,8 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         tabs = []; chats = []; projects = []; recentActive = []; modelOptions = []
         snapshot = nil; older = []; historyCursor = nil; historyHasMore = nil
         stopAcknowledgedTarget = nil
+        verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
+        readAcknowledgements = [:]
         owner = ""; text = ""
         error = nil
         status = "测试通道 · 请复制 PC 13213 的配对密钥"
@@ -498,7 +744,13 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             searchNotice = result.loading == true ? "官网搜索仍在加载" : result.emptyConfirmed == true ? "官网搜索未找到匹配对话" : result.source == "official_search" ? "官网历史搜索 · 按需加载" : "最近对话与项目 · 可搜索更早记录"
         } catch { self.error = error.localizedDescription }
     }
-    func open(_ chat: STChat) async { await navigate("open", fields: ["targetConversationId": chat.id]) }
+    func open(_ chat: STChat) async {
+        if snapshot?.conversationId == chat.id {
+            acknowledgeRead(for: chat.id, activityAt: chat.activityAt, status: chat.status)
+            return
+        }
+        await navigate("open", fields: ["targetConversationId": chat.id])
+    }
     func newChat(project: STProject? = nil) async { await navigate("new", fields: project.map { ["projectId": $0.id] } ?? [:]) }
     private func navigate(_ action: String, fields: [String: Any]) async {
         guard online, !busy, !libraryLoading, let c = connection, let id = sessionID, let snap = snapshot else { return }
@@ -515,9 +767,204 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                (action != "open" || fresh.conversationId == (fields["targetConversationId"] as? String ?? "")),
                (action != "new" || fresh.documentId != snap.documentId) {
                 try display(fresh, using: c)
+                if action == "open", let targetId = fields["targetConversationId"] as? String, fresh.conversationId == targetId {
+                    let matchingChat = chats.first { $0.id == targetId } ?? recentActive.first { $0.id == targetId }
+                    acknowledgeRead(for: targetId, activityAt: matchingChat?.activityAt, status: fresh.status)
+                }
             }
             try await refresh(using: c)
+            if action == "open", let targetId = fields["targetConversationId"] as? String, snapshot?.conversationId == targetId {
+                let matchingChat = chats.first { $0.id == targetId } ?? recentActive.first { $0.id == targetId }
+                acknowledgeRead(for: targetId, activityAt: matchingChat?.activityAt, status: snapshot?.status)
+            }
         } catch { self.error = error.localizedDescription; try? await refresh(using: c) }
+    }
+    func acknowledgeRead(for conversationId: String, activityAt: Double? = nil, status: String? = nil, watermark: String? = nil) {
+        guard !conversationId.isEmpty else { return }
+        let currentConn = connection ?? (try? config())
+        let serverIdentity = currentConn?.identity ?? "local"
+
+        let matchingChat = chats.first { $0.id == conversationId } ?? recentActive.first { $0.id == conversationId }
+        let effectiveActivity = activityAt ?? matchingChat?.activityAt
+        let effectiveStatus = status ?? matchingChat?.status
+        let effectiveWatermark = watermark ?? matchingChat?.watermark ?? matchingChat?.lastMessageId ??
+            (snapshot?.conversationId == conversationId ? (snapshot?.messages.last(where: { $0.role == "assistant" })?.id ?? snapshot?.messages.last?.id ?? snapshot?.documentId) : nil)
+
+        let ack = STReadAcknowledgement(
+            conversationId: conversationId,
+            server: serverIdentity,
+            activityAt: effectiveActivity,
+            observedAt: Date().timeIntervalSince1970,
+            status: effectiveStatus,
+            revision: revision,
+            watermark: effectiveWatermark,
+            lastMessageId: matchingChat?.lastMessageId
+        )
+        readAcknowledgements[conversationId] = ack
+        scopedReadAcknowledgements[serverIdentity, default: [:]][conversationId] = ack
+
+        // Bounded <= 200 items: evict oldest
+        if readAcknowledgements.count > 200 {
+            let sortedByTime = readAcknowledgements.sorted {
+                ($0.value.observedAt ?? 0) < ($1.value.observedAt ?? 0)
+            }
+            for item in sortedByTime.prefix(readAcknowledgements.count - 200) {
+                readAcknowledgements.removeValue(forKey: item.key)
+            }
+        }
+        if var serverAcks = scopedReadAcknowledgements[serverIdentity], serverAcks.count > 200 {
+            let sortedByTime = serverAcks.sorted {
+                ($0.value.observedAt ?? 0) < ($1.value.observedAt ?? 0)
+            }
+            for item in sortedByTime.prefix(serverAcks.count - 200) {
+                serverAcks.removeValue(forKey: item.key)
+            }
+            scopedReadAcknowledgements[serverIdentity] = serverAcks
+        }
+
+        chats = chats.map { original in
+            guard original.id == conversationId else { return original }
+            var updated = original
+            updated.readState = "read"
+            return updated
+        }
+        recentActive = recentActive.map { original in
+            guard original.id == conversationId else { return original }
+            var updated = original
+            updated.readState = "read"
+            return updated
+        }
+        saveSoon()
+    }
+    func isChatUnread(_ chat: STChat) -> Bool {
+        guard chat.readState != "unknown", chat.readState == "unread" else { return false }
+        if let snap = snapshot, snap.conversationId == chat.id {
+            return false
+        }
+        guard let ack = readAcknowledgements[chat.id] else {
+            return true
+        }
+        if let ackServer = ack.server, let conn = connection ?? (try? config()), ackServer != conn.identity {
+            return true
+        }
+        // 1. Higher activityAt timestamp than acknowledged
+        if let newAct = chat.activityAt, let oldAct = ack.activityAt, newAct > oldAct {
+            return true
+        }
+        // 2. Newer positive observed assistant event watermark / messageId
+        if let newWm = chat.watermark, let oldWm = ack.watermark, !newWm.isEmpty, newWm != oldWm {
+            return true
+        }
+        if let newMid = chat.lastMessageId, let oldMid = ack.lastMessageId, !newMid.isEmpty, newMid != oldMid {
+            return true
+        }
+        // 3. State transition: acknowledged while running, now completed with positive unread
+        if ack.status == "running" && chat.status == "completed" {
+            return true
+        }
+        // Suppress stale PC unread replay; lacking newer-turn evidence must not invent unread
+        return false
+    }
+    func isChatPendingRefresh(_ chat: STChat) -> Bool {
+        guard chat.readState != "unknown", chat.readState == "unread" else { return false }
+        if let snap = snapshot, snap.conversationId == chat.id {
+            return false
+        }
+        guard let ack = readAcknowledgements[chat.id] else {
+            return false
+        }
+        if let ackServer = ack.server, let conn = connection ?? (try? config()), ackServer != conn.identity {
+            return false
+        }
+        if isChatUnread(chat) {
+            return false
+        }
+        return true
+    }
+    func effectiveChatStatus(_ chat: STChat) -> String {
+        if chat.id == snapshot?.conversationId,
+           let live = snapshot?.status,
+           ["completed", "stopped", "error", "waiting", "running"].contains(live) {
+            return live
+        }
+        return chat.status ?? "unknown"
+    }
+    func projectTitle(for projectId: String?) -> String? {
+        guard let projectId else { return nil }
+        return projects.first { $0.id == projectId }?.title
+    }
+    var allObservedChats: [STChat] {
+        var map: [String: STChat] = [:]
+        for chat in chats + recentActive {
+            if var existing = map[chat.id] {
+                if (existing.status == nil || existing.status == "unknown") && chat.status != nil && chat.status != "unknown" {
+                    existing.status = chat.status
+                }
+                if (existing.readState == nil || existing.readState == "unknown") && chat.readState != nil && chat.readState != "unknown" {
+                    existing.readState = chat.readState
+                }
+                if existing.projectId == nil && chat.projectId != nil {
+                    existing.projectId = chat.projectId
+                }
+                if (chat.activityAt ?? 0) > (existing.activityAt ?? 0) {
+                    existing.activityAt = chat.activityAt
+                }
+                map[chat.id] = existing
+            } else {
+                map[chat.id] = chat
+            }
+        }
+        if let snap = snapshot, !snap.conversationId.isEmpty {
+            if var boundChat = map[snap.conversationId] {
+                if ["running", "waiting", "error", "completed", "stopped"].contains(snap.status) {
+                    boundChat.status = snap.status
+                }
+                map[snap.conversationId] = boundChat
+            } else {
+                map[snap.conversationId] = STChat(id: snap.conversationId, title: snap.title, projectId: snap.projectId, status: snap.status, readState: "read", activityAt: nil)
+            }
+        }
+        return Array(map.values)
+    }
+    var runningChats: [STChat] {
+        var seenIds = Set<String>()
+        var list: [STChat] = []
+        for chat in allObservedChats {
+            let st = effectiveChatStatus(chat)
+            guard st != "unknown", st == "running" else { continue }
+            if !seenIds.contains(chat.id) {
+                seenIds.insert(chat.id)
+                list.append(chat)
+            }
+        }
+        return list.sorted { ($0.activityAt ?? 0) > ($1.activityAt ?? 0) }
+    }
+    var unreadChats: [STChat] {
+        let runningIds = Set(runningChats.map(\.id))
+        var seenIds = Set<String>()
+        var list: [STChat] = []
+        for chat in allObservedChats {
+            guard !runningIds.contains(chat.id) else { continue }
+            guard chat.readState != "unknown", isChatUnread(chat) else { continue }
+            if !seenIds.contains(chat.id) {
+                seenIds.insert(chat.id)
+                list.append(chat)
+            }
+        }
+        return list.sorted { ($0.activityAt ?? 0) > ($1.activityAt ?? 0) }
+    }
+    var prioritizedRecentActive: [STChat] {
+        let priorityIds = Set(runningChats.map(\.id) + unreadChats.map(\.id))
+        var seenIds = Set<String>()
+        var list: [STChat] = []
+        for chat in recentActive {
+            guard !priorityIds.contains(chat.id) else { continue }
+            if !seenIds.contains(chat.id) {
+                seenIds.insert(chat.id)
+                list.append(chat)
+            }
+        }
+        return list
     }
     func loadModelOptions() async {
         guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
@@ -526,21 +973,98 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             let value: STModelCatalog = try await request("/v1/sessions/\(id)/actions", using: c,
                 body: ["action": "model_catalog", "commandId": UUID().uuidString, "documentId": snap.documentId])
             modelOptions = value.available ? value.options : []
+            if let th = value.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
+                verifiedEffort = eff
+                verifiedEffortDocId = snap.documentId
+                verifiedEffortConvId = snap.conversationId
+            }
             if modelOptions.isEmpty { controlNotice = "PC 当前未提供可镜像的模型或思考选项" }
         } catch { controlNotice = error.localizedDescription }
     }
-    func chooseModel(_ option: STModelOption) async {
+    func chooseModel(_ option: STModelOption, value: Double? = nil) async {
         guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        guard actionPending == nil else {
+            controlNotice = "上一操作尚未确认，请等待 PC 确认或核对回执"
+            return
+        }
         modelPickerLoading = true; defer { modelPickerLoading = false }
+        let commandId = UUID().uuidString
+        let pending = STActionPending(id: commandId, server: c.identity, conversation: snap.conversationId,
+                                      kind: "model_select", stopTargetId: nil, documentId: snap.documentId,
+                                      optionId: option.id, targetLabel: option.label)
+        actionPending = pending
+        guard save() else {
+            actionPending = nil
+            controlNotice = "保存操作意图失败，未提交选择"
+            return
+        }
         do {
-            let result: STModelChoice = try await request("/v1/sessions/\(id)/actions", using: c,
-                body: ["action": "model_select", "commandId": UUID().uuidString,
-                       "documentId": snap.documentId, "optionId": option.id])
-            guard result.status == "option_clicked" else { throw STError(code: result.error ?? "model_option_changed") }
-            modelOptions = result.options ?? []
-            controlNotice = modelOptions.isEmpty ? "已在 PC 网页选择：\(option.label)" : "请选择 PC 网页实际提供的细分档位"
-            try? await refresh(using: c)
-        } catch { controlNotice = error.localizedDescription }
+            var body: [String: Any] = [
+                "action": "model_select",
+                "commandId": commandId,
+                "documentId": snap.documentId,
+                "optionId": option.id
+            ]
+            if let value { body["value"] = value }
+            let result: STModelChoice = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
+            guard result.status == "option_clicked" else {
+                actionPending = nil; save()
+                throw STError(code: result.error ?? "model_option_changed")
+            }
+            if result.submenuOpened == true {
+                actionPending = nil; save()
+                modelOptions = result.options ?? []
+                controlNotice = "请选择 PC 网页实际提供的细分档位"
+                return
+            }
+            if let returnedOptions = result.options, !returnedOptions.isEmpty {
+                modelOptions = returnedOptions
+            }
+            let sameDocAndConv = (snapshot?.documentId == snap.documentId && snapshot?.conversationId == snap.conversationId)
+            if result.selectionObserved == true && sameDocAndConv {
+                actionPending = nil
+                if let freshModel = result.model {
+                    if let th = freshModel.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
+                        verifiedEffort = eff
+                        verifiedEffortDocId = snap.documentId
+                        verifiedEffortConvId = snap.conversationId
+                    } else if freshModel.thinking?.observed == false || freshModel.thinking?.confidence == "unconfirmed" {
+                        verifiedEffort = nil
+                        verifiedEffortDocId = nil
+                        verifiedEffortConvId = nil
+                    } else if freshModel.thinking == nil {
+                        let parsed = Self.parseModelAndEffort(rawName: freshModel.name)
+                        if let pe = parsed.effort, !pe.isEmpty {
+                            verifiedEffort = pe
+                            verifiedEffortDocId = snap.documentId
+                            verifiedEffortConvId = snap.conversationId
+                        }
+                    }
+                } else if option.kind == "effort" || option.label.contains("High") || option.label.contains("Medium") || option.label.contains("Instant") {
+                    let parsed = Self.parseModelAndEffort(rawName: option.label)
+                    verifiedEffort = parsed.effort ?? option.label
+                    verifiedEffortDocId = snap.documentId
+                    verifiedEffortConvId = snap.conversationId
+                }
+                controlNotice = "已在 PC 网页选择：\(option.label)"
+                save()
+                try? await refresh(using: c)
+            } else if result.selectionObserved == false {
+                controlNotice = "未确认 PC 已切换选项，请核对电脑网页"
+                status = "选择结果待确认 · 不会自动重试"
+                save()
+                try? await refresh(using: c)
+            } else {
+                controlNotice = "选择结果待确认；缺少网页生效证据。请核对 PC 页面。"
+                status = "选择结果待确认 · 不会自动重试"
+                save()
+                try? await refresh(using: c)
+            }
+        } catch {
+            controlNotice = "选择结果待确认；不会自动重试。请核对 PC 页面。"
+            status = "选择结果待确认 · 不会自动重试"
+            save()
+        }
     }
     func upload(_ data: Data, filename: String, mimeType: String) async {
         guard canUpload, let c = connection, let id = sessionID, let snap = snapshot else { return }
@@ -618,11 +1142,41 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             actionPending = nil
             status = "已点击 PC 中止 · 等待原生状态"
         } else if receipt.state == "done" && receipt.result?.status == "interaction_clicked" &&
-                  pending.kind != "stop" {
+                  pending.kind != "stop" && pending.kind != "model_select" {
             actionPending = nil
+        } else if receipt.state == "done" && pending.kind == "model_select" {
+            let res = receipt.result
+            let matchesScope = (res?.documentId == nil || res?.documentId == pending.documentId) &&
+                               (res?.conversationId == nil || res?.conversationId == pending.conversation) &&
+                               (snapshot?.documentId == pending.documentId && snapshot?.conversationId == pending.conversation)
+            if res?.status == "option_clicked" && res?.selectionObserved == true && matchesScope {
+                actionPending = nil
+                if let freshModel = res?.model {
+                    if let th = freshModel.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
+                        verifiedEffort = eff
+                        verifiedEffortDocId = pending.documentId
+                        verifiedEffortConvId = pending.conversation
+                    } else if freshModel.thinking?.observed == false || freshModel.thinking?.confidence == "unconfirmed" {
+                        verifiedEffort = nil
+                        verifiedEffortDocId = nil
+                        verifiedEffortConvId = nil
+                    }
+                }
+                controlNotice = "已在 PC 网页选择：\(pending.targetLabel ?? "所选项目")"
+                status = "与 PC 共用此标签页"
+            } else if res?.status == "option_clicked" && res?.selectionObserved == false {
+                controlNotice = "未确认 PC 已切换选项，请核对电脑网页"
+                status = "选择结果待确认 · 不会自动重试"
+            } else if res?.status == "option_clicked" {
+                controlNotice = "选择结果待确认；缺少网页生效证据。请核对 PC 页面。"
+                status = "选择结果待确认 · 不会自动重试"
+            } else {
+                status = "选择结果待确认 · 不会自动重试"
+            }
         } else {
             status = pending.kind == "stop" ? "中止结果待确认 · 不会自动重试" :
-                                             "操作结果待确认 · 不会自动重试"
+                     pending.kind == "model_select" ? "选择结果待确认 · 不会自动重试" :
+                                                     "操作结果待确认 · 不会自动重试"
         }
         save()
     }

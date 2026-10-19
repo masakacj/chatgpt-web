@@ -6,6 +6,8 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     private static let a = "11111111-1111-4111-8111-111111111111"
     private static let b = "22222222-2222-4222-8222-222222222222"
+    private static let c = "33333333-3333-4333-8333-333333333333"
+    private static let d = "44444444-4444-4444-8444-444444444444"
     private static let project = "g-p-aaaaaaaaaaaaaaaa"
     private static var current = a
     private static var projectID: String?
@@ -20,6 +22,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var healthReads = 0
     private static var newChats = 0
     private static var interactionClicks = 0
+    private static var modelSelects = 0
+    private static var modelName = "GPT-6"
+    private static var effortName: String? = "High"
+    private static var effortObserved = true
     private static var sentText: String?
     private static var receipts: [String: [String: Any]] = [:]
     private var cancelled = false
@@ -27,11 +33,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks)"
+        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 模型选择：\(modelSelects)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]
     }
     override class func canInit(with request: URLRequest) -> Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-testing") && ProcessInfo.processInfo.arguments.contains("--shared-tab-fixture") && request.url?.host == "shared-tab.invalid"
@@ -74,6 +80,14 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         let args = ProcessInfo.processInfo.arguments
         let title = current.isEmpty ? "新聊天" : current == a ? "测试对话 A" : current == b ? "历史对话 B" : "已创建的新聊天"
         var messages: [[String: Any]] = current.isEmpty ? [] : [message("u-" + current, "user", "测试提问"), message("a-" + current, "assistant", current == a ? "原生测试答案 A" : "原生历史答案 B")]
+        if args.contains("--shared-fixture-long") || args.contains("--shared-fixture-scroll") {
+            var longMessages: [[String: Any]] = []
+            for i in 1...15 {
+                longMessages.append(message("long-u-\(i)", "user", "长对话提问 第 \(i) 轮：请分析多阶段架构和分布式系统的一致性保障。"))
+                longMessages.append(message("long-a-\(i)", "assistant", "长对话回答 第 \(i) 轮：这是第 \(i) 轮详细的回复内容。分布式系统的每个节点在执行变更前必须通过共识协议提交日志，确保状态机在任何副本崩溃恢复后能够重建完全一致的状态视图。\n\n关键要点：\n1. 严格的领导者选举与心跳机制；\n2. 多数派写确认；\n3. 租约与幂等防重放保护。"))
+            }
+            messages = longMessages
+        }
         if let sentText { messages.append(message("sent-user-\(sends)", "user", sentText)); messages.append(message("sent-answer-\(sends)", "assistant", "原生回复：" + sentText)) }
         if args.contains("--shared-fixture-native-resources") {
             messages.append(["id": "fixture-native-resources", "role": "assistant", "text": "公开链接和文件", "blocks": [
@@ -97,7 +111,26 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             ])
         }
 
-        var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "model": ["available": true, "name": "GPT-6"], "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
+        var modelPayload: [String: Any] = ["available": true, "name": modelName]
+        if args.contains("--shared-fixture-model-effort-unknown") ||
+           args.contains("--shared-fixture-model-thinking-unobserved-high") {
+            modelPayload = ["available": true, "name": "GPT-6 Thinking · High", "thinking": ["observed": false, "confidence": "unconfirmed"]]
+        } else if args.contains("--shared-fixture-model-non-thinking") {
+            modelPayload["name"] = "GPT-4o"
+        } else if args.contains("--shared-fixture-pc-model-switch") && reads >= 6 {
+            modelPayload = ["available": true, "name": "GPT-4o"]
+        } else if args.contains("--shared-fixture-doc-change-invalidates-effort") && reads >= 6 {
+            document = "fixture-document-switched"
+            modelPayload = ["available": true, "name": "GPT-6", "thinking": ["observed": false, "confidence": "unconfirmed"]]
+        } else if let eff = effortName, effortObserved {
+            modelPayload["thinking"] = ["observed": true, "effort": eff, "source": "native_checked_radio"]
+        }
+
+        if args.contains("--shared-fixture-sidebar-completed-over-running") {
+            current = a
+        }
+
+        var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "model": modelPayload, "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
         if args.contains("--shared-fixture-pc-draft-native-blocked") {
             // The phone must be allowed to Send its own text even if the PC
             // has a parked local draft and reports disabled native controls.
@@ -121,9 +154,24 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             // send control may be disabled, but the phone may still type.
             s["canSend"] = false
         }
-        if args.contains("--shared-fixture-sidebar") {
-            s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
-                                       ["id": b, "status": "running", "readState": "unknown"]]
+        if args.contains("--shared-fixture-sidebar") || args.contains("--shared-fixture-sidebar-both") || args.contains("--shared-fixture-sidebar-read-ack") || args.contains("--shared-fixture-sidebar-new-unread") || args.contains("--shared-fixture-sidebar-colors") || args.contains("--shared-fixture-sidebar-completed-over-running") {
+            if args.contains("--shared-fixture-sidebar-completed-over-running") {
+                s["sidebarIndicators"] = [["id": a, "status": "running", "readState": "read"],
+                                           ["id": b, "status": "running", "readState": "unknown"]]
+            } else if args.contains("--shared-fixture-sidebar-both") {
+                s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "read"],
+                                           ["id": b, "status": "running", "readState": "unread"]]
+            } else if args.contains("--shared-fixture-sidebar-new-unread") {
+                s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
+                                           ["id": b, "status": "completed", "readState": "read"]]
+            } else if args.contains("--shared-fixture-sidebar-colors") {
+                s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
+                                           ["id": d, "status": "unknown", "readState": "unread"],
+                                           ["id": b, "status": "running", "readState": "unknown"]]
+            } else {
+                s["sidebarIndicators"] = [["id": a, "status": "completed", "readState": "unread"],
+                                           ["id": b, "status": "running", "readState": "unknown"]]
+            }
         }
         if args.contains("--shared-fixture-busy-send") || args.contains("--shared-fixture-busy-blocked") {
             s["status"] = "running"; s["responsePhase"] = "responding"
@@ -138,9 +186,19 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         ["ok": true, "sessionId": "shared-fixture-session-001", "tabId": 7, "followTab": true, "revision": revision, "routeChanged": false, "tabClosed": false, "capturedAt": Date().timeIntervalSince1970 * 1000, "snapshot": snapshot()]
     }
     private static func library(search: Bool = false) -> [String: Any] {
-        let selected: [[String: Any]] = search ? [["id": b, "title": "历史对话 B", "status": "completed", "readState": "read"]] : ProcessInfo.processInfo.arguments.contains("--shared-fixture-sidebar") ? [
-            ["id": a, "title": "测试对话 A", "status": "completed", "readState": "unread", "activityAt": 1000],
-            ["id": b, "title": "历史对话 B", "projectId": project, "status": "running", "readState": "unknown", "activityAt": 9000]
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--shared-fixture-sidebar-completed-over-running") {
+            return ["ok": true, "projects": [["id": project, "title": "Project Alpha", "collapsed": false, "hasMore": false]], "chats": [
+                ["id": a, "title": "测试对话 A", "projectId": project, "status": "running", "readState": "read", "activityAt": 1000.0],
+                ["id": b, "title": "历史对话 B", "status": "running", "readState": "unknown", "activityAt": 2000.0]
+            ], "partial": true, "source": "official_sidebar", "hasMore": false, "loading": false]
+        }
+        let selected: [[String: Any]] = search ? [["id": b, "title": "历史对话 B", "status": "completed", "readState": "read"]] :
+            (args.contains("--shared-fixture-sidebar") || args.contains("--shared-fixture-sidebar-both") || args.contains("--shared-fixture-sidebar-read-ack") || args.contains("--shared-fixture-sidebar-new-unread") || args.contains("--shared-fixture-sidebar-colors")) ? [
+            ["id": a, "title": "测试对话 A", "status": "completed", "readState": "unread", "activityAt": (args.contains("--shared-fixture-sidebar-new-unread") && actions >= 1) ? 99999.0 : 1000.0, "watermark": (args.contains("--shared-fixture-sidebar-new-unread") && actions >= 1) ? "watermark-turn-2" : "watermark-turn-1"],
+            ["id": b, "title": "历史对话 B", "projectId": project, "status": args.contains("--shared-fixture-sidebar-new-unread") ? "completed" : "running", "readState": args.contains("--shared-fixture-sidebar-both") ? "unread" : "unknown", "activityAt": 9000.0],
+            ["id": c, "title": "近期对话 C", "status": "completed", "readState": "read", "activityAt": 5000.0],
+            ["id": d, "title": "其它未读 D", "status": "unknown", "readState": "unread", "activityAt": 2000.0]
         ] : [["id": a, "title": "测试对话 A", "status": "completed", "readState": "read"]]
         return ["ok": true, "projects": [["id": project, "title": "Project Alpha", "collapsed": false, "hasMore": false]], "chats": selected, "partial": true, "source": search ? "official_search" : "official_sidebar", "hasMore": false, "loading": false]
     }
@@ -152,8 +210,100 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if path.hasSuffix("/actions") {
             let action = input["action"] as? String ?? ""
             if action == "catalog" || action == "project" { return (200, library()) }
-            if action == "model_catalog" { return (200, ["available": true, "current": "GPT-6", "options": [["id": "fixture-model-option-0001", "label": "Thinking · High", "selected": false, "submenu": false]]]) }
-            if action == "model_select" { return (200, ["status": "option_clicked", "model": ["available": true, "name": "GPT-6 Thinking · High"], "options": []]) }
+            if action == "model_catalog" {
+                if args.contains("--shared-fixture-model-effort-unknown") {
+                    return (200, ["available": true, "current": "GPT-6", "thinking": ["observed": false, "confidence": "unconfirmed"], "options": [["id": "fixture-model-option-unknown", "label": "Thinking (未指定强度)", "selected": true, "submenu": false]]])
+                }
+                if args.contains("--shared-fixture-model-non-thinking") {
+                    return (200, ["available": true, "current": "GPT-4o", "options": [["id": "fixture-model-gpt4o", "label": "GPT-4o", "selected": true, "submenu": false]]])
+                }
+                if args.contains("--shared-fixture-nested-effort-submenu") {
+                    return (200, ["available": true, "current": "GPT-6", "options": [
+                        ["id": "fixture-option-gpt4o", "label": "GPT-4o", "kind": "model", "selected": false, "submenu": false],
+                        ["id": "fixture-option-gpt6-thinking", "label": "GPT-6 (Thinking)", "kind": "submenu", "selected": true, "submenu": true]
+                    ]])
+                }
+                if args.contains("--shared-fixture-effort-slider") {
+                    return (200, ["available": true, "current": "GPT-6", "options": [
+                        ["id": "fixture-slider-effort", "label": "Thinking Effort", "kind": "slider", "value": 3, "min": 1, "max": 5, "step": 1, "valueText": "High (Level 3)", "description": "More reasoning steps for complex problems"]
+                    ]])
+                }
+                if args.contains("--shared-fixture-option-disabled") {
+                    return (200, ["available": true, "current": "GPT-6", "options": [
+                        ["id": "fixture-option-disabled-pro", "label": "Extra High (需要 Pro 订阅)", "disabled": true, "description": "当前账号不可用"]
+                    ]])
+                }
+                return (200, ["available": true, "current": modelName, "options": [
+                    ["id": "fixture-model-option-0001", "label": "Thinking · High", "selected": false, "submenu": false],
+                    ["id": "fixture-model-option-gpt4o", "label": "GPT-4o", "selected": false, "submenu": false]
+                ]])
+            }
+            if action == "model_select" {
+                modelSelects += 1
+                let cmdId = input["commandId"] as? String ?? UUID().uuidString
+                let optionId = input["optionId"] as? String ?? ""
+
+                if args.contains("--shared-fixture-model-select-timeout") {
+                    receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "unknown", "result": ["error": "pc_result_unknown"]]
+                    return (504, ["error": "pc_result_unknown"])
+                }
+                if args.contains("--shared-fixture-model-select-nil-evidence") {
+                    let val: [String: Any] = ["ok": true, "commandId": cmdId, "state": "done", "result": ["status": "option_clicked"]]
+                    receipts[cmdId] = val
+                    return (200, ["status": "option_clicked", "options": []])
+                }
+                if args.contains("--shared-fixture-option-clicked-unobserved") {
+                    let val: [String: Any] = ["ok": true, "commandId": cmdId, "state": "done", "result": ["status": "option_clicked", "selectionObserved": false]]
+                    receipts[cmdId] = val
+                    return (200, ["status": "option_clicked", "selectionObserved": false, "options": []])
+                }
+                if args.contains("--shared-fixture-nested-effort-submenu") {
+                    if optionId == "fixture-option-gpt6-thinking" {
+                        return (200, [
+                            "status": "option_clicked",
+                            "submenuOpened": true,
+                            "options": [
+                                ["id": "fixture-effort-instant", "label": "Instant", "kind": "effort", "selected": false],
+                                ["id": "fixture-effort-medium", "label": "Medium", "kind": "effort", "selected": false],
+                                ["id": "fixture-effort-high", "label": "High", "kind": "effort", "selected": true],
+                                ["id": "fixture-effort-extra", "label": "Extra High", "kind": "effort", "selected": false]
+                            ]
+                        ])
+                    }
+                    if optionId == "fixture-effort-medium" {
+                        effortName = "Medium"
+                        effortObserved = true
+                        revision += 1
+                        let resModel: [String: Any] = ["available": true, "name": "GPT-6", "thinking": ["observed": true, "effort": "Medium"]]
+                        receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "done", "result": ["status": "option_clicked", "selectionObserved": true, "model": resModel]]
+                        return (200, ["status": "option_clicked", "selectionObserved": true, "model": resModel, "options": []])
+                    }
+                }
+                if args.contains("--shared-fixture-effort-slider") {
+                    let val = input["value"] as? Double ?? 4
+                    effortName = "Level \(Int(val))"
+                    effortObserved = true
+                    revision += 1
+                    let resModel: [String: Any] = ["available": true, "name": "GPT-6", "thinking": ["observed": true, "effort": "Level \(Int(val))", "value": val]]
+                    receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "done", "result": ["status": "option_clicked", "selectionObserved": true, "model": resModel]]
+                    return (200, ["status": "option_clicked", "selectionObserved": true, "model": resModel, "options": []])
+                }
+                if optionId == "fixture-model-option-gpt4o" {
+                    modelName = "GPT-4o"
+                    effortName = nil
+                    effortObserved = false
+                    revision += 1
+                    let resModel: [String: Any] = ["available": true, "name": "GPT-4o"]
+                    receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "done", "result": ["status": "option_clicked", "selectionObserved": true, "model": resModel]]
+                    return (200, ["status": "option_clicked", "selectionObserved": true, "model": resModel, "options": []])
+                }
+                effortName = "High"
+                effortObserved = true
+                revision += 1
+                let resModel: [String: Any] = ["available": true, "name": "GPT-6 Thinking · High", "thinking": ["observed": true, "effort": "High"]]
+                receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "done", "result": ["status": "option_clicked", "selectionObserved": true, "model": resModel]]
+                return (200, ["status": "option_clicked", "selectionObserved": true, "model": resModel, "options": []])
+            }
             if action == "search" { return (200, library(search: true)) }
             actions += 1; revision += 1; sentText = nil
             if action == "open" { current = input["targetConversationId"] as? String ?? b; projectID = nil }
@@ -212,6 +362,8 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }
             reads += 1
             if args.contains("--shared-fixture-pc-switch") && reads == 15 { current = b; document = "fixture-PC-changed-B"; sentText = nil; revision += 1 }
+            if args.contains("--shared-fixture-pc-model-switch") && reads >= 6 { modelName = "GPT-4o"; effortName = nil; effortObserved = false; revision += 1 }
+            if args.contains("--shared-fixture-doc-change-invalidates-effort") && reads >= 6 { document = "fixture-document-switched"; effortName = nil; effortObserved = false; revision += 1 }
             return (200, envelope())
         }
         return (404, ["error": "not_found"])

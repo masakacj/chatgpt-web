@@ -71,21 +71,98 @@ struct SharedTabScreen: View {
             .sheet(isPresented: $showModelPicker) {
                 NavigationStack {
                     List {
-                        if model.modelPickerLoading { ProgressView("读取 PC 模型与思考选项…") }
-                        ForEach(model.modelOptions) { option in
-                            Button {
-                                Task { await model.chooseModel(option) }
-                            } label: {
-                                HStack {
-                                    Text(option.label).foregroundStyle(.primary)
-                                    Spacer()
-                                    if option.selected == true { Image(systemName: "checkmark") }
-                                    if option.submenu == true { Image(systemName: "chevron.right").foregroundStyle(.secondary) }
-                                }
-                            }.disabled(model.modelPickerLoading).accessibilityIdentifier("shared.model.\(option.id)")
+                        Section("当前 PC 绑定") {
+                            HStack {
+                                Text("当前模型")
+                                Spacer()
+                                Text(model.displayedModelName).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("shared.picker.currentModel")
+                            }
+                            HStack {
+                                Text("思考强度")
+                                Spacer()
+                                Text(model.displayedEffortName).foregroundStyle(model.isEffortUnconfirmed ? .orange : .secondary)
+                                    .accessibilityIdentifier("shared.picker.currentEffort")
+                            }
                         }
-                        if model.modelOptions.isEmpty && !model.modelPickerLoading {
-                            Text(model.controlNotice ?? "PC 网页暂未提供可切换选项").foregroundStyle(.secondary)
+                        if model.modelPickerLoading {
+                            ProgressView("读取 PC 模型与思考选项…")
+                        }
+                        if model.actionPending?.kind == "model_select" {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("正在同步至 PC 网页…").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Section("可用选项") {
+                            ForEach(model.modelOptions) { option in
+                                if option.kind == "slider" {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            Text(option.label).font(.body)
+                                            Spacer()
+                                            Text(option.valueText ?? String(format: "%.0f", option.value ?? 0))
+                                                .foregroundStyle(.secondary)
+                                                .accessibilityIdentifier("shared.slider.value.\(option.id)")
+                                        }
+                                        if let desc = option.description, !desc.isEmpty {
+                                            Text(desc).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        HStack {
+                                            let minVal = option.min ?? 1
+                                            let maxVal = max(minVal + 1, option.max ?? 5)
+                                            Text(String(format: "%.0f", minVal)).font(.caption2).foregroundStyle(.tertiary)
+                                            Slider(
+                                                value: Binding(
+                                                    get: { min(max(option.value ?? minVal, minVal), maxVal) },
+                                                    set: { newVal in
+                                                        Task { await model.chooseModel(option, value: newVal) }
+                                                    }
+                                                ),
+                                                in: minVal...maxVal,
+                                                step: option.step ?? 1
+                                            )
+                                            .disabled(model.modelPickerLoading || option.disabled == true)
+                                            .accessibilityIdentifier("shared.slider.\(option.id)")
+                                            Text(String(format: "%.0f", maxVal)).font(.caption2).foregroundStyle(.tertiary)
+                                        }
+                                        Button("设定强度档位") {
+                                            Task { await model.chooseModel(option, value: option.value) }
+                                        }
+                                        .font(.caption)
+                                        .disabled(model.modelPickerLoading || option.disabled == true)
+                                        .accessibilityIdentifier("shared.model.\(option.id)")
+                                    }
+                                    .padding(.vertical, 4)
+                                } else {
+                                    Button {
+                                        Task { await model.chooseModel(option) }
+                                    } label: {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(option.label).foregroundStyle(option.disabled == true ? .secondary : .primary)
+                                                if let desc = option.description, !desc.isEmpty {
+                                                    Text(desc).font(.caption2).foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            Spacer()
+                                            if option.selected == true { Image(systemName: "checkmark") }
+                                            if option.submenu == true || option.kind == "submenu" { Image(systemName: "chevron.right").foregroundStyle(.secondary) }
+                                        }
+                                    }
+                                    .disabled(model.modelPickerLoading || option.disabled == true)
+                                    .accessibilityIdentifier("shared.model.\(option.id)")
+                                }
+                            }
+                            if model.modelOptions.isEmpty && !model.modelPickerLoading {
+                                Text(model.controlNotice ?? "PC 网页暂未提供可切换选项").foregroundStyle(.secondary)
+                            }
+                        }
+                        if let notice = model.controlNotice {
+                            Section {
+                                Text(notice).font(.caption).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("shared.picker.notice")
+                            }
                         }
                     }.navigationTitle("模型与思考档位")
                      .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showModelPicker = false } } }
@@ -143,6 +220,18 @@ struct SharedTabScreen: View {
             .onDisappear { model.pause() }
         }
     }
+    private func scrollToLatest(proxy: ScrollViewProxy, animated: Bool = false) {
+        guard followLatest, let lastId = model.displayMessages.last?.id else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(lastId, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
+        }
+    }
     private var header: some View {
         HStack(spacing: 10) {
             Button(action: openSidebar) {
@@ -176,10 +265,20 @@ struct SharedTabScreen: View {
             Spacer(minLength: 4)
             if model.canPickModel {
                 Button { dismissKeyboard(); showModelPicker = true } label: {
-                    HStack(spacing: 3) {
-                        Text(model.snapshot?.model?.name ?? "模型").lineLimit(1)
-                        Image(systemName: "chevron.down").font(.system(size: 9))
-                    }.font(.caption2).frame(maxWidth: 116)
+                    VStack(alignment: .trailing, spacing: 1) {
+                        HStack(spacing: 3) {
+                            Text(model.displayedModelName).lineLimit(1)
+                                .accessibilityIdentifier("shared.header.modelName")
+                            Image(systemName: "chevron.down").font(.system(size: 8))
+                        }
+                        Text(model.displayedEffortName)
+                            .font(.system(size: 9))
+                            .foregroundStyle(model.isEffortUnconfirmed ? .orange : .secondary)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("shared.header.effortName")
+                    }
+                    .font(.caption2)
+                    .frame(maxWidth: 140)
                 }.accessibilityIdentifier("shared.modelPicker")
             }
             Button { dismissKeyboard(); Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil").font(.system(size: 20)).frame(width: 40, height: 44) }
@@ -192,72 +291,102 @@ struct SharedTabScreen: View {
         }.foregroundStyle(.primary).padding(.horizontal, 8).padding(.top, 2).padding(.bottom, 4)
     }
     private var transcript: some View {
-        GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ZStack(alignment: .bottomTrailing) {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 22) {
-                            if model.canLoadHistory {
-                                Button {
-                                    followLatest = false; let anchor = model.displayMessages.first?.id
-                                    Task { await model.loadEarlier(); if let anchor { proxy.scrollTo(anchor, anchor: .top) } }
-                                } label: { HStack { Spacer(); if model.historyLoading { ProgressView() }; Text("查看更早消息"); Spacer() }.font(.caption) }
-                                    .accessibilityIdentifier("shared.history")
-                            }
-                            if !model.online && model.snapshot != nil {
-                                HStack { Text("离线快照"); Spacer(); Button("重连") { Task { await model.resume() } } }
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            if model.loading {
-                                HStack { ProgressView(); Text("正在读取 PC 当前对话").foregroundStyle(.secondary) }.padding(.top, 30)
-                            } else if model.displayMessages.isEmpty {
-                                VStack(spacing: 14) {
-                                    Text("有什么可以帮你？").font(.title2.weight(.semibold))
-                                    if !model.online { Button("连接 PC") { model.needsSettings = true; Task { await model.loadTabs() } }.buttonStyle(.bordered) }
-                                    else if let title = model.projectTitle { Text("在 \(title) 中开始新聊天").foregroundStyle(.secondary) }
-                                }.frame(maxWidth: .infinity).padding(.top, 90)
-                            }
-                            ForEach(model.displayMessages) { message in
-                                STMessageView(message: message, onLink: { link in Task { await model.followRemoteLink(link) } }).id(message.id)
-                            }
-                            if model.thinking {
-                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中").foregroundStyle(.secondary) }
-                                    .accessibilityIdentifier("shared.thinking")
-                            }
-                            ForEach(model.snapshot?.interactions ?? []) { card in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Label(card.title, systemImage: "hand.tap").font(.subheadline.weight(.semibold))
-                                    Text(card.summary).font(.subheadline).textSelection(.enabled)
-                                    ForEach(card.buttons) { button in
-                                        Button(button.label) { interaction = STSelectedInteraction(card: card, button: button, document: model.snapshot?.documentId ?? "") }
-                                            .buttonStyle(.bordered).disabled(button.disabled || !model.online || model.busy || model.actionPending != nil)
-                                    }
-                                }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-                            }
-                            Color.clear.frame(height: 1).id("shared.bottom")
-                                .onAppear { followLatest = true }.onDisappear { followLatest = false }
+        ScrollViewReader { proxy in
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 22) {
+                        if model.canLoadHistory {
+                            Button {
+                                followLatest = false; let anchor = model.displayMessages.first?.id
+                                Task { await model.loadEarlier(); if let anchor { proxy.scrollTo(anchor, anchor: .top) } }
+                            } label: { HStack { Spacer(); if model.historyLoading { ProgressView() }; Text("查看更早消息"); Spacer() }.font(.caption) }
+                                .accessibilityIdentifier("shared.history")
                         }
-                        .padding(.horizontal, 20).padding(.vertical, 14)
-                        .frame(maxWidth: .infinity, minHeight: max(0, geometry.size.height), alignment: .top)
-                        .background {
-                            // A visible-color backing gives blank transcript space a hit target;
-                            // it stays behind messages/links rather than intercepting controls.
-                            Color(uiColor: .systemBackground).contentShape(Rectangle()).onTapGesture(perform: dismissKeyboard)
+                        if !model.online && model.snapshot != nil {
+                            HStack { Text("离线快照"); Spacer(); Button("重连") { Task { await model.resume() } } }
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                        .contentShape(Rectangle())
+                        if model.loading {
+                            HStack { ProgressView(); Text("正在读取 PC 当前对话").foregroundStyle(.secondary) }.padding(.top, 30)
+                        } else if model.displayMessages.isEmpty {
+                            VStack(spacing: 14) {
+                                Text("有什么可以帮你？").font(.title2.weight(.semibold))
+                                if !model.online { Button("连接 PC") { model.needsSettings = true; Task { await model.loadTabs() } }.buttonStyle(.bordered) }
+                                else if let title = model.projectTitle { Text("在 \(title) 中开始新聊天").foregroundStyle(.secondary) }
+                            }.frame(maxWidth: .infinity).padding(.top, 90)
+                        }
+                        ForEach(model.displayMessages) { message in
+                            STMessageView(message: message, onLink: { link in Task { await model.followRemoteLink(link) } }).id(message.id)
+                        }
+                        if model.thinking {
+                            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中").foregroundStyle(.secondary) }
+                                .accessibilityIdentifier("shared.thinking")
+                        }
+                        ForEach(model.snapshot?.interactions ?? []) { card in
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label(card.title, systemImage: "hand.tap").font(.subheadline.weight(.semibold))
+                                Text(card.summary).font(.subheadline).textSelection(.enabled)
+                                ForEach(card.buttons) { button in
+                                    Button(button.label) { interaction = STSelectedInteraction(card: card, button: button, document: model.snapshot?.documentId ?? "") }
+                                        .buttonStyle(.bordered).disabled(button.disabled || !model.online || model.busy || model.actionPending != nil)
+                                }
+                            }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                        }
                     }
-                    .accessibilityIdentifier("shared.transcript")
-                    .scrollDismissesKeyboard(.interactively)
-                    .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
-                    .onAppear { proxy.scrollTo("shared.bottom", anchor: .bottom) }
-                    .onChange(of: model.snapshot?.conversationId) { _, _ in followLatest = true; proxy.scrollTo("shared.bottom", anchor: .bottom) }
-                    .onChange(of: model.displayMessages.last?.text) { _, _ in if followLatest { proxy.scrollTo("shared.bottom", anchor: .bottom) } }
-                    if !followLatest {
-                        Button { dismissKeyboard(); followLatest = true; proxy.scrollTo("shared.bottom", anchor: .bottom) } label: {
-                            Image(systemName: "arrow.down").frame(width: 40, height: 40).background(.regularMaterial, in: Circle()).overlay(Circle().stroke(.quaternary))
-                        }.accessibilityLabel("回到最新消息").padding(14)
+                    .padding(.horizontal, 20).padding(.vertical, 14)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .background {
+                        // A visible-color backing gives blank transcript space a hit target;
+                        // it stays behind messages/links rather than intercepting controls.
+                        Color(uiColor: .systemBackground).contentShape(Rectangle()).onTapGesture(perform: dismissKeyboard)
                     }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("shared.transcript")
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10)
+                        .onChanged { gesture in
+                            if gesture.translation.height > 10 && abs(gesture.translation.height) > abs(gesture.translation.width) {
+                                followLatest = false
+                            }
+                        }
+                )
+                .onAppear {
+                    if let lastId = model.displayMessages.last?.id {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.snapshot?.conversationId) { _, _ in
+                    followLatest = true
+                    scrollToLatest(proxy: proxy)
+                }
+                .onChange(of: model.snapshot?.documentId) { _, _ in
+                    followLatest = true
+                    scrollToLatest(proxy: proxy)
+                }
+                .onChange(of: model.displayMessages.last?.id) { _, _ in
+                    if followLatest {
+                        scrollToLatest(proxy: proxy, animated: true)
+                    }
+                }
+                .onChange(of: model.displayMessages.last?.text) { _, _ in
+                    if followLatest {
+                        scrollToLatest(proxy: proxy, animated: false)
+                    }
+                }
+                if !followLatest {
+                    Button {
+                        dismissKeyboard()
+                        followLatest = true
+                        if let lastId = model.displayMessages.last?.id {
+                            proxy.scrollTo(lastId, anchor: .bottom)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.down").frame(width: 40, height: 40).background(.regularMaterial, in: Circle()).overlay(Circle().stroke(.quaternary))
+                    }.accessibilityLabel("回到最新消息").padding(14)
                 }
             }
         }
@@ -294,6 +423,7 @@ struct SharedTabScreen: View {
                         // receipt is unknown; explain the exact blocker below.
                         Button {
                             dismissKeyboard()
+                            followLatest = true
                             Task { await model.send() }
                         } label: {
                             Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold))
@@ -323,6 +453,7 @@ struct SharedTabScreen: View {
                 } else {
                     Button {
                         dismissKeyboard()
+                        followLatest = true
                         Task { await model.send() }
                     } label: {
                         Group { if model.busy { ProgressView().tint(Color(uiColor: .systemBackground)) } else { Image(systemName: "arrow.up").font(.system(size: 18, weight: .semibold)) } }
@@ -375,9 +506,19 @@ struct SharedTabScreen: View {
                         if model.searchHasMore { Button("加载更多搜索结果") { Task { await model.search(query, more: true) } }.disabled(model.libraryLoading) }
                     }
                 } else {
-                    if !model.recentActive.isEmpty {
+                    if !model.runningChats.isEmpty {
+                        Section("进行中") {
+                            ForEach(model.runningChats) { chat in chatRow(chat) }
+                        }
+                    }
+                    if !model.unreadChats.isEmpty {
+                        Section("未读") {
+                            ForEach(model.unreadChats) { chat in chatRow(chat) }
+                        }
+                    }
+                    if !model.prioritizedRecentActive.isEmpty {
                         Section("最近活跃（含项目对话）") {
-                            ForEach(model.recentActive) { chat in chatRow(chat) }
+                            ForEach(model.prioritizedRecentActive) { chat in chatRow(chat) }
                         }
                     }
                     Section("项目") {
@@ -394,7 +535,10 @@ struct SharedTabScreen: View {
                     }
                     Section("其他已显示对话") {
                         ForEach(model.chats.filter { chat in
-                            chat.projectId == nil && !model.recentActive.contains(where: { $0.id == chat.id })
+                            let priorityIds = Set(model.runningChats.map(\.id) + model.unreadChats.map(\.id))
+                            return chat.projectId == nil &&
+                                !priorityIds.contains(chat.id) &&
+                                !model.prioritizedRecentActive.contains(where: { $0.id == chat.id })
                         }) { chat in chatRow(chat) }
                     }
                 }
@@ -413,7 +557,12 @@ struct SharedTabScreen: View {
             Task { await model.open(chat) }
         } label: {
             HStack {
-                Text(chat.title).lineLimit(2).foregroundStyle(.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(chat.title).lineLimit(2).foregroundStyle(.primary)
+                    if let projectTitle = model.projectTitle(for: chat.projectId) {
+                        Text(projectTitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 4)
                 if displayedChatStatus(chat) == "running" {
                     ProgressView().controlSize(.mini).accessibilityLabel("生成中")
@@ -421,23 +570,23 @@ struct SharedTabScreen: View {
                     Image(systemName: "hand.raised").font(.caption2).foregroundStyle(.orange)
                 } else if displayedChatStatus(chat) == "error" {
                     Image(systemName: "exclamationmark.circle").font(.caption2).foregroundStyle(.red)
-                } else if chat.readState == "unread" {
+                } else if model.isChatUnread(chat) {
                     Circle().fill(displayedChatStatus(chat) == "completed" ? Color.green : Color.blue)
                         .frame(width: 7, height: 7)
+                } else if model.isChatPendingRefresh(chat) {
+                    Text("待刷新").font(.caption2).foregroundStyle(.secondary)
                 }
                 if chat.id == model.snapshot?.conversationId { Image(systemName: "checkmark").font(.caption2).foregroundStyle(.secondary) }
             }
         }.disabled(model.busy || model.libraryLoading).accessibilityIdentifier("shared.chat.\(chat.id)")
             .accessibilityValue(displayedChatStatus(chat) == "running" ? "生成中" :
                 displayedChatStatus(chat) == "waiting" ? "等待确认" :
-                chat.readState == "unread" ? "未读" : displayedChatStatus(chat) == "error" ? "错误" : "")
+                model.isChatUnread(chat) ? "未读" :
+                model.isChatPendingRefresh(chat) ? "待刷新" :
+                displayedChatStatus(chat) == "error" ? "错误" : "")
     }
     private func displayedChatStatus(_ chat: STChat) -> String {
-        if chat.id == model.snapshot?.conversationId,
-           let live = model.snapshot?.status, ["running", "waiting", "error"].contains(live) {
-            return live
-        }
-        return chat.status ?? "unknown"
+        model.effectiveChatStatus(chat)
     }
     private var settings: some View {
         NavigationStack {

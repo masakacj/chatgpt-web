@@ -1,0 +1,45 @@
+{
+  "schema": "ios.r43.signed-baseline.integration.v1",
+  "base": "6ec94845dda84da4fed604ca26c91682d7e8c8be",
+  "branch": "feature/mirror-r43-0711-20261019",
+  "source": "signed 0.7.10 Build12 exact commit",
+  "frozenR35Sha": "e8999c976fb9131a5ad82cbd178e82d9996e0da3aa82fbf4bccc632c73a2f459",
+  "independentHostQA": 114,
+  "updatedFiles": [
+    {
+      "file": "App/SharedTabFixtureProtocol.swift",
+      "signedSha": "bbb778b7e05d7325ed995e8dedd69de5a78082fb385bf169803aed3e2095433a",
+      "frozenSha": "c38cc9a397df90c088f074528500a836917813cb177e1876fcda68e6c86b71f3",
+      "candidateSha": "c38cc9a397df90c088f074528500a836917813cb177e1876fcda68e6c86b71f3",
+      "verified": true
+    },
+    {
+      "file": "App/SharedTabModel.swift",
+      "signedSha": "14c00557e36e5e6b4410e2438d85b06814459421716711c198613399ac2c528b",
+      "frozenSha": "441f19471711ae0051eda9d125f2de35999c09e13629f3ec7c14b93ab84f6863",
+      "candidateSha": "441f19471711ae0051eda9d125f2de35999c09e13629f3ec7c14b93ab84f6863",
+      "verified": true
+    },
+    {
+      "file": "App/SharedTabScreen.swift",
+      "signedSha": "03e4dfa86bae7cd2b02cf4ed4e77bf304280abb42ebfd79c246884c01485f154",
+      "frozenSha": "ae2a4df3e77bcb91bebd1f8bc0da7cdbf9ca9e669d8add9521cdc17935de856f",
+      "candidateSha": "ae2a4df3e77bcb91bebd1f8bc0da7cdbf9ca9e669d8add9521cdc17935de856f",
+      "verified": true
+    },
+    {
+      "file": "UITests/SharedTabUITests.swift",
+      "signedSha": "eaf5bdd30b028f118b6b5dc49afdd8a1ba43ff5f8ed5c4cfca23bf4d1e06380d",
+      "frozenSha": "db83c03141a9ee40cab7481701e6c8435bc52f078145604c833f586b76557783",
+      "candidateSha": "db83c03141a9ee40cab7481701e6c8435bc52f078145604c833f586b76557783",
+      "verified": true
+    }
+  ],
+  "version": "0.7.11",
+  "build": "13",
+  "policy": "build/test first, signed candidate only, never auto promote stable",
+  "productionIPAUnchanged": true,
+  "productionBridgeUnchanged": true,
+  "status": "LOCAL_INTEGRATED_AWAITING_MACOS_CI",
+  "createdAt": "2026-10-19T12:01:16.726Z"
+}
