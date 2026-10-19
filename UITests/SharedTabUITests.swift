@@ -635,7 +635,7 @@ final class SharedTabUITests: XCTestCase {
         let app = launch("--shared-fixture-sidebar-both")
         app.buttons["shared.sidebar"].tap()
         XCTAssertTrue(app.staticTexts["进行中"].waitForExistence(timeout: 8))
-        let chatB = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"]
+        let chatB = app.buttons.matching(identifier: "shared.chat.22222222-2222-4222-8222-222222222222")
         XCTAssertTrue(chatB.firstMatch.waitForExistence(timeout: 8))
         XCTAssertEqual(chatB.count, 1, "Chat running and unread must appear only once in priority sections")
         XCTAssertEqual(chatB.firstMatch.value as? String, "生成中")
