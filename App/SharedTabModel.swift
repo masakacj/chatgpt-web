@@ -498,7 +498,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         // Resume may receive the same revision. We still have to rehydrate the
         // visible PC status after marking the app offline; skipping here leaves
         // the header stuck at '连接恢复中' even though the session is healthy.
-        if envelope.revision == revision && envelope.routeChanged != true && envelope.tabClosed != true && online { return }
+        if envelope.revision == revision && envelope.routeChanged != true && envelope.tabClosed != true && online &&
+           !loading && envelope.snapshot?.status == snapshot?.status &&
+           envelope.snapshot?.documentId == snapshot?.documentId &&
+           envelope.snapshot?.conversationId == snapshot?.conversationId { return }
         revision = envelope.revision
         if envelope.tabClosed == true { online = false; loading = false; snapshot = nil; status = "绑定标签页已关闭"; needsSettings = true; return }
         if envelope.routeChanged == true && envelope.snapshot == nil { loading = true; snapshot = nil; older = []; status = "PC 正在切换对话"; return }
@@ -631,8 +634,18 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             while !Task.isCancelled && self.foreground && generation == self.epoch && self.online {
                 guard let c = self.connection, let id = self.sessionID else { break }
                 do {
-                    let value: STEnvelope = try await self.request("/v1/sessions/\(id)?after=\(self.revision)", using: c)
+                    // A transient route/loading snapshot may never bump the
+                    // local revision if the extension has finished while a
+                    // long-poll awaited the old value. Reconcile by asking the
+                    // SAME authenticated PC binding for a fresh, read-only
+                    // snapshot; never infer completion from elapsed time.
+                    let recovering = self.loading || self.snapshot?.status == "loading"
+                    let query = recovering ? "after=-1&refresh=1" : "after=\(self.revision)"
+                    let value: STEnvelope = try await self.request("/v1/sessions/\(id)?\(query)", using: c)
                     try self.current(generation); try self.apply(value, using: c); failures = 0
+                    if recovering && self.loading {
+                        try await Task.sleep(nanoseconds: 2_000_000_000)
+                    }
                 } catch is CancellationError { return }
                 catch {
                     if Task.isCancelled || generation != self.epoch { return }
@@ -730,6 +743,23 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private func refresh(using c: STConnection) async throws {
         guard let id = sessionID else { return }; let generation = epoch
         let value: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try current(generation); try apply(value, using: c)
+    }
+    // Explicit recovery when the PC already finished but the iOS UI is
+    // displaying an old "loading" snapshot. This only refreshes the existing
+    // paired session; it cannot navigate or submit any user message.
+    func reconcileLoading() async {
+        guard online, !busy, let c = connection, let id = sessionID else { return }
+        let generation = epoch
+        do {
+            let value: STEnvelope = try await request("/v1/sessions/\(id)?after=-1&refresh=1", using: c)
+            try current(generation)
+            try apply(value, using: c)
+        } catch {
+            if generation == epoch {
+                status = "PC 状态仍在同步 · 可再次刷新"
+                self.error = nil
+            }
+        }
     }
     func catalog() async { await libraryAction("catalog") }
     func search(_ query: String, more: Bool = false) async { await libraryAction("search", fields: ["query": query, "more": more], append: more) }
