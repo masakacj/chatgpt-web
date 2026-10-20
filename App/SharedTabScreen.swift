@@ -30,8 +30,13 @@ private struct STEffortChoices: View {
 
     private func nativeEffort(_ names: [String]) -> STModelOption? {
         options.first { option in
-            guard option.kind == "effort" else { return false }
+            // Some native menus expose a direct "Thinking · High" model
+            // choice rather than a separate effort kind. That is still a
+            // real PC-listed tier, not an inferred account entitlement.
             let candidate = (option.id + " " + option.label).lowercased()
+            guard option.kind == "effort" ||
+                  (option.kind == nil && ["thinking", "强度", "effort"].contains(where: candidate.contains))
+                  else { return false }
             return names.contains { name in
                 let value = name.lowercased()
                 // Check longer names first; "High" must not match "Extra High".
@@ -96,6 +101,10 @@ private enum STCompactEffort {
         if text.contains("extra") || text.contains("极高") || text == "超" { return "超" }
         if text.contains("medium") || text == "中" { return "中" }
         if text.contains("high") || text == "高" { return "高" }
+        if text.contains("level 4") || text.contains("档位 4") { return "超" }
+        if text.contains("level 3") || text.contains("档位 3") { return "高" }
+        if text.contains("level 2") || text.contains("档位 2") { return "中" }
+        if text.contains("level 1") || text.contains("档位 1") { return "低" }
         if text.contains("instant") || text.contains("low") || text == "低" { return "低" }
         return "?"
     }
