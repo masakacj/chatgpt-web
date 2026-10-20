@@ -839,5 +839,27 @@ private struct STRemoteTableBlock: View {
     var body: some View {
         if let rows = block.rows, !rows.isEmpty {
             ScrollView(.horizontal) {
-
-[Showing lines 1-841 of 866 (50.0KB limit). Use offset=842 to continue.]
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                        HStack(spacing: 0) {
+                            ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                Text(cell).font(rowIndex == 0 ? .subheadline.weight(.semibold) : .subheadline)
+                                    .textSelection(.enabled)
+                                    .frame(minWidth: 130, maxWidth: 200, alignment: .leading)
+                                    .padding(.horizontal, 10).padding(.vertical, 9)
+                            }
+                        }
+                        .background(rowIndex == 0 ? Color(uiColor: .tertiarySystemFill) : Color.clear)
+                        .overlay(alignment: .bottom) { Rectangle().fill(.quaternary).frame(height: 0.5) }
+                    }
+                }
+            }
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        } else {
+            ScrollView(.horizontal) {
+                Text(block.text).font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled).padding(12)
+            }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+}
