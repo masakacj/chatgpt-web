@@ -11,64 +11,93 @@ private struct STSelectedInteraction: Identifiable {
 // Keep a real, accessible native slider backed by the PC's observed range.
 // Dragging only changes a phone-local draft. Only the explicit button asks
 // the PC to select a value; the model verifies the native result separately.
-private struct STNativeEffortSliderRow: View {
-    let option: STModelOption
-    let loading: Bool
-    let apply: (Double) -> Void
-    @State private var pendingValue: Double?
+// The PC is the source of truth for every selectable effort tier. An
+// unavailable tier (especially P/Pro) is visible but not actionable.
+// When the PC only reports a numeric slider, use its finite discrete values
+// for Low/Medium/High/Extra and offer P only with positive Pro evidence.
+private struct STEffortChoices: View {
+    let options: [STModelOption]
+    let busy: Bool
+    let choose: (STModelOption, Double?) -> Void
 
-    private var bounds: (lower: Double, upper: Double, step: Double, current: Double)? {
-        guard let lower = option.min, let upper = option.max, let current = option.value,
-              lower.isFinite, upper.isFinite, current.isFinite,
-              lower < upper, current >= lower, current <= upper else { return nil }
-        let step = option.step ?? 1
-        guard step.isFinite, step > 0, step <= upper - lower else { return nil }
-        return (lower, upper, step, current)
-    }
+    private let tiers: [(code: String, title: String, names: [String])] = [
+        ("low", "低", ["instant", "low", "低", "即时"]),
+        ("medium", "中", ["medium", "中"]),
+        ("high", "高", ["high", "高"]),
+        ("extra", "超", ["extra high", "extra-high", "extra_high", "超", "极高"]),
+        ("pro", "P", ["pro", "professional", "专业"])
+    ]
 
-    private var selectedValue: Double {
-        guard let b = bounds else { return option.value ?? 0 }
-        return Swift.min(b.upper, Swift.max(b.lower, pendingValue ?? b.current))
-    }
-
-    private var valueLabel: String {
-        guard let b = bounds else { return "PC 档位未确认" }
-        if abs(selectedValue - b.current) < 0.000_001 {
-            return option.valueText ?? String(format: "%.0f", b.current)
+    private func nativeEffort(_ names: [String]) -> STModelOption? {
+        options.first { option in
+            guard option.kind == "effort" else { return false }
+            let candidate = (option.id + " " + option.label).lowercased()
+            return names.contains { name in
+                let value = name.lowercased()
+                // Check longer names first; "High" must not match "Extra High".
+                if value == "high" || value == "高" {
+                    return (candidate.contains("high") || candidate.contains("高")) &&
+                        !candidate.contains("extra") && !candidate.contains("超") &&
+                        !candidate.contains("极高")
+                }
+                return candidate.contains(value)
+            }
         }
-        return String(format: "待应用档位 %.0f", selectedValue)
+    }
+
+    private func sliderChoice(_ index: Int) -> (STModelOption, Double)? {
+        guard let option = options.first(where: { $0.kind == "slider" && $0.disabled != true }),
+              let lower = option.min, let upper = option.max, let step = option.step,
+              lower.isFinite, upper.isFinite, step.isFinite, step > 0,
+              let current = option.value, current.isFinite, lower <= current,
+              current <= upper, upper > lower else { return nil }
+        let value = lower + Double(index) * step
+        guard value <= upper + 0.000_001 else { return nil }
+        if index == 4 {
+            // A fifth numeric position is NOT proof of Pro entitlement.
+            let proof = [option.label, option.valueText ?? "", option.description ?? ""]
+                .joined(separator: " ").lowercased()
+            guard proof.contains("pro") || proof.contains("专业") else { return nil }
+        }
+        return (option, min(value, upper))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(option.label).foregroundStyle(option.disabled == true ? .secondary : .primary)
-                Spacer()
-                if option.selected == true { Image(systemName: "checkmark") }
+        ForEach(Array(tiers.enumerated()), id: \.offset) { index, tier in
+            let native = nativeEffort(tier.names)
+            let slider = native == nil ? sliderChoice(index) : nil
+            Button {
+                if let native { choose(native, nil) }
+                else if let slider { choose(slider.0, slider.1) }
+            } label: {
+                HStack {
+                    Text(tier.title).font(.body.weight(.medium))
+                        .frame(width: 22, alignment: .leading)
+                    Text(tier.code == "pro" ? "Pro（以 PC 可用权限为准）" :
+                         tier.code == "extra" ? "Extra High" :
+                         tier.code == "low" ? "Low / Instant" :
+                         tier.code == "medium" ? "Medium" : "High")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if native?.selected == true { Image(systemName: "checkmark") }
+                }
             }
-            if let description = option.description, !description.isEmpty {
-                Text(description).font(.caption2).foregroundStyle(.secondary)
-            }
-            if let b = bounds {
-                Slider(value: Binding(
-                    get: { selectedValue },
-                    set: { pendingValue = $0 }
-                ), in: b.lower...b.upper, step: b.step)
-                    .disabled(loading || option.disabled == true)
-                    .accessibilityIdentifier("shared.slider.\(option.id)")
-                Text(valueLabel).font(.caption).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("shared.slider.value.\(option.id)")
-                Button("应用思考档位") { apply(selectedValue) }
-                    .disabled(loading || option.disabled == true)
-                    .accessibilityIdentifier("shared.model.\(option.id)")
-            } else {
-                Text("PC 未提供可验证的滑块范围，不能提交强度选择")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
+            .disabled(busy || (native?.disabled == true) || (native == nil && slider == nil))
+            .accessibilityIdentifier(native.map { "shared.model.\($0.id)" } ??
+                                     "shared.effort.\(tier.code)")
         }
-        .onChange(of: option.value) { _, _ in pendingValue = nil }
-        .onChange(of: option.min) { _, _ in pendingValue = nil }
-        .onChange(of: option.max) { _, _ in pendingValue = nil }
+    }
+}
+
+private enum STCompactEffort {
+    static func code(_ effort: String) -> String {
+        let text = effort.lowercased()
+        if text == "pro" || text.contains("professional") { return "P" }
+        if text.contains("extra") || text.contains("极高") || text == "超" { return "超" }
+        if text.contains("medium") || text == "中" { return "中" }
+        if text.contains("high") || text == "高" { return "高" }
+        if text.contains("instant") || text.contains("low") || text == "低" { return "低" }
+        return "?"
     }
 }
 
@@ -145,13 +174,11 @@ struct SharedTabScreen: View {
                             HStack {
                                 Text("思考强度")
                                 Spacer()
-                                Text(model.displayedEffortName).foregroundStyle(model.isEffortUnconfirmed ? .orange : .secondary)
+                                Text(model.displayedEffortName)
+                                    .foregroundStyle(model.isEffortUnconfirmed ? .orange : .secondary)
                                     .accessibilityIdentifier("shared.picker.currentEffort")
                             }
                         }
-                        // Keep native selection outcome visible in the first
-                        // viewport of a medium sheet, above lazy option rows.
-                        // An unconfirmed PC click must never look successful.
                         if let notice = model.controlNotice {
                             Section {
                                 Text(notice).font(.caption).foregroundStyle(.secondary)
@@ -164,43 +191,59 @@ struct SharedTabScreen: View {
                         if model.actionPending?.kind == "model_select" {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
-                                Text("正在同步至 PC 网页…").font(.caption).foregroundStyle(.secondary)
+                                Text("正在同步至 PC 网页…")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        Section("可用选项") {
-                            ForEach(model.modelOptions) { option in
-                                if option.kind == "slider" {
-                                    STNativeEffortSliderRow(option: option, loading: model.modelPickerLoading) { value in
-                                        Task { await model.chooseModel(option, value: value) }
-                                    }
-                                } else {
+                        let models = model.modelOptions.filter {
+                            $0.kind != "effort" && $0.kind != "slider"
+                        }
+                        if !models.isEmpty {
+                            Section("模型") {
+                                ForEach(models) { option in
                                     Button {
                                         Task { await model.chooseModel(option) }
                                     } label: {
                                         HStack {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(option.label).foregroundStyle(option.disabled == true ? .secondary : .primary)
-                                                if let desc = option.description, !desc.isEmpty {
-                                                    Text(desc).font(.caption2).foregroundStyle(.secondary)
-                                                }
-                                            }
+                                            Text(option.label)
                                             Spacer()
                                             if option.selected == true { Image(systemName: "checkmark") }
-                                            if option.submenu == true || option.kind == "submenu" { Image(systemName: "chevron.right").foregroundStyle(.secondary) }
+                                            if option.submenu == true || option.kind == "submenu" {
+                                                Image(systemName: "chevron.right")
+                                                    .foregroundStyle(.secondary)
+                                            }
                                         }
                                     }
                                     .disabled(model.modelPickerLoading || option.disabled == true)
                                     .accessibilityIdentifier("shared.model.\(option.id)")
                                 }
                             }
-                            if model.modelOptions.isEmpty && !model.modelPickerLoading {
-                                Text(model.controlNotice ?? "PC 网页暂未提供可切换选项").foregroundStyle(.secondary)
+                        }
+                        Section("思考强度") {
+                            STEffortChoices(options: model.modelOptions,
+                                            busy: model.modelPickerLoading) { option, value in
+                                Task { await model.chooseModel(option, value: value) }
+                            }
+                            if model.modelOptions.contains(where: { $0.kind == "effort" }) {
+                                Button("返回模型列表") {
+                                    Task { await model.loadModelOptions() }
+                                }.accessibilityIdentifier("shared.model.back")
                             }
                         }
-                    }.navigationTitle("模型与思考档位")
-                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showModelPicker = false } } }
-                }.presentationDetents([.medium, .large])
-                 .task { await model.loadModelOptions() }
+                        if model.modelOptions.isEmpty && !model.modelPickerLoading {
+                            Text(model.controlNotice ?? "PC 暂未提供可切换选项")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .navigationTitle("模型与思考强度")
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { showModelPicker = false }
+                        }
+                    }
+                }
+                .presentationDetents([.medium, .large])
+                .task { await model.loadModelOptions() }
             }
             .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
                 if case let .success(url) = result {
@@ -296,24 +339,6 @@ struct SharedTabScreen: View {
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("shared.title")
             }
             Spacer(minLength: 4)
-            if model.canPickModel {
-                Button { dismissKeyboard(); showModelPicker = true } label: {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        HStack(spacing: 3) {
-                            Text(model.displayedModelName).lineLimit(1)
-                                .accessibilityIdentifier("shared.header.modelName")
-                            Image(systemName: "chevron.down").font(.system(size: 8))
-                        }
-                        Text(model.displayedEffortName)
-                            .font(.system(size: 9))
-                            .foregroundStyle(model.isEffortUnconfirmed ? .orange : .secondary)
-                            .lineLimit(1)
-                            .accessibilityIdentifier("shared.header.effortName")
-                    }
-                    .font(.caption2)
-                    .frame(maxWidth: 140)
-                }.accessibilityIdentifier("shared.modelPicker")
-            }
             Button { dismissKeyboard(); Task { await model.newChat() } } label: { Image(systemName: "square.and.pencil").font(.system(size: 20)).frame(width: 40, height: 44) }
                 .disabled(!model.online || model.busy).accessibilityLabel("新建聊天").accessibilityIdentifier("shared.new")
             Menu {
@@ -447,6 +472,21 @@ struct SharedTabScreen: View {
                 TextField("发送消息", text: Binding(get: { model.text }, set: { model.edited($0) }), axis: .vertical)
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
                     .accessibilityIdentifier("shared.composer")
+                if model.canPickModel {
+                    Button {
+                        dismissKeyboard()
+                        showModelPicker = true
+                    } label: {
+                        Text(STCompactEffort.code(model.displayedEffortName))
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 36, height: 36)
+                            .foregroundStyle(.primary)
+                            .background(Color(uiColor: .tertiarySystemFill), in: Circle())
+                    }
+                    .accessibilityLabel("模型与思考强度：\(model.displayedModelName)，\(model.displayedEffortName)")
+                    .accessibilityIdentifier("shared.modelPicker")
+                    .padding(.bottom, 5)
+                }
                 if model.showsNativeStop {
                     // Positive PC-native Stop evidence owns the main button.
                     // A typed follow-up remains independently sendable while
