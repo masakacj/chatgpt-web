@@ -51,6 +51,51 @@ jobs:
           xcrun simctl boot "$UDID" || true
           xcrun simctl bootstatus "$UDID" -b
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/CurrentReleaseSimulator" -resultBundlePath "$RUNNER_TEMP/CurrentReleaseTests.xcresult" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      # R67: expose bounded, source-bound XCTest diagnostics in the PUBLIC
+      # workflow summary so MCPOffice can read failures without a GitHub token.
+      # Never rerun a failed build or change the signed/stable channel here.
+      - name: Publish short CI failure diagnostics
+        if: failure()
+        run: |
+          set +e
+          {
+            echo '### CI-R67-XCODE-FAILURE-DIAGNOSTICS'
+            echo "Run: $GITHUB_RUN_ID"
+            echo "Source SHA: $GITHUB_SHA"
+            echo "Workflow: $GITHUB_WORKFLOW"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -d "$RUNNER_TEMP/CurrentReleaseTests.xcresult" ]; then
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/CurrentReleaseTests.xcresult" --format json > "$RUNNER_TEMP/r67-test-summary.json" 2>/dev/null
+            python3 - "$RUNNER_TEMP/r67-test-summary.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json,sys,re
+          try: obj=json.load(open(sys.argv[1]))
+          except Exception: obj={}
+          hits=[]
+          def scan(value):
+              if isinstance(value,dict):
+                  for k,v in value.items():
+                      if k in ('testFailures','issues','failedTests') and isinstance(v,list):
+                          for record in v:
+                              if isinstance(record,dict):
+                                  values=[str(record.get(field,'')) for field in
+                                          ('testName','testIdentifier','message','issueType','testCaseName')]
+                                  joined=' '.join(x for x in values if x)
+                                  if joined: hits.append(joined)
+                      scan(v)
+              elif isinstance(value,list):
+                  for entry in value: scan(entry)
+          scan(obj)
+          print('Failed XCTest items:')
+          print('~~~text')
+          for item in dict.fromkeys(hits):
+              print(re.sub(r'[^\\w \\u4e00-\\u9fff:.,()=/+-]',' ',item)[:300])
+              if len(hits)>20: break
+          if not hits: print('xcresult available; no structured failing tests in summary')
+          print('~~~')
+          PY
+          else
+            echo 'No simulator xcresult; inspect failed source/build step.' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Current iPhone Release compilation (never signs or promotes)
         run: |
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.12 CURRENT_PROJECT_VERSION=14 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
