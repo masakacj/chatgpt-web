@@ -904,5 +904,347 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 if (existing.status == nil || existing.status == "unknown") && chat.status != nil && chat.status != "unknown" {
                     existing.status = chat.status
                 }
-
-[Showing lines 1-906 of 1251 (50.0KB limit). Use offset=907 to continue.]
+                if (existing.readState == nil || existing.readState == "unknown") && chat.readState != nil && chat.readState != "unknown" {
+                    existing.readState = chat.readState
+                }
+                if existing.projectId == nil && chat.projectId != nil {
+                    existing.projectId = chat.projectId
+                }
+                if (chat.activityAt ?? 0) > (existing.activityAt ?? 0) {
+                    existing.activityAt = chat.activityAt
+                }
+                map[chat.id] = existing
+            } else {
+                map[chat.id] = chat
+            }
+        }
+        if let snap = snapshot, !snap.conversationId.isEmpty {
+            if var boundChat = map[snap.conversationId] {
+                if ["running", "waiting", "error", "completed", "stopped"].contains(snap.status) {
+                    boundChat.status = snap.status
+                }
+                map[snap.conversationId] = boundChat
+            } else {
+                map[snap.conversationId] = STChat(id: snap.conversationId, title: snap.title, projectId: snap.projectId, status: snap.status, readState: "read", activityAt: nil)
+            }
+        }
+        return Array(map.values)
+    }
+    var runningChats: [STChat] {
+        var seenIds = Set<String>()
+        var list: [STChat] = []
+        for chat in allObservedChats {
+            let st = effectiveChatStatus(chat)
+            guard st != "unknown", st == "running" else { continue }
+            if !seenIds.contains(chat.id) {
+                seenIds.insert(chat.id)
+                list.append(chat)
+            }
+        }
+        return list.sorted { ($0.activityAt ?? 0) > ($1.activityAt ?? 0) }
+    }
+    var unreadChats: [STChat] {
+        let runningIds = Set(runningChats.map(\.id))
+        var seenIds = Set<String>()
+        var list: [STChat] = []
+        for chat in allObservedChats {
+            guard !runningIds.contains(chat.id) else { continue }
+            guard chat.readState != "unknown", isChatUnread(chat) else { continue }
+            if !seenIds.contains(chat.id) {
+                seenIds.insert(chat.id)
+                list.append(chat)
+            }
+        }
+        return list.sorted { ($0.activityAt ?? 0) > ($1.activityAt ?? 0) }
+    }
+    var prioritizedRecentActive: [STChat] {
+        let priorityIds = Set(runningChats.map(\.id) + unreadChats.map(\.id))
+        var seenIds = Set<String>()
+        var list: [STChat] = []
+        for chat in recentActive {
+            guard !priorityIds.contains(chat.id) else { continue }
+            if !seenIds.contains(chat.id) {
+                seenIds.insert(chat.id)
+                list.append(chat)
+            }
+        }
+        return list
+    }
+    func loadModelOptions() async {
+        guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        modelPickerLoading = true; defer { modelPickerLoading = false }
+        do {
+            let value: STModelCatalog = try await request("/v1/sessions/\(id)/actions", using: c,
+                body: ["action": "model_catalog", "commandId": UUID().uuidString, "documentId": snap.documentId])
+            modelOptions = value.available ? value.options : []
+            let selectedStep = modelOptions.first { $0.kind == "slider" && $0.selected == true && $0.disabled != true }
+            if let th = value.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
+                verifiedEffort = eff
+                verifiedEffortDocId = snap.documentId
+                verifiedEffortConvId = snap.conversationId
+            } else if let step = selectedStep, !step.label.isEmpty {
+                // Native selected slider option is PC evidence, unlike
+                // the previous locally cached selected value.
+                verifiedEffort = step.label
+                verifiedEffortDocId = snap.documentId
+                verifiedEffortConvId = snap.conversationId
+            } else {
+                verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
+            }
+            if modelOptions.isEmpty { controlNotice = "PC 当前未提供可镜像的模型或思考选项" }
+        } catch { controlNotice = error.localizedDescription }
+    }
+    func chooseModel(_ option: STModelOption, value: Double? = nil) async {
+        guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        guard actionPending == nil else {
+            controlNotice = "上一操作尚未确认，请等待 PC 确认或核对回执"
+            return
+        }
+        modelPickerLoading = true; defer { modelPickerLoading = false }
+        let commandId = UUID().uuidString
+        let pending = STActionPending(id: commandId, server: c.identity, conversation: snap.conversationId,
+                                      kind: "model_select", stopTargetId: nil, documentId: snap.documentId,
+                                      optionId: option.id, targetLabel: option.label)
+        actionPending = pending
+        guard save() else {
+            actionPending = nil
+            controlNotice = "保存操作意图失败，未提交选择"
+            return
+        }
+        do {
+            var body: [String: Any] = [
+                "action": "model_select",
+                "commandId": commandId,
+                "documentId": snap.documentId,
+                "optionId": option.id
+            ]
+            if let value { body["value"] = value }
+            let result: STModelChoice = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
+            guard result.status == "option_clicked" else {
+                actionPending = nil; save()
+                throw STError(code: result.error ?? "model_option_changed")
+            }
+            if result.submenuOpened == true {
+                actionPending = nil; save()
+                modelOptions = result.options ?? []
+                controlNotice = "请选择 PC 网页实际提供的细分档位"
+                return
+            }
+            if let returnedOptions = result.options, !returnedOptions.isEmpty {
+                modelOptions = returnedOptions
+            }
+            let sameDocAndConv = (snapshot?.documentId == snap.documentId && snapshot?.conversationId == snap.conversationId)
+            if result.selectionObserved == true && sameDocAndConv {
+                actionPending = nil
+                if let freshModel = result.model {
+                    if let th = freshModel.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
+                        verifiedEffort = eff
+                        verifiedEffortDocId = snap.documentId
+                        verifiedEffortConvId = snap.conversationId
+                    } else if freshModel.thinking?.observed == false || freshModel.thinking?.confidence == "unconfirmed" {
+                        verifiedEffort = nil
+                        verifiedEffortDocId = nil
+                        verifiedEffortConvId = nil
+                    } else if freshModel.thinking == nil {
+                        let parsed = Self.parseModelAndEffort(rawName: freshModel.name)
+                        if let pe = parsed.effort, !pe.isEmpty {
+                            verifiedEffort = pe
+                            verifiedEffortDocId = snap.documentId
+                            verifiedEffortConvId = snap.conversationId
+                        }
+                    }
+                } else if option.kind == "effort" || option.kind == "slider" || option.label.contains("High") || option.label.contains("Medium") || option.label.contains("Instant") {
+                    let parsed = Self.parseModelAndEffort(rawName: option.label)
+                    verifiedEffort = parsed.effort ?? option.label
+                    verifiedEffortDocId = snap.documentId
+                    verifiedEffortConvId = snap.conversationId
+                }
+                controlNotice = "已在 PC 网页选择：\(option.label)"
+                save()
+                try? await refresh(using: c)
+            } else if result.selectionObserved == false {
+                controlNotice = "未确认 PC 已切换选项，请核对电脑网页"
+                status = "选择结果待确认 · 不会自动重试"
+                save()
+                try? await refresh(using: c)
+            } else {
+                controlNotice = "选择结果待确认；缺少网页生效证据。请核对 PC 页面。"
+                status = "选择结果待确认 · 不会自动重试"
+                save()
+                try? await refresh(using: c)
+            }
+        } catch {
+            controlNotice = "选择结果待确认；不会自动重试。请核对 PC 页面。"
+            status = "选择结果待确认 · 不会自动重试"
+            save()
+        }
+    }
+    func upload(_ data: Data, filename: String, mimeType: String) async {
+        guard canUpload, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        guard !data.isEmpty && data.count <= 10 * 1024 * 1024 else {
+            controlNotice = "附件须小于 10 MB，草稿仍已保留"; return
+        }
+        uploading = true; defer { uploading = false }; controlNotice = "正在交给 PC 网页附件控件…"
+        let safeName = String(filename.replacingOccurrences(of: #"[\\/\x00-\x1f]"#,
+                         with: "_", options: .regularExpression).prefix(180))
+        do {
+            let result: STUploadResult = try await request("/v1/sessions/\(id)/uploads", using: c,
+                body: ["uploadId": UUID().uuidString, "documentId": snap.documentId,
+                       "name": safeName, "mimeType": mimeType, "base64": data.base64EncodedString()])
+            controlNotice = result.status == "handed_to_pc" ?
+                "已交给 PC 网页附件控件，请确认处理完成后发送" :
+                "未确认 PC 附件上传：\(result.error ?? result.status)，请先核对 PC"
+        } catch {
+            controlNotice = "附件结果未确认：\(error.localizedDescription)。不会自动重传"
+        }
+    }
+    func send() async {
+        guard canSubmit, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text); let generation = epoch
+        do {
+            let command = try ledger.reserve(owner, server: c.identity, temporary: snap.conversationId.isEmpty)
+            guard save() else { ledger.definitelyNotSent(command.id); throw STError(code: "local_storage_failed") }
+            var body: [String: Any] = ["commandId": command.id, "action": "compose", "documentId": snap.documentId, "baseDraftHash": snap.draftHash, "text": command.text]
+            if let project = snap.projectId { body["projectId"] = project }
+            let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: body)
+            resolve(receipt, using: c); try current(generation); try? await refresh(using: c)
+        } catch { self.error = error.localizedDescription; if currentPending != nil { status = "发送结果待确认 · 不会自动重发" }; save() }
+    }
+    // One explicit tap maps to ONE PC-native Stop button; never infer a stop
+    // from generic in_progress status, and never replay an uncertain click.
+    func stopGeneration() async {
+        guard canStopGeneration, let target = nativeStopTarget,
+              let c = connection, let id = sessionID, let snap = snapshot else { return }
+        let pending = STActionPending(id: UUID().uuidString, server: c.identity,
+                                      conversation: snap.conversationId,
+                                      kind: "stop", stopTargetId: target)
+        actionPending = pending
+        guard save() else {
+            actionPending = nil
+            error = STError(code: "local_storage_failed").localizedDescription
+            return
+        }
+        busy = true; defer { busy = false }
+        error = nil
+        do {
+            let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c,
+                body: ["action": "stop", "commandId": pending.id,
+                       "documentId": snap.documentId, "conversationId": snap.conversationId,
+                       "stopTargetId": target, "confirmed": true])
+            resolveAction(receipt, using: c)
+            // The command receipt proves a physical click, NOT that the
+            // official generation finished. Refresh native state separately.
+            try? await refresh(using: c)
+        } catch {
+            self.error = "中止结果待确认；不会再次点击。请核对回执或 PC 页面。"
+            status = "中止结果待确认 · 不会自动重试"
+            save()
+        }
+    }
+    private func resolveAction(_ receipt: STReceipt, using c: STConnection) {
+        guard let pending = actionPending, pending.id == receipt.commandId,
+              pending.server == c.identity else { return }
+        if receipt.state == "failed" {
+            actionPending = nil
+            error = STError(code: receipt.result?.error ?? "pc_operation_failed").localizedDescription
+        } else if receipt.state == "done" && receipt.result?.status == "stop_clicked" && pending.kind == "stop" {
+            if snapshot?.conversationId == pending.conversation {
+                stopAcknowledgedTarget = pending.stopTargetId
+                controlNotice = "已点击 PC 中止控件，等待网页确认停止"
+            }
+            actionPending = nil
+            status = "已点击 PC 中止 · 等待原生状态"
+        } else if receipt.state == "done" && receipt.result?.status == "interaction_clicked" &&
+                  pending.kind != "stop" && pending.kind != "model_select" {
+            actionPending = nil
+        } else if receipt.state == "done" && pending.kind == "model_select" {
+            let res = receipt.result
+            let matchesScope = (res?.documentId == nil || res?.documentId == pending.documentId) &&
+                               (res?.conversationId == nil || res?.conversationId == pending.conversation) &&
+                               (snapshot?.documentId == pending.documentId && snapshot?.conversationId == pending.conversation)
+            if res?.status == "option_clicked" && res?.selectionObserved == true && matchesScope {
+                actionPending = nil
+                if let freshModel = res?.model {
+                    if let th = freshModel.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
+                        verifiedEffort = eff
+                        verifiedEffortDocId = pending.documentId
+                        verifiedEffortConvId = pending.conversation
+                    } else if freshModel.thinking?.observed == false || freshModel.thinking?.confidence == "unconfirmed" {
+                        verifiedEffort = nil
+                        verifiedEffortDocId = nil
+                        verifiedEffortConvId = nil
+                    }
+                }
+                controlNotice = "已在 PC 网页选择：\(pending.targetLabel ?? "所选项目")"
+                status = "与 PC 共用此标签页"
+            } else if res?.status == "option_clicked" && res?.selectionObserved == false {
+                controlNotice = "未确认 PC 已切换选项，请核对电脑网页"
+                status = "选择结果待确认 · 不会自动重试"
+            } else if res?.status == "option_clicked" {
+                controlNotice = "选择结果待确认；缺少网页生效证据。请核对 PC 页面。"
+                status = "选择结果待确认 · 不会自动重试"
+            } else {
+                status = "选择结果待确认 · 不会自动重试"
+            }
+        } else {
+            status = pending.kind == "stop" ? "中止结果待确认 · 不会自动重试" :
+                     pending.kind == "model_select" ? "选择结果待确认 · 不会自动重试" :
+                                                     "操作结果待确认 · 不会自动重试"
+        }
+        save()
+    }
+    private func resolve(_ receipt: STReceipt, using c: STConnection) {
+        guard let command = ledger.pending[receipt.commandId], command.server == c.identity else { return }
+        if receipt.state == "done" && receipt.result?.status == "sent_confirmed" {
+            let actualOwner = receipt.result?.conversationId.map { c.identity + "|" + $0 }
+            ledger.confirmed(command.id, actualOwner: actualOwner)
+            if command.temporary, owner == command.owner, let actualOwner { owner = actualOwner }
+            text = ledger.draft(owner).text
+            status = ledger.pendingFor(owner) == nil ? "消息已发送" : "新消息已发送 · 另有旧回执待确认"
+            error = nil
+        } else if receipt.state == "failed" {
+            ledger.definitelyNotSent(command.id); error = STError(code: receipt.result?.error ?? "not_sent").localizedDescription; status = "确定未发送 · 草稿已保留"
+        } else { status = "发送结果待确认 · 不会自动重发" }
+        save()
+    }
+    func checkReceipts() async { guard !busy, let c = connection else { return }; busy = true; defer { busy = false }; await checkReceiptsInternal(using: c) }
+    private func checkReceiptsInternal(using c: STConnection) async {
+        for command in Array(ledger.pending.values).filter({ $0.server == c.identity }) {
+            if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) { resolve(receipt, using: c) }
+        }
+        if let pending = actionPending, pending.server == c.identity,
+           let receipt: STReceipt = try? await request("/v1/commands/\(pending.id)", using: c) {
+            resolveAction(receipt, using: c)
+        }
+    }
+    func followRemoteLink(_ link: PCRemoteLink) async {
+        guard let id = link.interactionId, let revision = link.interactionRevision,
+              !id.isEmpty, !revision.isEmpty else {
+            error = "当前链接未能映射到 PC 网页，请在电脑上操作。"
+            return
+        }
+        let action = PCInteractionButton(id: id, label: link.title, revision: revision,
+                                         disabled: false, requiresConfirmation: false)
+        await interact(action, document: snapshot?.documentId ?? "")
+    }
+    func interact(_ button: PCInteractionButton, document: String) async {
+        guard online, !busy, actionPending == nil, let c = connection, let id = sessionID, let snap = snapshot, snap.documentId == document else { error = STError(code: "pc_route_changed").localizedDescription; return }
+        busy = true; defer { busy = false }; let pending = STActionPending(id: UUID().uuidString, server: c.identity, conversation: snap.conversationId); actionPending = pending
+        guard save() else { actionPending = nil; return }
+        do {
+            let result: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: ["action": "interact", "commandId": pending.id, "documentId": document, "interactionId": button.id, "interactionRevision": button.revision, "confirmed": true])
+            resolveAction(result, using: c)
+        } catch { self.error = "操作结果待确认；不会重复点击。" }
+    }
+    func loadEarlier() async {
+        guard canLoadHistory, let c = connection, let id = sessionID, let snap = snapshot, let cursor = historyCursor ?? snap.historyCursor else { return }
+        historyLoading = true; defer { historyLoading = false }; let generation = epoch
+        do {
+            var query = URLComponents(); query.queryItems = [URLQueryItem(name: "before", value: cursor), URLQueryItem(name: "documentId", value: snap.documentId)]
+            let result: STHistory = try await request("/v1/sessions/\(id)/history?\(query.percentEncodedQuery ?? "")", using: c)
+            try current(generation); guard result.documentId == snapshot?.documentId, result.conversationId == snapshot?.conversationId else { return }
+            let ids = Set(displayMessages.map(\.id)); older = result.messages.filter { !ids.contains($0.id) } + older
+            historyCursor = result.cursor; historyHasMore = result.hasMore && result.cursor != cursor
+        } catch { self.error = error.localizedDescription }
+    }
+}
