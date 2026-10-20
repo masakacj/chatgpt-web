@@ -62,7 +62,11 @@ private struct STEffortChoices: View {
             // A fifth numeric position is NOT proof of Pro entitlement.
             let proof = [option.label, option.valueText ?? "", option.description ?? ""]
                 .joined(separator: " ").lowercased()
-            guard proof.contains("pro") || proof.contains("专业") else { return nil }
+            // "problems" in the slider description is not Pro entitlement.
+            guard (proof.contains("pro") &&
+                   proof.range(of: #"\bpro\b|\bprofessional\b"#,
+                               options: .regularExpression) != nil) ||
+                  proof.contains("专业") else { return nil }
         }
         return (option, min(value, upper))
     }
@@ -88,8 +92,9 @@ private struct STEffortChoices: View {
                 }
             }
             .disabled(busy || (native?.disabled == true) || (native == nil && slider == nil))
-            .accessibilityIdentifier(native.map { "shared.model.\($0.id)" } ??
-                                     "shared.effort.\(tier.code)")
+            // A PC model option may also represent an effort choice. Keep
+            // model and effort accessibility IDs distinct for XCTest/taps.
+            .accessibilityIdentifier("shared.effort.\(tier.code)")
         }
     }
 }
