@@ -106,43 +106,22 @@ struct SharedTabScreen: View {
                         Section("可用选项") {
                             ForEach(model.modelOptions) { option in
                                 if option.kind == "slider" {
-                                    VStack(alignment: .leading, spacing: 6) {
+                                    Button {
+                                        Task { await model.chooseModel(option, value: option.value) }
+                                    } label: {
                                         HStack {
-                                            Text(option.label).font(.body)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(option.label).foregroundStyle(option.disabled == true ? .secondary : .primary)
+                                                if let desc = option.description, !desc.isEmpty {
+                                                    Text(desc).font(.caption2).foregroundStyle(.secondary)
+                                                }
+                                            }
                                             Spacer()
-                                            Text(option.valueText ?? String(format: "%.0f", option.value ?? 0))
-                                                .foregroundStyle(.secondary)
-                                                .accessibilityIdentifier("shared.slider.value.\(option.id)")
+                                            if option.selected == true { Image(systemName: "checkmark") }
                                         }
-                                        if let desc = option.description, !desc.isEmpty {
-                                            Text(desc).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                        HStack {
-                                            let minVal = option.min ?? 1
-                                            let maxVal = max(minVal + 1, option.max ?? 5)
-                                            Text(String(format: "%.0f", minVal)).font(.caption2).foregroundStyle(.tertiary)
-                                            Slider(
-                                                value: Binding(
-                                                    get: { min(max(option.value ?? minVal, minVal), maxVal) },
-                                                    set: { newVal in
-                                                        Task { await model.chooseModel(option, value: newVal) }
-                                                    }
-                                                ),
-                                                in: minVal...maxVal,
-                                                step: option.step ?? 1
-                                            )
-                                            .disabled(model.modelPickerLoading || option.disabled == true)
-                                            .accessibilityIdentifier("shared.slider.\(option.id)")
-                                            Text(String(format: "%.0f", maxVal)).font(.caption2).foregroundStyle(.tertiary)
-                                        }
-                                        Button("设定强度档位") {
-                                            Task { await model.chooseModel(option, value: option.value) }
-                                        }
-                                        .font(.caption)
-                                        .disabled(model.modelPickerLoading || option.disabled == true)
-                                        .accessibilityIdentifier("shared.model.\(option.id)")
                                     }
-                                    .padding(.vertical, 4)
+                                    .disabled(model.modelPickerLoading || option.disabled == true)
+                                    .accessibilityIdentifier("shared.model.\(option.id)")
                                 } else {
                                     Button {
                                         Task { await model.chooseModel(option) }
