@@ -8,6 +8,70 @@ private struct STSelectedInteraction: Identifiable {
     var id: String { button.id }
 }
 
+// Keep a real, accessible native slider backed by the PC's observed range.
+// Dragging only changes a phone-local draft. Only the explicit button asks
+// the PC to select a value; the model verifies the native result separately.
+private struct STNativeEffortSliderRow: View {
+    let option: STModelOption
+    let loading: Bool
+    let apply: (Double) -> Void
+    @State private var pendingValue: Double?
+
+    private var bounds: (lower: Double, upper: Double, step: Double, current: Double)? {
+        guard let lower = option.min, let upper = option.max, let current = option.value,
+              lower.isFinite, upper.isFinite, current.isFinite,
+              lower < upper, current >= lower, current <= upper else { return nil }
+        let step = option.step ?? 1
+        guard step.isFinite, step > 0, step <= upper - lower else { return nil }
+        return (lower, upper, step, current)
+    }
+
+    private var selectedValue: Double {
+        guard let b = bounds else { return option.value ?? 0 }
+        return Swift.min(b.upper, Swift.max(b.lower, pendingValue ?? b.current))
+    }
+
+    private var valueLabel: String {
+        guard let b = bounds else { return "PC 档位未确认" }
+        if abs(selectedValue - b.current) < 0.000_001 {
+            return option.valueText ?? String(format: "%.0f", b.current)
+        }
+        return String(format: "待应用档位 %.0f", selectedValue)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(option.label).foregroundStyle(option.disabled == true ? .secondary : .primary)
+                Spacer()
+                if option.selected == true { Image(systemName: "checkmark") }
+            }
+            if let description = option.description, !description.isEmpty {
+                Text(description).font(.caption2).foregroundStyle(.secondary)
+            }
+            if let b = bounds {
+                Slider(value: Binding(
+                    get: { selectedValue },
+                    set: { pendingValue = $0 }
+                ), in: b.lower...b.upper, step: b.step)
+                    .disabled(loading || option.disabled == true)
+                    .accessibilityIdentifier("shared.slider.\(option.id)")
+                Text(valueLabel).font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("shared.slider.value.\(option.id)")
+                Button("应用思考档位") { apply(selectedValue) }
+                    .disabled(loading || option.disabled == true)
+                    .accessibilityIdentifier("shared.model.\(option.id)")
+            } else {
+                Text("PC 未提供可验证的滑块范围，不能提交强度选择")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .onChange(of: option.value) { _, _ in pendingValue = nil }
+        .onChange(of: option.min) { _, _ in pendingValue = nil }
+        .onChange(of: option.max) { _, _ in pendingValue = nil }
+    }
+}
+
 struct SharedTabScreen: View {
     @StateObject private var model = SharedTabModel()
     @Environment(\.scenePhase) private var scenePhase
@@ -106,22 +170,9 @@ struct SharedTabScreen: View {
                         Section("可用选项") {
                             ForEach(model.modelOptions) { option in
                                 if option.kind == "slider" {
-                                    Button {
-                                        Task { await model.chooseModel(option, value: option.value) }
-                                    } label: {
-                                        HStack {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(option.label).foregroundStyle(option.disabled == true ? .secondary : .primary)
-                                                if let desc = option.description, !desc.isEmpty {
-                                                    Text(desc).font(.caption2).foregroundStyle(.secondary)
-                                                }
-                                            }
-                                            Spacer()
-                                            if option.selected == true { Image(systemName: "checkmark") }
-                                        }
+                                    STNativeEffortSliderRow(option: option, loading: model.modelPickerLoading) { value in
+                                        Task { await model.chooseModel(option, value: value) }
                                     }
-                                    .disabled(model.modelPickerLoading || option.disabled == true)
-                                    .accessibilityIdentifier("shared.model.\(option.id)")
                                 } else {
                                     Button {
                                         Task { await model.chooseModel(option) }
