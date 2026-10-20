@@ -210,21 +210,26 @@ struct SharedTabScreen: View {
                         if !models.isEmpty {
                             Section("模型") {
                                 ForEach(models) { option in
-                                    Button {
-                                        Task { await model.chooseModel(option) }
-                                    } label: {
-                                        HStack {
-                                            Text(option.label)
-                                            Spacer()
-                                            if option.selected == true { Image(systemName: "checkmark") }
-                                            if option.submenu == true || option.kind == "submenu" {
-                                                Image(systemName: "chevron.right")
-                                                    .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Button {
+                                            Task { await model.chooseModel(option) }
+                                        } label: {
+                                            HStack {
+                                                Text(option.label)
+                                                Spacer()
+                                                if option.selected == true { Image(systemName: "checkmark") }
+                                                if option.submenu == true || option.kind == "submenu" {
+                                                    Image(systemName: "chevron.right")
+                                                        .foregroundStyle(.secondary)
+                                                }
                                             }
                                         }
+                                        .disabled(model.modelPickerLoading || option.disabled == true)
+                                        .accessibilityIdentifier("shared.model.\(option.id)")
+                                        if let desc = option.description, !desc.isEmpty {
+                                            Text(desc).font(.caption).foregroundStyle(.secondary)
+                                        }
                                     }
-                                    .disabled(model.modelPickerLoading || option.disabled == true)
-                                    .accessibilityIdentifier("shared.model.\(option.id)")
                                 }
                             }
                         }
@@ -260,7 +265,7 @@ struct SharedTabScreen: View {
                         }
                     }
                 }
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
                 .task { await model.loadModelOptions() }
             }
             .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
@@ -834,27 +839,5 @@ private struct STRemoteTableBlock: View {
     var body: some View {
         if let rows = block.rows, !rows.isEmpty {
             ScrollView(.horizontal) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
-                        HStack(spacing: 0) {
-                            ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                                Text(cell).font(rowIndex == 0 ? .subheadline.weight(.semibold) : .subheadline)
-                                    .textSelection(.enabled)
-                                    .frame(minWidth: 130, maxWidth: 200, alignment: .leading)
-                                    .padding(.horizontal, 10).padding(.vertical, 9)
-                            }
-                        }
-                        .background(rowIndex == 0 ? Color(uiColor: .tertiarySystemFill) : Color.clear)
-                        .overlay(alignment: .bottom) { Rectangle().fill(.quaternary).frame(height: 0.5) }
-                    }
-                }
-            }
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-        } else {
-            ScrollView(.horizontal) {
-                Text(block.text).font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled).padding(12)
-            }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-        }
-    }
-}
+
+[Showing lines 1-841 of 866 (50.0KB limit). Use offset=842 to continue.]
