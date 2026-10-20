@@ -13,6 +13,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var projectID: String?
     private static var document = "fixture-document-A"
     private static var revision = 0
+    private static var stalePCLoading = true
     private static var sends = 0
     private static var stops = 0
     private static let nativeStopId = "fixture-native-stop-control-001122"
@@ -37,7 +38,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]
     }
     static func simulatePCModelSwitch() {
         lock.lock(); defer { lock.unlock() }
@@ -137,6 +138,12 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
 
         var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "model": modelPayload, "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
+        if args.contains("--shared-fixture-pc-done-loading") && stalePCLoading {
+            // PC's initial loading frame was observed, but the live page has
+            // since completed without advancing the old long-poll revision.
+            s["status"] = "loading"
+            s["responsePhase"] = "loading"
+        }
         if args.contains("--shared-fixture-pc-draft-native-blocked") {
             // The phone must be allowed to Send its own text even if the PC
             // has a parked local draft and reports disabled native controls.
@@ -369,6 +376,12 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if path.contains("/sessions/") {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }
             reads += 1
+            if args.contains("--shared-fixture-pc-done-loading") &&
+               req.url?.query?.contains("refresh=1") == true &&
+               stalePCLoading {
+                stalePCLoading = false
+                revision += 1
+            }
             if args.contains("--shared-fixture-pc-switch") && reads == 15 { current = b; document = "fixture-PC-changed-B"; sentText = nil; revision += 1 }
             if args.contains("--shared-fixture-doc-change-invalidates-effort") && reads >= 6 { document = "fixture-document-switched"; effortName = nil; effortObserved = false; revision += 1 }
             return (200, envelope())
