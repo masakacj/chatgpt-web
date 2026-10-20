@@ -220,6 +220,15 @@ struct SharedTabScreen: View {
                             }
                         }
                         Section("思考强度") {
+                            if let slider = model.modelOptions.first(where: { $0.kind == "slider" }) {
+                                if let description = slider.description, !description.isEmpty {
+                                    Text(description).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                if let current = slider.valueText, !current.isEmpty {
+                                    Text(current).font(.caption2).foregroundStyle(.secondary)
+                                        .accessibilityIdentifier("shared.slider.value.\(slider.id)")
+                                }
+                            }
                             STEffortChoices(options: model.modelOptions,
                                             busy: model.modelPickerLoading) { option, value in
                                 Task { await model.chooseModel(option, value: value) }
@@ -365,7 +374,14 @@ struct SharedTabScreen: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         if model.loading {
-                            HStack { ProgressView(); Text("正在读取 PC 当前对话").foregroundStyle(.secondary) }.padding(.top, 30)
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("正在同步 PC 当前对话").foregroundStyle(.secondary)
+                                Spacer()
+                                Button("刷新状态") { Task { await model.reconcileLoading() } }
+                                    .font(.caption)
+                                    .accessibilityIdentifier("shared.loading.refresh")
+                            }.padding(.top, 30)
                         } else if model.displayMessages.isEmpty {
                             VStack(spacing: 14) {
                                 Text("有什么可以帮你？").font(.title2.weight(.semibold))
