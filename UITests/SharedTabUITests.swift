@@ -557,6 +557,7 @@ final class SharedTabUITests: XCTestCase {
         let notice = app.staticTexts["shared.picker.notice"]
         XCTAssertTrue(notice.waitForExistence(timeout: 8))
         XCTAssertTrue(notice.label.contains("未确认 PC 已切换选项"))
+        XCTAssertTrue(option.isEnabled, "A completed PC click must not leave all later choices disabled")
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.exists)
         app.buttons["完成"].tap()
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
@@ -572,10 +573,28 @@ final class SharedTabUITests: XCTestCase {
         let notice = app.staticTexts["shared.picker.notice"]
         XCTAssertTrue(notice.waitForExistence(timeout: 8))
         XCTAssertTrue(notice.label.contains("选择结果待确认") && notice.label.contains("不会自动重试"))
+        XCTAssertFalse(option.isEnabled, "An unknown click receipt must prevent a second model action")
+        XCTAssertTrue(app.staticTexts["shared.model.pending"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["shared.model.recheck"].exists)
         wait("label CONTAINS '模型选择：1'", on: app.staticTexts["shared.fixture.counters"])
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
         app.buttons["完成"].tap()
         XCTAssertTrue(app.staticTexts["shared.status"].label.contains("选择结果待确认"))
+    }
+    func testCrossConversationReceiptDoesNotUnlockEffortChoices() throws {
+        let app = launch("--shared-fixture-model-cross-scope-receipt")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.press(forDuration: 0.65)
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        option.tap()
+        let recheck = app.buttons["shared.model.recheck"]
+        XCTAssertTrue(recheck.waitForExistence(timeout: 8))
+        recheck.tap()
+        XCTAssertFalse(option.isEnabled, "A different conversation's receipt must not release the pending lock")
+        XCTAssertTrue(app.staticTexts["shared.model.pending"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
     }
     func testPCOnlineModelSwitchAutomaticallyUpdatesPhoneWithoutUserAction() throws {
         let app = launch("--shared-fixture-pc-model-switch")

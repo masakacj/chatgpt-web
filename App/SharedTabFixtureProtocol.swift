@@ -296,6 +296,13 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                     receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "unknown", "result": ["error": "pc_result_unknown"]]
                     return (504, ["error": "pc_result_unknown"])
                 }
+                if args.contains("--shared-fixture-model-cross-scope-receipt") {
+                    receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "done", "result": [
+                        "status": "option_clicked", "selectionObserved": false,
+                        "conversationId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+                    ]]
+                    return (504, ["error": "pc_result_unknown"])
+                }
                 if args.contains("--shared-fixture-model-select-nil-evidence") {
                     let val: [String: Any] = ["ok": true, "commandId": cmdId, "state": "done", "result": ["status": "option_clicked"]]
                     receipts[cmdId] = val

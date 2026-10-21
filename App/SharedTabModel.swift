@@ -1147,6 +1147,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 controlNotice = "请选择 PC 网页实际提供的细分档位"
                 return
             }
+            // The PC confirmed this click. Keep uncertainty in the notice, not in a
+            // pending command that disables every later explicit user choice.
+            actionPending = nil; save()
             if let returnedOptions = result.options, !returnedOptions.isEmpty {
                 modelOptions = returnedOptions
             }
@@ -1279,6 +1282,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             let matchesScope = (res?.documentId == nil || res?.documentId == pending.documentId) &&
                                (res?.conversationId == nil || res?.conversationId == pending.conversation) &&
                                (snapshot?.documentId == pending.documentId && snapshot?.conversationId == pending.conversation)
+            if matchesScope && (res?.status == "option_clicked" || res?.status == "not_selected") {
+                actionPending = nil // Only a matching terminal receipt releases this action.
+            }
             if res?.status == "option_clicked" && res?.selectionObserved == true && matchesScope {
                 actionPending = nil
                 if let freshModel = res?.model {
