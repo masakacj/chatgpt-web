@@ -678,7 +678,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         saveSoon()
     }
     private func scheduleReconnect() {
-        guard foreground, reconnectTask == nil, reconnectAttempts < 4 else { return }
+        // Long PC conversations can take longer than four short recovery rounds.
+        // Reads only; every failed send/receipt remains explicitly reserved.
+        guard foreground, reconnectTask == nil, reconnectAttempts < 10 else { return }
         reconnectAttempts += 1
         let delay = UInt64(min(1 << (reconnectAttempts - 1), 8)) * 1_000_000_000
         reconnectTask = Task { [weak self] in
@@ -767,7 +769,14 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func resume() async {
         foreground = true
-        if online || resuming { return }
+        if online {
+            // A scene foreground event may happen after a stale loading frame
+            // was cached. Refresh the SAME authenticated PC tab immediately,
+            // rather than requiring the user to tap "刷新状态".
+            if loading { await reconcileLoading() }
+            return
+        }
+        if resuming { return }
         if busy { scheduleReconnect(); return }
         if pairingKey.isEmpty { needsSettings = true; return }
         busy = true; resuming = true; defer { busy = false; resuming = false }; epoch += 1

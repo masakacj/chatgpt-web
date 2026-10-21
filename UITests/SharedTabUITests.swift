@@ -740,14 +740,16 @@ final class SharedTabUITests: XCTestCase {
     }
     func testPCFinishedRecoversStaleLoadingWithoutReplayingSend() throws {
         let app = launch("--shared-fixture-pc-done-loading")
-        let refresh = app.buttons["shared.loading.refresh"]
-        if refresh.exists { refresh.tap() }
+        // Must heal the old loading frame without tapping Refresh or manually
+        // reselecting the PC tab. A delayed Bridge SPA route transition is
+        // allowed, but a stale iOS loading state cannot disable Send forever.
+        let send = app.buttons["shared.send"]
+        wait("enabled == true", on: send, timeout: 15)
+        XCTAssertFalse(app.staticTexts["PC 页面加载中"].exists)
         let input = composer(app)
         input.tap()
         input.typeText("fresh message after PC completed")
-        let send = app.buttons["shared.send"]
-        wait("enabled == true", on: send, timeout: 12)
-        XCTAssertFalse(app.staticTexts["PC 页面加载中"].exists)
+        XCTAssertTrue(send.isEnabled)
         send.tap()
         XCTAssertTrue(app.staticTexts["原生回复：fresh message after PC completed"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：1"))
