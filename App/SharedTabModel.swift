@@ -1196,12 +1196,12 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             actionPending = nil
         } else if receipt.state == "done" && pending.kind == "model_select" {
             let res = receipt.result
-            if res?.status == "option_clicked" || res?.status == "not_selected" {
-                actionPending = nil // Terminal command receipt; never imply selection was verified.
-            }
             let matchesScope = (res?.documentId == nil || res?.documentId == pending.documentId) &&
                                (res?.conversationId == nil || res?.conversationId == pending.conversation) &&
                                (snapshot?.documentId == pending.documentId && snapshot?.conversationId == pending.conversation)
+            if matchesScope && (res?.status == "option_clicked" || res?.status == "not_selected") {
+                actionPending = nil // Only a matching terminal receipt releases this action.
+            }
             if res?.status == "option_clicked" && res?.selectionObserved == true && matchesScope {
                 actionPending = nil
                 if let freshModel = res?.model {
