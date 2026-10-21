@@ -790,7 +790,7 @@ final class SharedTabUITests: XCTestCase {
         let app = launch("--shared-fixture-model-select-nil-evidence")
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let option = app.buttons["shared.model.fixture-model-option-0001"]
         XCTAssertTrue(option.waitForExistence(timeout: 8))
         option.tap()
