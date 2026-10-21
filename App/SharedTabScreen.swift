@@ -50,7 +50,10 @@ struct SharedTabScreen: View {
         dismissKeyboard()
         quickPickerKind = kind
         showQuickPicker = true
-        Task { await model.loadModelOptions(menuLevel: kind == .effort ? "effort" : "model") }
+        Task {
+            if model.actionPending != nil { await model.checkReceipts() }
+            await model.loadModelOptions(menuLevel: kind == .effort ? "effort" : "model")
+        }
     }
     private var quickPickerContent: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -70,6 +73,16 @@ struct SharedTabScreen: View {
                     .accessibilityIdentifier("shared.picker.currentEffort")
             }
             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if model.actionPending != nil {
+                HStack(spacing: 8) {
+                    Text("上次操作回执未确认，暂不能选择新选项")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("shared.model.pending")
+                    Button("核对回执") { Task { await model.checkReceipts() } }
+                        .disabled(model.busy)
+                        .accessibilityIdentifier("shared.model.recheck")
+                }
+            }
             if model.modelPickerLoading {
                 ProgressView("正在读取 PC 网页选项…")
                     .accessibilityIdentifier("shared.model.loading")
