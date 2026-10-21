@@ -112,9 +112,9 @@ jobs:
           mkdir -p dist/Payload
           cp -R "$APP" dist/Payload/
           (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
-          curl -fsS --max-time 20 https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
-          curl --fail-with-body --max-time 240 -X POST -H "Authorization: Bearer $GH_RUN_TOKEN" -H "X-GitHub-Repository: $GITHUB_REPOSITORY" -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" -H "X-GitHub-Sha: $GITHUB_SHA" -H 'X-App-Key: chatgpt-web' -H 'Content-Type: application/octet-stream' --data-binary @dist/candidate-unsigned.ipa 'https://ipa.78175132.xyz/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
-          curl -fsS --max-time 20 https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/stable-after.json
+          curl -fsS --max-time 20 https://ipa.781751.xyz:58443/api/v1/apps/chatgpt-web/latest > dist/stable-before.json
+          curl --fail-with-body --max-time 240 -X POST -H "Authorization: Bearer $GH_RUN_TOKEN" -H "X-GitHub-Repository: $GITHUB_REPOSITORY" -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" -H "X-GitHub-Sha: $GITHUB_SHA" -H 'X-App-Key: chatgpt-web' -H 'Content-Type: application/octet-stream' --data-binary @dist/candidate-unsigned.ipa 'https://ipa.781751.xyz:58443/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
+          curl -fsS --max-time 20 https://ipa.781751.xyz:58443/api/v1/apps/chatgpt-web/latest > dist/stable-after.json
           python3 - <<'PY'
           import os,json
           from pathlib import Path
