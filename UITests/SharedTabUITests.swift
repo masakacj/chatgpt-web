@@ -539,6 +539,21 @@ final class SharedTabUITests: XCTestCase {
         app.buttons["完成"].tap()
         XCTAssertTrue(app.staticTexts["shared.status"].label.contains("选择结果待确认"))
     }
+    func testCrossConversationReceiptDoesNotUnlockEffortChoices() throws {
+        let app = launch("--shared-fixture-model-cross-scope-receipt")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.press(forDuration: 0.65)
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        option.tap()
+        let recheck = app.buttons["shared.model.recheck"]
+        XCTAssertTrue(recheck.waitForExistence(timeout: 8))
+        recheck.tap()
+        XCTAssertFalse(option.isEnabled, "A different conversation's receipt must not release the pending lock")
+        XCTAssertTrue(app.staticTexts["shared.model.pending"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
+    }
     func testPCOnlineModelSwitchAutomaticallyUpdatesPhoneWithoutUserAction() throws {
         let app = launch("--shared-fixture-pc-model-switch")
         let modelLabel = app.buttons["shared.modelPicker"]
