@@ -226,6 +226,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             let action = input["action"] as? String ?? ""
             if action == "catalog" || action == "project" { return (200, library()) }
             if action == "model_catalog" {
+                let quickEffort = (input["menuLevel"] as? String) == "effort"
                 if args.contains("--shared-fixture-model-effort-unknown") {
                     return (200, ["available": true, "current": "GPT-6", "thinking": ["observed": false, "confidence": "unconfirmed"], "options": [["id": "fixture-model-option-unknown", "label": "Thinking (未指定强度)", "selected": true, "submenu": false]]])
                 }
@@ -233,12 +234,26 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                     return (200, ["available": true, "current": "GPT-4o", "options": [["id": "fixture-model-gpt4o", "label": "GPT-4o", "selected": true, "submenu": false]]])
                 }
                 if args.contains("--shared-fixture-nested-effort-submenu") {
+                    if quickEffort {
+                        return (200, ["available": true, "current": "GPT-6", "options": [
+                            ["id": "fixture-effort-medium", "label": "Medium", "kind": "effort", "selected": false, "submenu": false],
+                            ["id": "fixture-effort-high", "label": "High", "kind": "effort", "selected": true, "submenu": false]
+                        ]])
+                    }
                     return (200, ["available": true, "current": "GPT-6", "options": [
                         ["id": "fixture-option-gpt4o", "label": "GPT-4o", "kind": "model", "selected": false, "submenu": false],
                         ["id": "fixture-option-gpt6-thinking", "label": "GPT-6 (Thinking)", "kind": "submenu", "selected": true, "submenu": true]
                     ]])
                 }
                 if args.contains("--shared-fixture-effort-slider") {
+                    if quickEffort {
+                        return (200, ["available": true, "current": "GPT-6", "options": [
+                            ["id": "fixture-effort-level-1", "label": "Low (Level 1)", "kind": "slider", "value": 1, "selected": false],
+                            ["id": "fixture-effort-level-2", "label": "Medium (Level 2)", "kind": "slider", "value": 2, "selected": false],
+                            ["id": "fixture-effort-level-3", "label": "High (Level 3)", "kind": "slider", "value": 3, "selected": true],
+                            ["id": "fixture-effort-level-4", "label": "Extra High (Level 4)", "kind": "slider", "value": 4, "selected": false]
+                        ]])
+                    }
                     return (200, ["available": true, "current": "GPT-6", "options": [
                         ["id": "fixture-slider-effort", "label": "Thinking Effort", "kind": "slider", "value": 3, "min": 1, "max": 5, "step": 1, "valueText": "High (Level 3)", "description": "More reasoning steps for complex problems"]
                     ]])
@@ -246,6 +261,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                 if args.contains("--shared-fixture-option-disabled") {
                     return (200, ["available": true, "current": "GPT-6", "options": [
                         ["id": "fixture-option-disabled-pro", "label": "Extra High (需要 Pro 订阅)", "disabled": true, "description": "当前账号不可用"]
+                    ]])
+                }
+                if quickEffort {
+                    return (200, ["available": true, "current": modelName, "options": [
+                        ["id": "fixture-model-option-0001", "label": "Thinking · High", "kind": "effort", "selected": false, "submenu": false]
                     ]])
                 }
                 return (200, ["available": true, "current": modelName, "options": [

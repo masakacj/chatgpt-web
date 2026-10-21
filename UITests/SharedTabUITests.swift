@@ -314,7 +314,7 @@ final class SharedTabUITests: XCTestCase {
                       app.staticTexts["shared.title"].exists)
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let high = app.buttons["shared.model.fixture-model-option-0001"]
         XCTAssertTrue(high.waitForExistence(timeout: 8))
         high.tap()
@@ -381,6 +381,32 @@ final class SharedTabUITests: XCTestCase {
         wait("label CONTAINS '交互：1'", on: app.staticTexts["shared.fixture.counters"])
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
+    func testQuickPickerTapEffortLongPressModelWithoutSend() throws {
+        let app = launch()
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.tap()
+        XCTAssertTrue(app.buttons["shared.model.fixture-model-option-0001"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["shared.model.fixture-model-option-gpt4o"].exists,
+                       "Tap must open effort only")
+        app.buttons["完成"].tap()
+        picker.press(forDuration: 0.65)
+        XCTAssertTrue(app.buttons["shared.model.fixture-model-option-gpt4o"].waitForExistence(timeout: 8),
+                      "Long press must open the PC model list")
+        app.buttons["完成"].tap()
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testQuickTapOpensNestedPCEffortDirectly() throws {
+        let app = launch("--shared-fixture-nested-effort-submenu")
+        let picker = app.buttons["shared.modelPicker"]
+        picker.tap()
+        let medium = app.buttons["shared.model.fixture-effort-medium"]
+        XCTAssertTrue(medium.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["shared.model.fixture-option-gpt6-thinking"].exists)
+        medium.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
     func testCompactEffortPickerBesideSend() throws {
         let app = launch()
         let picker = app.buttons["shared.modelPicker"]
@@ -431,12 +457,11 @@ final class SharedTabUITests: XCTestCase {
         let app = launch()
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let gpt4o = app.buttons["shared.model.fixture-model-option-gpt4o"]
         XCTAssertTrue(gpt4o.waitForExistence(timeout: 8))
         gpt4o.tap()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
-        app.buttons["完成"].tap()
         wait("label CONTAINS 'GPT-4o'", on: picker, timeout: 8)
         XCTAssertTrue(picker.label.contains("无独立强度/不适用"))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
@@ -445,7 +470,7 @@ final class SharedTabUITests: XCTestCase {
         let app = launch("--shared-fixture-nested-effort-submenu")
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let thinkingSubmenu = app.buttons["shared.model.fixture-option-gpt6-thinking"]
         XCTAssertTrue(thinkingSubmenu.waitForExistence(timeout: 8))
         thinkingSubmenu.tap()
@@ -453,7 +478,6 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(mediumOption.waitForExistence(timeout: 8))
         mediumOption.tap()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
-        app.buttons["完成"].tap()
         wait("label CONTAINS 'Medium'", on: picker, timeout: 8)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
@@ -462,23 +486,20 @@ final class SharedTabUITests: XCTestCase {
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
         picker.tap()
-        XCTAssertFalse(app.sliders["shared.slider.fixture-slider-effort"].exists,
-                       "Native effort uses a list of discrete options, never a drag slider")
-        XCTAssertTrue(app.staticTexts["More reasoning steps for complex problems"].exists)
-        let current = app.staticTexts["shared.slider.value.fixture-slider-effort"]
-        XCTAssertTrue(current.exists)
-        XCTAssertEqual(current.label, "High (Level 3)")
-        let low = app.buttons["shared.effort.low"]
-        let high = app.buttons["shared.effort.high"]
-        let extra = app.buttons["shared.effort.extra"]
-        let pro = app.buttons["shared.effort.pro"]
-        XCTAssertTrue(low.isEnabled)
+        XCTAssertTrue(app.staticTexts["shared.picker.currentEffort"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.sliders["shared.slider.fixture-slider-effort"].exists)
+        // Only the four directly observed PC choices are shown; no guessed Pro.
+        let low = app.buttons["shared.model.fixture-effort-level-1"]
+        let medium = app.buttons["shared.model.fixture-effort-level-2"]
+        let high = app.buttons["shared.model.fixture-effort-level-3"]
+        let extra = app.buttons["shared.model.fixture-effort-level-4"]
+        XCTAssertTrue(low.waitForExistence(timeout: 8))
+        XCTAssertTrue(medium.isEnabled)
         XCTAssertTrue(high.isEnabled)
         XCTAssertTrue(extra.isEnabled)
-        XCTAssertFalse(pro.isEnabled, "A fifth number is not verified Pro entitlement")
+        XCTAssertFalse(app.buttons["shared.effort.pro"].exists)
         high.tap()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
-        app.buttons["完成"].tap()
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }
@@ -486,7 +507,7 @@ final class SharedTabUITests: XCTestCase {
         let app = launch("--shared-fixture-option-clicked-unobserved")
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let option = app.buttons["shared.model.fixture-model-option-0001"]
         XCTAssertTrue(option.waitForExistence(timeout: 8))
         option.tap()
@@ -501,7 +522,7 @@ final class SharedTabUITests: XCTestCase {
         let app = launch("--shared-fixture-model-select-timeout")
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let option = app.buttons["shared.model.fixture-model-option-0001"]
         XCTAssertTrue(option.waitForExistence(timeout: 8))
         option.tap()
@@ -535,12 +556,11 @@ final class SharedTabUITests: XCTestCase {
         input.typeText("local draft stays untouched across model change")
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let high = app.buttons["shared.model.fixture-model-option-0001"]
         XCTAssertTrue(high.waitForExistence(timeout: 8))
         high.tap()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.waitForExistence(timeout: 8))
-        app.buttons["完成"].tap()
         XCTAssertTrue(String(describing: composer(app).value).contains("local draft stays untouched across model change"))
         XCTAssertTrue(app.buttons["shared.send"].isEnabled)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
@@ -549,11 +569,11 @@ final class SharedTabUITests: XCTestCase {
         let app = launch("--shared-fixture-option-disabled")
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.tap()
+        picker.press(forDuration: 0.65)
         let disabledOption = app.buttons["shared.model.fixture-option-disabled-pro"]
         XCTAssertTrue(disabledOption.waitForExistence(timeout: 8))
         XCTAssertFalse(disabledOption.isEnabled)
-        XCTAssertTrue(app.staticTexts["当前账号不可用"].exists)
+        XCTAssertTrue(disabledOption.label.contains("当前账号不可用"))
         app.buttons["完成"].tap()
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
     }

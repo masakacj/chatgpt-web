@@ -1000,12 +1000,16 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         }
         return list
     }
-    func loadModelOptions() async {
+    func loadModelOptions(menuLevel: String = "model") async {
+        guard menuLevel == "model" || menuLevel == "effort" else { return }
+        modelOptions = []
+        controlNotice = nil
         guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
         modelPickerLoading = true; defer { modelPickerLoading = false }
         do {
             let value: STModelCatalog = try await request("/v1/sessions/\(id)/actions", using: c,
-                body: ["action": "model_catalog", "commandId": UUID().uuidString, "documentId": snap.documentId])
+                body: ["action": "model_catalog", "menuLevel": menuLevel,
+                       "commandId": UUID().uuidString, "documentId": snap.documentId])
             modelOptions = value.available ? value.options : []
             let selectedStep = modelOptions.first { $0.kind == "slider" && $0.selected == true && $0.disabled != true }
             if let th = value.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
@@ -1048,7 +1052,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 "documentId": snap.documentId,
                 "optionId": option.id
             ]
-            if let value { body["value"] = value }
+            if let targetValue = value ?? option.value { body["value"] = targetValue }
             let result: STModelChoice = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
             guard result.status == "option_clicked" else {
                 actionPending = nil; save()

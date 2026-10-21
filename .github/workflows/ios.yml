@@ -98,15 +98,15 @@ jobs:
           fi
       - name: Current iPhone Release compilation (never signs or promotes)
         run: |
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.12 CURRENT_PROJECT_VERSION=14 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.13 CURRENT_PROJECT_VERSION=15 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Package unsigned IPA (independent of signing)
         if: github.ref == 'refs/heads/feature/mirror-r55-0712-20261020'
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/CurrentReleaseDevice/Build/Products/Release-iphoneos/ChatGPTWeb.app"
           test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "0.7.12"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = "14"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "0.7.13"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = "15"
           mkdir -p dist/Payload
           cp -R "$APP" dist/Payload/
           (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
@@ -150,7 +150,7 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum --check candidate-unsigned.sha256
-      - name: Sign R55 0.7.12 candidate only after successful Simulator and device Release
+      - name: Sign R80 0.7.13 candidate only after successful Simulator and device Release
         env:
           GH_RUN_TOKEN: ${{ github.token }}
         run: python3 scripts/sign-candidate-r78.py

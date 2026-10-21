@@ -3,100 +3,11 @@ import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
 
+private enum STQuickPickerKind { case effort, model }
+
 private struct STSelectedInteraction: Identifiable {
     let card: PCInteractionCard; let button: PCInteractionButton; let document: String
     var id: String { button.id }
-}
-
-// Keep a real, accessible native slider backed by the PC's observed range.
-// Dragging only changes a phone-local draft. Only the explicit button asks
-// the PC to select a value; the model verifies the native result separately.
-// The PC is the source of truth for every selectable effort tier. An
-// unavailable tier (especially P/Pro) is visible but not actionable.
-// When the PC only reports a numeric slider, use its finite discrete values
-// for Low/Medium/High/Extra and offer P only with positive Pro evidence.
-private struct STEffortChoices: View {
-    let options: [STModelOption]
-    let busy: Bool
-    let choose: (STModelOption, Double?) -> Void
-
-    private let tiers: [(code: String, title: String, names: [String])] = [
-        ("low", "低", ["instant", "low", "低", "即时"]),
-        ("medium", "中", ["medium", "中"]),
-        ("high", "高", ["high", "高"]),
-        ("extra", "超", ["extra high", "extra-high", "extra_high", "超", "极高"]),
-        ("pro", "P", ["pro", "professional", "专业"])
-    ]
-
-    private func nativeEffort(_ names: [String]) -> STModelOption? {
-        options.first { option in
-            // Some native menus expose a direct "Thinking · High" model
-            // choice rather than a separate effort kind. That is still a
-            // real PC-listed tier, not an inferred account entitlement.
-            let candidate = (option.id + " " + option.label).lowercased()
-            guard option.kind == "effort" ||
-                  (option.kind == nil && ["thinking", "强度", "effort"].contains(where: candidate.contains))
-                  else { return false }
-            return names.contains { name in
-                let value = name.lowercased()
-                // Check longer names first; "High" must not match "Extra High".
-                if value == "high" || value == "高" {
-                    return (candidate.contains("high") || candidate.contains("高")) &&
-                        !candidate.contains("extra") && !candidate.contains("超") &&
-                        !candidate.contains("极高")
-                }
-                return candidate.contains(value)
-            }
-        }
-    }
-
-    private func sliderChoice(_ index: Int) -> (STModelOption, Double)? {
-        guard let option = options.first(where: { $0.kind == "slider" && $0.disabled != true }),
-              let lower = option.min, let upper = option.max, let step = option.step,
-              lower.isFinite, upper.isFinite, step.isFinite, step > 0,
-              let current = option.value, current.isFinite, lower <= current,
-              current <= upper, upper > lower else { return nil }
-        let value = lower + Double(index) * step
-        guard value <= upper + 0.000_001 else { return nil }
-        if index == 4 {
-            // A fifth numeric position is NOT proof of Pro entitlement.
-            let proof = [option.label, option.valueText ?? "", option.description ?? ""]
-                .joined(separator: " ").lowercased()
-            // "problems" in the slider description is not Pro entitlement.
-            guard (proof.contains("pro") &&
-                   proof.range(of: #"\bpro\b|\bprofessional\b"#,
-                               options: .regularExpression) != nil) ||
-                  proof.contains("专业") else { return nil }
-        }
-        return (option, min(value, upper))
-    }
-
-    var body: some View {
-        ForEach(Array(tiers.enumerated()), id: \.offset) { index, tier in
-            let native = nativeEffort(tier.names)
-            let slider = native == nil ? sliderChoice(index) : nil
-            Button {
-                if let native { choose(native, nil) }
-                else if let slider { choose(slider.0, slider.1) }
-            } label: {
-                HStack {
-                    Text(tier.title).font(.body.weight(.medium))
-                        .frame(width: 22, alignment: .leading)
-                    Text(tier.code == "pro" ? "Pro（以 PC 可用权限为准）" :
-                         tier.code == "extra" ? "Extra High" :
-                         tier.code == "low" ? "Low / Instant" :
-                         tier.code == "medium" ? "Medium" : "High")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    if native?.selected == true { Image(systemName: "checkmark") }
-                }
-            }
-            .disabled(busy || (native?.disabled == true) || (native == nil && slider == nil))
-            // A PC model option may also represent an effort choice. Keep
-            // model and effort accessibility IDs distinct for XCTest/taps.
-            .accessibilityIdentifier("shared.effort.\(tier.code)")
-        }
-    }
 }
 
 private enum STCompactEffort {
@@ -124,7 +35,8 @@ struct SharedTabScreen: View {
     @State private var followLatest = true
     @State private var interaction: STSelectedInteraction?
     @State private var showFilePicker = false
-    @State private var showModelPicker = false
+    @State private var showQuickPicker = false
+    @State private var quickPickerKind: STQuickPickerKind = .effort
     @State private var photo: PhotosPickerItem?
     @FocusState private var editing: Bool
     let returnToWeb: () -> Void
@@ -132,6 +44,85 @@ struct SharedTabScreen: View {
     private func dismissKeyboard() {
         editing = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+    private func openQuickPicker(_ kind: STQuickPickerKind) {
+        guard model.canPickModel else { return }
+        dismissKeyboard()
+        quickPickerKind = kind
+        showQuickPicker = true
+        Task { await model.loadModelOptions(menuLevel: kind == .effort ? "effort" : "model") }
+    }
+    private var quickPickerContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(quickPickerKind == .effort ? "思考强度" : "选择模型")
+                    .font(.headline)
+                Spacer()
+                Button("完成") { showQuickPicker = false }
+                    .font(.subheadline)
+                    .accessibilityIdentifier("shared.model.close")
+            }
+            HStack(spacing: 8) {
+                Text(model.displayedModelName)
+                    .accessibilityIdentifier("shared.picker.currentModel")
+                Spacer(minLength: 2)
+                Text(model.displayedEffortName)
+                    .accessibilityIdentifier("shared.picker.currentEffort")
+            }
+            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if model.modelPickerLoading {
+                ProgressView("正在读取 PC 网页选项…")
+                    .accessibilityIdentifier("shared.model.loading")
+            } else if model.modelOptions.isEmpty {
+                Text(model.controlNotice ?? "PC 当前未提供此类选项")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(model.modelOptions) { option in
+                        Button {
+                            Task {
+                                await model.chooseModel(option)
+                                if model.controlNotice?.hasPrefix("已在 PC 网页选择：") == true {
+                                    showQuickPicker = false
+                                } else if model.controlNotice == "请选择 PC 网页实际提供的细分档位" {
+                                    quickPickerKind = .effort
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(option.label).lineLimit(2)
+                                    if let desc = option.description, !desc.isEmpty {
+                                        Text(desc).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer(minLength: 6)
+                                if option.selected == true { Image(systemName: "checkmark") }
+                                if option.submenu == true { Image(systemName: "chevron.right") }
+                            }
+                            .foregroundStyle(option.disabled == true ? .secondary : .primary)
+                            .padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(option.disabled == true || model.modelPickerLoading ||
+                                  model.actionPending != nil)
+                        .accessibilityIdentifier("shared.model.\(option.id)")
+                        Divider()
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+            if let notice = model.controlNotice, !notice.isEmpty {
+                Text(notice).font(.caption2).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("shared.picker.notice")
+            }
+        }
+        .padding(14)
+        .frame(width: 290)
+        .presentationCompactAdaptation(.popover)
+        .accessibilityIdentifier("shared.quickPicker")
     }
     private func openSidebar() {
         dismissKeyboard(); query = ""
@@ -175,130 +166,6 @@ struct SharedTabScreen: View {
             .simultaneousGesture(sidebarSwipe)
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $model.needsSettings) { settings }
-            .sheet(isPresented: $showModelPicker) {
-                NavigationStack {
-                    List {
-                        Section("当前 PC 绑定") {
-                            HStack {
-                                Text("当前模型")
-                                Spacer()
-                                Text(model.displayedModelName).foregroundStyle(.secondary)
-                                    .accessibilityIdentifier("shared.picker.currentModel")
-                            }
-                            HStack {
-                                Text("思考强度")
-                                Spacer()
-                                Text(model.displayedEffortName)
-                                    .foregroundStyle(model.isEffortUnconfirmed ? .orange : .secondary)
-                                    .accessibilityIdentifier("shared.picker.currentEffort")
-                            }
-                        }
-                        if let notice = model.controlNotice {
-                            Section {
-                                Text(notice).font(.caption).foregroundStyle(.secondary)
-                                    .accessibilityIdentifier("shared.picker.notice")
-                            }
-                        }
-                        if model.modelPickerLoading {
-                            ProgressView("读取 PC 模型与思考选项…")
-                        }
-                        if model.actionPending?.kind == "model_select" {
-                            HStack(spacing: 8) {
-                                ProgressView().controlSize(.small)
-                                Text("正在同步至 PC 网页…")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        let models = model.modelOptions.filter {
-                            $0.kind != "effort" && $0.kind != "slider"
-                        }
-                        if !models.isEmpty {
-                            Section("模型") {
-                                ForEach(models) { option in
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Button {
-                                            Task { await model.chooseModel(option) }
-                                        } label: {
-                                            HStack {
-                                                Text(option.label)
-                                                Spacer()
-                                                if option.selected == true { Image(systemName: "checkmark") }
-                                                if option.submenu == true || option.kind == "submenu" {
-                                                    Image(systemName: "chevron.right")
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                            }
-                                        }
-                                        .disabled(model.modelPickerLoading || option.disabled == true)
-                                        .accessibilityIdentifier("shared.model.\(option.id)")
-                                        if let desc = option.description, !desc.isEmpty {
-                                            Text(desc).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Section("思考强度") {
-                            let effortOptions = model.modelOptions.filter { $0.kind == "effort" }
-                            if !effortOptions.isEmpty {
-                                ForEach(effortOptions) { option in
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Button {
-                                            Task { await model.chooseModel(option) }
-                                        } label: {
-                                            HStack {
-                                                Text(option.label)
-                                                Spacer()
-                                                if option.selected == true { Image(systemName: "checkmark") }
-                                                if option.submenu == true || option.kind == "submenu" {
-                                                    Image(systemName: "chevron.right")
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                            }
-                                        }
-                                        .disabled(model.modelPickerLoading || option.disabled == true)
-                                        .accessibilityIdentifier("shared.model.\(option.id)")
-                                        if let desc = option.description, !desc.isEmpty {
-                                            Text(desc).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                            } else {
-                                if let slider = model.modelOptions.first(where: { $0.kind == "slider" }) {
-                                    if let description = slider.description, !description.isEmpty {
-                                        Text(description).font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    if let current = slider.valueText, !current.isEmpty {
-                                        Text(current).font(.caption2).foregroundStyle(.secondary)
-                                            .accessibilityIdentifier("shared.slider.value.\(slider.id)")
-                                    }
-                                }
-                                STEffortChoices(options: model.modelOptions,
-                                                busy: model.modelPickerLoading) { option, value in
-                                    Task { await model.chooseModel(option, value: value) }
-                                }
-                            }
-                            if model.modelOptions.contains(where: { $0.kind == "effort" }) {
-                                Button("返回模型列表") {
-                                    Task { await model.loadModelOptions() }
-                                }.accessibilityIdentifier("shared.model.back")
-                            }
-                        }
-                        if model.modelOptions.isEmpty && !model.modelPickerLoading {
-                            Text(model.controlNotice ?? "PC 暂未提供可切换选项")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .navigationTitle("模型与思考强度")
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("完成") { showModelPicker = false }
-                        }
-                    }
-                }
-                .presentationDetents([.large])
-                .task { await model.loadModelOptions() }
-            }
             .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item]) { result in
                 if case let .success(url) = result {
                     let access = url.startAccessingSecurityScopedResource()
@@ -534,19 +401,30 @@ struct SharedTabScreen: View {
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
                     .accessibilityIdentifier("shared.composer")
                 if model.canPickModel {
-                    Button {
-                        dismissKeyboard()
-                        showModelPicker = true
-                    } label: {
-                        Text(STCompactEffort.code(model.displayedEffortName))
-                            .font(.system(size: 14, weight: .semibold))
-                            .frame(width: 36, height: 36)
-                            .foregroundStyle(.primary)
-                            .background(Color(uiColor: .tertiarySystemFill), in: Circle())
-                    }
-                    .accessibilityLabel("模型与思考强度：\(model.displayedModelName)，\(model.displayedEffortName)")
-                    .accessibilityIdentifier("shared.modelPicker")
-                    .padding(.bottom, 5)
+                    Text(STCompactEffort.code(model.displayedEffortName))
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .foregroundStyle(.primary)
+                        .background(Color(uiColor: .tertiarySystemFill), in: Circle())
+                        .contentShape(Circle())
+                        // Exclusive gesture: a long press must never first open effort.
+                        .gesture(LongPressGesture(minimumDuration: 0.45)
+                            .exclusively(before: TapGesture())
+                            .onEnded { value in
+                                switch value {
+                                case .first: openQuickPicker(.model)
+                                case .second: openQuickPicker(.effort)
+                                }
+                            })
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { openQuickPicker(.effort) }
+                        .accessibilityLabel("轻点选择思考强度，长按选择模型。当前：\(model.displayedModelName)，\(model.displayedEffortName)")
+                        .accessibilityIdentifier("shared.modelPicker")
+                        .popover(isPresented: $showQuickPicker,
+                                 attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                            quickPickerContent
+                        }
+                        .padding(.bottom, 5)
                 }
                 if model.showsNativeStop {
                     // Positive PC-native Stop evidence owns the main button.
