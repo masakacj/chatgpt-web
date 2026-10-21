@@ -386,7 +386,8 @@ final class SharedTabUITests: XCTestCase {
         let picker = app.buttons["shared.modelPicker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
         picker.tap()
-        XCTAssertTrue(app.buttons["shared.model.fixture-model-option-0001"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["shared.model.fixture-effort-option-high"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["shared.model.fixture-model-option-0001"].exists)
         XCTAssertFalse(app.buttons["shared.model.fixture-model-option-gpt4o"].exists,
                        "Tap must open effort only")
         app.buttons["完成"].tap()

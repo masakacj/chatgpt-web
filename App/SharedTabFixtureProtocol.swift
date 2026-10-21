@@ -265,7 +265,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                 }
                 if quickEffort {
                     return (200, ["available": true, "current": modelName, "options": [
-                        ["id": "fixture-model-option-0001", "label": "Thinking · High", "kind": "effort", "selected": false, "submenu": false]
+                        ["id": "fixture-effort-option-high", "label": "Thinking · High", "kind": "effort", "selected": false, "submenu": false]
                     ]])
                 }
                 return (200, ["available": true, "current": modelName, "options": [

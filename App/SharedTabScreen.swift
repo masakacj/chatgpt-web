@@ -87,6 +87,9 @@ struct SharedTabScreen: View {
                                     showQuickPicker = false
                                 } else if model.controlNotice == "请选择 PC 网页实际提供的细分档位" {
                                     quickPickerKind = .effort
+                                    if model.modelOptions.isEmpty {
+                                        await model.loadModelOptions(menuLevel: "effort")
+                                    }
                                 }
                             }
                         } label: {
@@ -122,7 +125,6 @@ struct SharedTabScreen: View {
         .padding(14)
         .frame(width: 290)
         .presentationCompactAdaptation(.popover)
-        .accessibilityIdentifier("shared.quickPicker")
     }
     private func openSidebar() {
         dismissKeyboard(); query = ""
@@ -418,6 +420,7 @@ struct SharedTabScreen: View {
                             })
                         .accessibilityAddTraits(.isButton)
                         .accessibilityAction { openQuickPicker(.effort) }
+                        .accessibilityAction(named: Text("选择模型")) { openQuickPicker(.model) }
                         .accessibilityLabel("轻点选择思考强度，长按选择模型。当前：\(model.displayedModelName)，\(model.displayedEffortName)")
                         .accessibilityIdentifier("shared.modelPicker")
                         .popover(isPresented: $showQuickPicker,
