@@ -21,6 +21,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var actions = 0
     private static var reads = 0
     private static var healthReads = 0
+    private static var reportOldSessionClosed = false
     private static var newChats = 0
     private static var interactionClicks = 0
     private static var modelSelects = 0
@@ -38,7 +39,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]; reportOldSessionClosed = false
+    }
+    static func simulateOldSessionClosed() {
+        lock.lock(); defer { lock.unlock() }
+        reportOldSessionClosed = true
     }
     static func simulatePCModelSwitch() {
         lock.lock(); defer { lock.unlock() }
@@ -220,8 +225,17 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static func response(_ req: URLRequest) -> (Int, [String: Any]) {
         let path = req.url?.path ?? "", input = body(req), args = ProcessInfo.processInfo.arguments
         if path == "/v1/health" { return (200, ["capabilities": ["shared-tab-v1", "compose-on-send", "model-selection", "mobile-upload", "recent-activity", "native-stop-generation"]]) }
-        if path == "/v1/tabs" { return (200, ["tabs": [["tabId": 7, "title": "测试共用标签页", "conversationId": current, "active": true]]]) }
-        if path == "/v1/sessions" { return (200, envelope()) }
+        if path == "/v1/tabs" {
+            let first: [String: Any] = ["tabId": 7, "title": "测试共用标签页", "conversationId": current, "active": true]
+            if args.contains("--shared-fixture-multiple-tabs") || args.contains("--shared-fixture-stale-tab-match") {
+                return (200, ["tabs": [first, ["tabId": 9, "title": "另一测试标签页", "conversationId": b, "active": false]]])
+            }
+            return (200, ["tabs": [first]])
+        }
+        if path == "/v1/sessions" {
+            if input["tabId"] as? Int != 7 { return (400, ["error": "invalid_tab"]) }
+            return (200, envelope())
+        }
         if path.hasSuffix("/actions") {
             let action = input["action"] as? String ?? ""
             if action == "catalog" || action == "project" { return (200, library()) }
@@ -396,6 +410,12 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if path.contains("/sessions/") {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }
             reads += 1
+            if args.contains("--shared-fixture-old-session-closed") && reportOldSessionClosed {
+                reportOldSessionClosed = false
+                return (200, ["ok": true, "sessionId": "shared-fixture-session-001",
+                              "tabId": 7, "followTab": true, "revision": revision + 1,
+                              "routeChanged": false, "tabClosed": true])
+            }
             if args.contains("--shared-fixture-pc-done-loading") &&
                req.url?.query?.contains("refresh=1") == true &&
                stalePCLoading {

@@ -490,6 +490,16 @@ struct SharedTabScreen: View {
             Text(model.status).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1).accessibilityIdentifier("shared.status")
             #if DEBUG
             if model.fixture {
+                if ProcessInfo.processInfo.arguments.contains("--shared-fixture-old-session-closed") {
+                    Button("模拟旧会话关闭") {
+                        SharedTabFixtureProtocol.simulateOldSessionClosed()
+                        Task {
+                            model.pause()
+                            await model.resume()
+                            if model.online { model.controlNotice = "已恢复同一 PC 标签页" }
+                        }
+                    }.accessibilityIdentifier("shared.fixture.oldSessionClosed")
+                }
                 if ProcessInfo.processInfo.arguments.contains("--shared-fixture-pc-model-switch") {
                     // DEBUG only: the simulated PC changes its own model.
                     // The phone must observe the next snapshot without issuing

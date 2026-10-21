@@ -28,6 +28,48 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(target.waitForExistence(timeout: 8)); target.tap()
         XCTAssertTrue(app.staticTexts["原生历史答案 B"].waitForExistence(timeout: 8))
     }
+    func testSavedTabMissingAutoBindsUniquePCPageOnLaunch() throws {
+        let app = launch("--shared-fixture-missing-tab")
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertFalse(app.buttons["shared.connect"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testStaleChromeTabIdAutoRecoversUniquePage() throws {
+        let app = launch("--shared-fixture-stale-tab")
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertFalse(app.buttons["shared.connect"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testStaleChromeTabIdMatchesSavedConversationAmongTwoTabs() throws {
+        let app = launch("--shared-fixture-stale-tab-match")
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].exists)
+        XCTAssertFalse(app.buttons["shared.connect"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testMissingSavedTabWithTwoPCPagesRequiresExplicitSelection() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-testing", "--shared-tab-fixture", "--shared-fixture-multiple-tabs"]
+        app.launch()
+        let first = app.buttons["shared.bind.7"]
+        let second = app.buttons["shared.bind.9"]
+        XCTAssertTrue(first.waitForExistence(timeout: 15))
+        XCTAssertTrue(second.exists)
+        XCTAssertFalse(app.staticTexts["原生测试答案 A"].exists)
+        first.tap()
+        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 12))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
+    func testOldSessionClosedButSamePCTabStillExistsRecoversAutomatically() throws {
+        let app = launch("--shared-fixture-old-session-closed")
+        let trigger = app.buttons["shared.fixture.oldSessionClosed"]
+        XCTAssertTrue(trigger.waitForExistence(timeout: 8))
+        trigger.tap()
+        let notice = app.staticTexts["shared.controlNotice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 12))
+        XCTAssertEqual(notice.label, "已恢复同一 PC 标签页")
+        XCTAssertFalse(app.buttons["shared.connect"].exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+    }
     func testNativeBlankTapDismissesKeyboardAndSendWorksOnce() throws {
         let app = launch(); let input = composer(app)
         input.tap(); input.typeText("mobile send once")

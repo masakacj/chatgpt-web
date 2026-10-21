@@ -12,7 +12,7 @@ SHA="432d73c562417538997c88f5b859391186c5561e"
 RUN="39542066613"
 STABLE={"app_key":"chatgpt-web","version":"0.7.11","build":"13"}
 SIGNED={"status":"SIGNED","ok":True,"id":"a1111111-b222-c333-d444-e55555555555","channel":"candidate",
-        "promoted":False,"source_sha":SHA,"run_id":RUN,"version":"0.7.13","build":"15",
+        "promoted":False,"source_sha":SHA,"run_id":RUN,"version":"0.7.14","build":"16",
         "bundle_id":"com.masakacj.chatgptweb","ipa_url":MODULE.BASE+"/ipa/a1111111-b222-c333-d444-e55555555555.ipa",
         "manifest_url":MODULE.BASE+"/manifest/a1111111-b222-c333-d444-e55555555555.plist"}
 class SigningRetries(unittest.TestCase):

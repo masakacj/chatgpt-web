@@ -113,6 +113,24 @@ struct STLibrary: Decodable {
 }
 private struct STHealth: Decodable { let capabilities: [String]? }
 private struct STTabs: Decodable { let tabs: [STTab] }
+
+// Read-only recovery: prefer the old tab, otherwise match exactly one
+// previously viewed conversation. A brand-new binding with no remembered
+// conversation is safe only when the PC offers a single ChatGPT tab.
+enum STTabRecovery {
+    static func select(_ tabs: [STTab], previousTabId: Int?, conversationId: String?) -> STTab? {
+        let valid = tabs.filter { $0.tabId >= 0 }
+        if let previousTabId { // The original tab follows PC conversation navigation.
+            let same = valid.filter { $0.tabId == previousTabId }
+            if same.count == 1 { return same[0] }
+        }
+        if let conversationId, !conversationId.isEmpty {
+            let matching = valid.filter { $0.conversationId == conversationId }
+            return matching.count == 1 ? matching[0] : nil
+        }
+        return valid.count == 1 ? valid[0] : nil
+    }
+}
 private struct STOK: Decodable { let ok: Bool? }
 private struct STFailure: Decodable { let error: String }
 private struct STResult: Decodable {
@@ -388,7 +406,19 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             #if DEBUG
             SharedTabFixtureProtocol.reset()
             #endif
-            endpoint = "https://shared-tab.invalid"; pairingKey = String(repeating: "T", count: 43); selectedTabId = 7
+            endpoint = "https://shared-tab.invalid"; pairingKey = String(repeating: "T", count: 43)
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("--shared-fixture-missing-tab") || args.contains("--shared-fixture-multiple-tabs") {
+                selectedTabId = nil
+            } else if args.contains("--shared-fixture-stale-tab") || args.contains("--shared-fixture-stale-tab-match") {
+                selectedTabId = 99
+            } else {
+                selectedTabId = 7
+            }
+            if args.contains("--shared-fixture-stale-tab-match") {
+                let old = #"{"schema":1,"documentId":"fixture-document-A","conversationId":"11111111-1111-4111-8111-111111111111","title":"测试对话 A","messages":[],"status":"completed","draftHash":""}"#
+                snapshot = try? JSONDecoder().decode(STSnapshot.self, from: Data(old.utf8))
+            }
             return
         }
         UserDefaults.standard.set(clientID, forKey: "SharedPC.clientID")
@@ -668,12 +698,47 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             }
         }
     }
+    // A lost/closed Chrome tab ID is not a pairing failure. Read the
+    // existing authenticated tab list, never navigate another PC tab.
+    private func recoverTab(using c: STConnection, previousTabId: Int?, allowExisting: Bool = false) async throws -> Bool {
+        let generation = epoch
+        let result: STTabs = try await request("/v1/tabs?shared=1", using: c)
+        try current(generation)
+        tabs = result.tabs
+        if let previousTabId, result.tabs.contains(where: { $0.tabId == previousTabId }), !allowExisting {
+            status = "原 PC 标签页仍存在，但连接未恢复；请重新选择"
+            needsSettings = true
+            return false  // Never switch to a different tab on an ambiguous error.
+        }
+        guard let target = STTabRecovery.select(result.tabs, previousTabId: previousTabId,
+                                                conversationId: snapshot?.conversationId) else {
+            status = "请确认要连接的 PC 标签页"
+            needsSettings = true
+            return false
+        }
+        selectedTabId = target.tabId
+        sessionID = nil
+        return true
+    }
+    private func subscribeRestoringTab(using c: STConnection) async throws -> Bool {
+        do {
+            try await subscribe(using: c)
+            return true
+        } catch {
+            guard let e = error as? STError,
+                  ["invalid_tab", "not_chatgpt_tab", "tab_closed"].contains(e.code) else {
+                throw error  // Never replay an ambiguous/timeout subscribe.
+            }
+            guard try await recoverTab(using: c, previousTabId: selectedTabId) else { return false }
+            try await subscribe(using: c)
+            return true
+        }
+    }
     func resume() async {
         foreground = true
         if online || resuming { return }
         if busy { scheduleReconnect(); return }
         if pairingKey.isEmpty { needsSettings = true; return }
-        guard selectedTabId != nil else { needsSettings = true; await loadTabs(); return }
         busy = true; resuming = true; defer { busy = false; resuming = false }; epoch += 1
         status = "PC 连接恢复中 · 本地内容已保留"
         error = nil
@@ -682,11 +747,29 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             let health: STHealth = try await request("/v1/health", using: c)
             capabilities = Set(health.capabilities ?? [])
             guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
+            if selectedTabId == nil {
+                guard try await recoverTab(using: c, previousTabId: nil) else { return }
+            }
             if let id = sessionID {
-                do { let result: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try apply(result, using: c); online = result.tabClosed != true }
-                catch { if (error as? STError)?.status == 410 { sessionID = nil; try await subscribe(using: c) } else { throw error } }
-            } else { try await subscribe(using: c) }
+                do {
+                    let result: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c)
+                    if result.tabClosed == true {
+                        guard try await recoverTab(using: c, previousTabId: selectedTabId,
+                                                   allowExisting: true) else { return }
+                        _ = try await subscribeRestoringTab(using: c)
+                    } else {
+                        try apply(result, using: c)
+                        online = true
+                    }
+                } catch {
+                    if (error as? STError)?.status == 410 {
+                        sessionID = nil
+                        _ = try await subscribeRestoringTab(using: c)
+                    } else { throw error }
+                }
+            } else { _ = try await subscribeRestoringTab(using: c) }
             if online {
+                needsSettings = false
                 reconnectAttempts = 0
                 reconnectTask?.cancel(); reconnectTask = nil
                 error = nil
