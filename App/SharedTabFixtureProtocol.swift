@@ -25,6 +25,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var newChats = 0
     private static var interactionClicks = 0
     private static var modelSelects = 0
+    private static var lateSettlements = 0
     private static var modelName = "GPT-6"
     private static var effortName: String? = "High"
     private static var effortObserved = true
@@ -35,11 +36,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 模型选择：\(modelSelects)"
+        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 模型选择：\(modelSelects) · 旧回执结算：\(lateSettlements)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]; reportOldSessionClosed = false
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; lateSettlements = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]; reportOldSessionClosed = false
     }
     static func simulateOldSessionClosed() {
         lock.lock(); defer { lock.unlock() }
@@ -197,8 +198,10 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             s["status"] = "running"; s["responsePhase"] = "responding"
             s["canSend"] = !args.contains("--shared-fixture-busy-blocked")
         }
-        if args.contains("--shared-fixture-interaction") && interactionClicks == 0 {
-            s["status"] = "waiting"; s["canSend"] = false; s["interactions"] = [["id": "fixture-card-001", "title": "测试确认", "summary": "只执行一次本地测试操作", "buttons": [["id": "fixture-button-0001", "label": "允许一次", "revision": "fixture-revision-001", "disabled": false, "requiresConfirmation": true]]]]
+        if (args.contains("--shared-fixture-interaction") || args.contains("--shared-fixture-result-choice-unknown")) && interactionClicks == 0 && current == a {
+            let resultChoice = args.contains("--shared-fixture-result-choice-unknown")
+            s["status"] = "waiting"; s["canSend"] = false
+            s["interactions"] = [["id": "fixture-card-001", "title": resultChoice ? "选择结果" : "测试确认", "summary": "只执行一次本地测试操作", "buttons": [["id": "fixture-button-0001", "label": resultChoice ? "选择结果" : "允许一次", "revision": "fixture-revision-001", "disabled": false, "requiresConfirmation": true]]]]
         }
         return s
     }
@@ -296,10 +299,13 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                     receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "unknown", "result": ["error": "pc_result_unknown"]]
                     return (504, ["error": "pc_result_unknown"])
                 }
-                if args.contains("--shared-fixture-model-cross-scope-receipt") {
+                if args.contains("--shared-fixture-model-cross-scope-receipt") ||
+                   args.contains("--shared-fixture-model-cross-scope-false-confirm") {
+                    let foreignConfirmed = args.contains("--shared-fixture-model-cross-scope-false-confirm")
                     receipts[cmdId] = ["ok": true, "commandId": cmdId, "state": "done", "result": [
-                        "status": "option_clicked", "selectionObserved": false,
-                        "conversationId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+                        "status": "option_clicked", "selectionObserved": foreignConfirmed,
+                        "conversationId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                        "model": ["available": true, "name": "GPT-4o"]
                     ]]
                     return (504, ["error": "pc_result_unknown"])
                 }
@@ -395,11 +401,17 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             }
             if action == "interact" {
                 interactionClicks += 1; revision += 1
+                if args.contains("--shared-fixture-result-choice-unknown") {
+                    receipts[id] = ["ok": true, "commandId": id, "state": "unknown", "result": ["error": "pc_result_unknown"]]
+                    return (504, ["error": "pc_result_unknown"])
+                }
                 let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": ["status": "interaction_clicked"]]; receipts[id] = value; return (200, value)
             }
             sends += 1
             if args.contains("--shared-fixture-unknown") ||
-               args.contains("--shared-fixture-stop-and-unknown-send") {
+               args.contains("--shared-fixture-stop-and-unknown-send") ||
+               (current == a && args.contains("--shared-fixture-late-old-send-confirm")) ||
+               (current == a && args.contains("--shared-fixture-late-old-send-fail")) {
                 receipts[id] = ["ok": true, "commandId": id, "state": "unknown", "result": ["error": "pc_result_unknown"]]
                 return (504, ["error": "pc_result_unknown"])
             }
@@ -412,7 +424,21 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             if let projectID { result["projectId"] = projectID }
             let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": result]; receipts[id] = value; return (200, value)
         }
-        if path.hasPrefix("/v1/commands/") { return receipts[String(path.split(separator: "/").last ?? "")].map { (200, $0) } ?? (404, ["error": "unknown_command"]) }
+        if path.hasPrefix("/v1/commands/") {
+            let commandId = String(path.split(separator: "/").last ?? "")
+            if current == b, let existing = receipts[commandId], existing["state"] as? String == "unknown" {
+                if args.contains("--shared-fixture-late-old-send-confirm") {
+                    lateSettlements += 1
+                    receipts[commandId] = ["ok": true, "commandId": commandId, "state": "done",
+                        "result": ["status": "sent_confirmed", "conversationId": a]]
+                } else if args.contains("--shared-fixture-late-old-send-fail") {
+                    lateSettlements += 1
+                    receipts[commandId] = ["ok": false, "commandId": commandId, "state": "failed",
+                        "result": ["status": "not_sent", "error": "send_unavailable", "conversationId": a]]
+                }
+            }
+            return receipts[commandId].map { (200, $0) } ?? (404, ["error": "unknown_command"])
+        }
         if path.hasSuffix("/history") { return (200, ["documentId": document, "conversationId": current, "messages": [message("old-user", "user", "更早的问题"), message("old-answer", "assistant", "更早的正式回复")], "cursor": "history-start", "hasMore": false]) }
         if path.contains("/sessions/") {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }

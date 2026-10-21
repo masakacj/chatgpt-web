@@ -137,6 +137,87 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Project Alpha"].exists)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：1"))
     }
+    func testR86UnknownModelActionInADoesNotBlockNewModelActionInB() throws {
+        let app = launch("--shared-fixture-model-select-timeout")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.press(forDuration: 0.65)
+        let oldOption = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(oldOption.waitForExistence(timeout: 8)); oldOption.tap()
+        XCTAssertTrue(app.staticTexts["shared.model.pending"].waitForExistence(timeout: 8))
+        app.buttons["完成"].tap()
+        searchB(app)
+        let pickerB = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(pickerB.waitForExistence(timeout: 8)); pickerB.press(forDuration: 0.65)
+        let newOption = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(newOption.waitForExistence(timeout: 8))
+        XCTAssertTrue(newOption.isEnabled, "An unknown A action must not lock B's independent option")
+        newOption.tap()
+        wait("label CONTAINS '模型选择：2'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.buttons["shared.model.recheck"].exists)
+    }
+    func testR86UnknownModelChoiceDoesNotBlockOtherConversationSend() throws {
+        let app = launch("--shared-fixture-model-select-timeout")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.press(forDuration: 0.65)
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        option.tap()
+        XCTAssertTrue(app.staticTexts["shared.model.pending"].waitForExistence(timeout: 5))
+        app.buttons["完成"].tap()
+        searchB(app)
+        let input = composer(app)
+        input.tap(); input.typeText("new conversation independent of model result")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        app.buttons["shared.send"].tap()
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
+    }
+    func testR86LateOldSendReceiptsNeverChangeNewConversationDraftOrStatus() throws {
+        for failureMode in [false, true] {
+            let app = launch(failureMode ? "--shared-fixture-late-old-send-fail" : "--shared-fixture-late-old-send-confirm")
+            let aInput = composer(app)
+            aInput.tap(); aInput.typeText("old A pending message")
+            app.buttons["shared.send"].tap()
+            XCTAssertTrue(app.buttons["shared.receipt"].waitForExistence(timeout: 8))
+            searchB(app)
+            let bInput = composer(app)
+            bInput.tap(); bInput.typeText("B draft must not change")
+            XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+            let check = app.buttons["shared.fixture.checkOlderReceipt"]
+            XCTAssertTrue(check.waitForExistence(timeout: 8)); check.tap()
+            wait("label CONTAINS '旧回执结算：1'", on: app.staticTexts["shared.fixture.counters"])
+            XCTAssertTrue(String(describing: composer(app).value).contains("B draft must not change"))
+            XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+            let shownStatus = app.staticTexts["shared.status"].label
+            XCTAssertFalse(shownStatus.contains("消息已发送") || shownStatus.contains("确定未发送"),
+                           "An old A result must not replace the visible B status")
+            app.buttons["shared.send"].tap()
+            wait("label CONTAINS '发送请求：2'", on: app.staticTexts["shared.fixture.counters"])
+            XCTAssertTrue(app.staticTexts["原生回复：B draft must not change"].waitForExistence(timeout: 10))
+            app.terminate()
+        }
+    }
+    func testR86ResultChoiceMirrorsAndUnknownActionDoesNotBlockOtherConversationSend() throws {
+        let app = launch("--shared-fixture-result-choice-unknown")
+        let choice = app.buttons["选择结果"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 8), "PC result button must be mirrored on the phone")
+        choice.tap()
+        let confirm = app.buttons["shared.interaction.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        wait("label CONTAINS '交互：1'", on: app.staticTexts["shared.fixture.counters"])
+        searchB(app)
+        let input = composer(app)
+        input.tap(); input.typeText("different conversation after unknown choice")
+        let send = app.buttons["shared.send"]
+        XCTAssertTrue(send.isEnabled, "An unresolved result choice in conversation A must not block B")
+        send.tap()
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("交互：1"),
+                      "The old choice must never be automatically replayed")
+    }
     func testUnknownSendChecksReceiptWithoutReplayingAndAllowsOtherChat() throws {
         let app = launch("--shared-fixture-unknown")
         composer(app).tap(); composer(app).typeText("uncertain message")
@@ -581,6 +662,22 @@ final class SharedTabUITests: XCTestCase {
         app.buttons["完成"].tap()
         XCTAssertTrue(app.staticTexts["shared.status"].label.contains("选择结果待确认"))
     }
+    func testR86ForeignPositiveModelReceiptMustNotApproveChoiceInA() throws {
+        let app = launch("--shared-fixture-model-cross-scope-false-confirm")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.press(forDuration: 0.65)
+        let option = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(option.waitForExistence(timeout: 8)); option.tap()
+        let recheck = app.buttons["shared.model.recheck"]
+        XCTAssertTrue(recheck.waitForExistence(timeout: 8)); recheck.tap()
+        XCTAssertTrue(option.waitForExistence(timeout: 8))
+        XCTAssertFalse(option.isEnabled, "A foreign confirmation cannot release A's lock")
+        XCTAssertTrue(app.staticTexts["shared.model.pending"].exists)
+        XCTAssertFalse(app.staticTexts.containing(NSPredicate(
+            format: "label CONTAINS '已在 PC 网页选择：'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
+    }
     func testCrossConversationReceiptDoesNotUnlockEffortChoices() throws {
         let app = launch("--shared-fixture-model-cross-scope-receipt")
         let picker = app.buttons["shared.modelPicker"]
@@ -592,6 +689,8 @@ final class SharedTabUITests: XCTestCase {
         let recheck = app.buttons["shared.model.recheck"]
         XCTAssertTrue(recheck.waitForExistence(timeout: 8))
         recheck.tap()
+        XCTAssertTrue(option.waitForExistence(timeout: 8),
+                      "The PC model option must remain visible, not merely disabled or absent, after cross-scope receipt recheck")
         XCTAssertFalse(option.isEnabled, "A different conversation's receipt must not release the pending lock")
         XCTAssertTrue(app.staticTexts["shared.model.pending"].exists)
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))

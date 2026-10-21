@@ -37,6 +37,10 @@ struct SharedTabScreen: View {
     @State private var showFilePicker = false
     @State private var showQuickPicker = false
     @State private var quickPickerKind: STQuickPickerKind = .effort
+    @State private var cachedModelOptions: [STModelOption] = []
+    @State private var cachedModelKind: STQuickPickerKind?
+    @State private var cachedModelDocumentId: String?
+    @State private var cachedModelConversationId: String?
     @State private var photo: PhotosPickerItem?
     @FocusState private var editing: Bool
     let returnToWeb: () -> Void
@@ -45,15 +49,66 @@ struct SharedTabScreen: View {
         editing = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
+    private func rememberModelOptions(_ options: [STModelOption]) {
+        guard !options.isEmpty, let snap = model.snapshot,
+              model.modelOptionsDocumentId == snap.documentId,
+              model.modelOptionsConversationId == snap.conversationId,
+              model.modelOptionsLevel == (quickPickerKind == .effort ? "effort" : "model") else { return }
+        cachedModelKind = quickPickerKind
+        cachedModelOptions = options
+        cachedModelDocumentId = snap.documentId
+        cachedModelConversationId = snap.conversationId
+    }
     private func openQuickPicker(_ kind: STQuickPickerKind) {
         guard model.canPickModel else { return }
         dismissKeyboard()
+        if cachedModelKind != kind {
+            cachedModelKind = nil
+            cachedModelOptions = []
+        }
         quickPickerKind = kind
         showQuickPicker = true
         Task {
             if model.actionPending != nil { await model.checkReceipts() }
             await model.loadModelOptions(menuLevel: kind == .effort ? "effort" : "model")
+            rememberModelOptions(model.modelOptions)
         }
+    }
+    private var displayedModelOptions: [STModelOption] {
+        let options: [STModelOption]
+        if let snap = model.snapshot,
+           model.modelOptionsDocumentId == snap.documentId,
+           model.modelOptionsConversationId == snap.conversationId,
+           model.modelOptionsLevel == (quickPickerKind == .effort ? "effort" : "model"),
+           !model.modelOptions.isEmpty {
+            options = model.modelOptions
+        } else if let snap = model.snapshot, let pending = model.actionPending,
+                  pending.documentId == snap.documentId, pending.conversation == snap.conversationId,
+                  pending.optionMenuLevel == (quickPickerKind == .effort ? "effort" : "model"),
+                  cachedModelKind == quickPickerKind,
+                  cachedModelDocumentId == snap.documentId,
+                  cachedModelConversationId == snap.conversationId, !cachedModelOptions.isEmpty {
+            options = cachedModelOptions
+        } else if let snap = model.snapshot, let pending = model.actionPending,
+                  cachedModelKind == quickPickerKind,
+                  pending.optionMenuLevel == (quickPickerKind == .effort ? "effort" : "model"),
+                  pending.documentId == snap.documentId, pending.conversation == snap.conversationId,
+                  let optId = pending.optionId {
+            options = [STModelOption(id: optId, label: pending.targetLabel ?? "所选项目",
+                                     selected: nil, submenu: nil, kind: nil, value: nil,
+                                     description: nil, disabled: true, selectionEvidence: nil,
+                                     min: nil, max: nil, step: nil, valueText: nil)]
+        } else {
+            options = []
+        }
+        if model.actionPending != nil {
+            return options.map { opt in
+                var d = opt
+                d.disabled = true
+                return d
+            }
+        }
+        return options
     }
     private var quickPickerContent: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -78,30 +133,41 @@ struct SharedTabScreen: View {
                     Text("上次操作回执未确认，暂不能选择新选项")
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("shared.model.pending")
-                    Button("核对回执") { Task { await model.checkReceipts() } }
-                        .disabled(model.busy)
-                        .accessibilityIdentifier("shared.model.recheck")
+                    Button("核对回执") {
+                        Task {
+                            await model.checkReceipts()
+                            if model.actionPending == nil {
+                                await model.loadModelOptions(menuLevel: quickPickerKind == .effort ? "effort" : "model")
+                            }
+                            rememberModelOptions(model.modelOptions)
+                        }
+                    }
+                    .disabled(model.busy)
+                    .accessibilityIdentifier("shared.model.recheck")
                 }
             }
             if model.modelPickerLoading {
                 ProgressView("正在读取 PC 网页选项…")
                     .accessibilityIdentifier("shared.model.loading")
-            } else if model.modelOptions.isEmpty {
+            } else if displayedModelOptions.isEmpty {
                 Text(model.controlNotice ?? "PC 当前未提供此类选项")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             ScrollView {
-                LazyVStack(spacing: 3) {
-                    ForEach(model.modelOptions) { option in
+                VStack(spacing: 3) {
+                    ForEach(displayedModelOptions) { option in
                         Button {
                             Task {
                                 await model.chooseModel(option)
+                                rememberModelOptions(model.modelOptions)
                                 if model.controlNotice?.hasPrefix("已在 PC 网页选择：") == true {
                                     showQuickPicker = false
                                 } else if model.controlNotice == "请选择 PC 网页实际提供的细分档位" {
                                     quickPickerKind = .effort
+                                    rememberModelOptions(model.modelOptions)
                                     if model.modelOptions.isEmpty {
                                         await model.loadModelOptions(menuLevel: "effort")
+                                        rememberModelOptions(model.modelOptions)
                                     }
                                 }
                             }
@@ -117,7 +183,7 @@ struct SharedTabScreen: View {
                                 if option.selected == true { Image(systemName: "checkmark") }
                                 if option.submenu == true { Image(systemName: "chevron.right") }
                             }
-                            .foregroundStyle(option.disabled == true ? .secondary : .primary)
+                            .foregroundStyle((option.disabled == true || model.actionPending != nil) ? .secondary : .primary)
                             .padding(.vertical, 10)
                             .contentShape(Rectangle())
                         }
@@ -138,6 +204,12 @@ struct SharedTabScreen: View {
         .padding(14)
         .frame(width: 290)
         .presentationCompactAdaptation(.popover)
+        .onAppear {
+            rememberModelOptions(model.modelOptions)
+        }
+        .onChange(of: model.modelOptions) { _, newOptions in
+            rememberModelOptions(newOptions)
+        }
     }
     private func openSidebar() {
         dismissKeyboard(); query = ""
@@ -394,7 +466,7 @@ struct SharedTabScreen: View {
     }
     private var composer: some View {
         VStack(spacing: 7) {
-            if model.currentPending != nil || model.actionPending != nil {
+            if model.currentPending != nil || model.hasUnresolvedActionReceipts {
                 Button("核对发送／操作回执") { Task { await model.checkReceipts() } }
                     .font(.caption).accessibilityIdentifier("shared.receipt")
             }
@@ -415,7 +487,7 @@ struct SharedTabScreen: View {
                 TextField("发送消息", text: Binding(get: { model.text }, set: { model.edited($0) }), axis: .vertical)
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
                     .accessibilityIdentifier("shared.composer")
-                if model.canPickModel {
+                if model.canPickModel || showQuickPicker {
                     Text(STCompactEffort.code(model.displayedEffortName))
                         .font(.system(size: 14, weight: .semibold))
                         .frame(width: 36, height: 36)
@@ -520,6 +592,11 @@ struct SharedTabScreen: View {
                     Button("模拟 PC 模型变化") {
                         SharedTabFixtureProtocol.simulatePCModelSwitch()
                     }.accessibilityIdentifier("shared.fixture.pcModelChange")
+                }
+                if ProcessInfo.processInfo.arguments.contains("--shared-fixture-late-old-send-confirm") ||
+                   ProcessInfo.processInfo.arguments.contains("--shared-fixture-late-old-send-fail") {
+                    Button("核对旧对话回执") { Task { await model.checkReceipts() } }
+                        .accessibilityIdentifier("shared.fixture.checkOlderReceipt")
                 }
                 Text(SharedTabFixtureProtocol.counters).font(.system(size: 9))
                     .accessibilityIdentifier("shared.fixture.counters")

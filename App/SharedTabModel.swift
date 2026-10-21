@@ -156,6 +156,7 @@ struct STActionPending: Codable {
     var documentId: String? = nil
     var optionId: String? = nil
     var targetLabel: String? = nil
+    var optionMenuLevel: String? = nil
 }
 struct STReadAcknowledgement: Codable, Equatable {
     let conversationId: String
@@ -170,6 +171,7 @@ struct STReadAcknowledgement: Codable, Equatable {
 struct STSaved: Codable {
     var ledger: STDraftLedger; var tabId: Int?; var snapshot: STSnapshot?; var server: String?
     var actionPending: STActionPending?
+    var parkedActions: [STActionPending]?
     var verifiedEffort: String?
     var verifiedEffortDocId: String?
     var verifiedEffortConvId: String?
@@ -236,6 +238,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var chats: [STChat] = []
     @Published var recentActive: [STChat] = []
     @Published var modelOptions: [STModelOption] = []
+    @Published private(set) var modelOptionsLevel = ""
+    @Published private(set) var modelOptionsDocumentId = ""
+    @Published private(set) var modelOptionsConversationId = ""
+    private var modelCatalogGeneration = 0
     @Published var modelPickerLoading = false
     @Published var uploading = false
     @Published var controlNotice: String?
@@ -254,6 +260,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var needsSettings = false
     @Published private(set) var ledger = STDraftLedger()
     @Published private(set) var actionPending: STActionPending?
+    @Published private(set) var parkedActions: [String: STActionPending] = [:]
+    var hasUnresolvedActionReceipts: Bool { actionPending != nil || !parkedActions.isEmpty }
+    @Published private(set) var receiptChecking = false
     // A successful native click is not proof that generation has stopped.
     // Don't expose the same PC Stop control for a second click until it changes.
     @Published private(set) var stopAcknowledgedTarget: String?
@@ -425,6 +434,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         pairingKey = STKeychain.load()
         if let file = stateFile, let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(STSaved.self, from: data) {
             ledger = saved.ledger; selectedTabId = saved.tabId; actionPending = saved.actionPending
+            parkedActions = Dictionary(uniqueKeysWithValues: (saved.parkedActions ?? []).map { ($0.id, $0) })
             verifiedEffort = saved.verifiedEffort
             verifiedEffortDocId = saved.verifiedEffortDocId
             verifiedEffortConvId = saved.verifiedEffortConvId
@@ -462,7 +472,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         do {
             let parent = file.deletingLastPathComponent(); try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
             var directory = parent; var values = URLResourceValues(); values.isExcludedFromBackup = true; try directory.setResourceValues(values)
-            let saved = STSaved(ledger: ledger, tabId: selectedTabId, snapshot: snapshot, server: connection?.identity ?? (try? config().identity), actionPending: actionPending, verifiedEffort: verifiedEffort, verifiedEffortDocId: verifiedEffortDocId, verifiedEffortConvId: verifiedEffortConvId, readAcknowledgements: readAcknowledgements, scopedReadAcknowledgements: scopedReadAcknowledgements)
+            let saved = STSaved(ledger: ledger, tabId: selectedTabId, snapshot: snapshot, server: connection?.identity ?? (try? config().identity), actionPending: actionPending, parkedActions: Array(parkedActions.values), verifiedEffort: verifiedEffort, verifiedEffortDocId: verifiedEffortDocId, verifiedEffortConvId: verifiedEffortConvId, readAcknowledgements: readAcknowledgements, scopedReadAcknowledgements: scopedReadAcknowledgements)
             try JSONEncoder().encode(saved).write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]); return true
         } catch { self.error = STError(code: "local_storage_failed").localizedDescription; return false }
     }
@@ -546,6 +556,27 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         // real currently mounted history. LazyVStack keeps rendering demand-led.
         guard fresh.schema == 1, fresh.sharedTab == true, fresh.messages.count <= 80 else { throw STError(code: "schema_invalid") }
         if snapshot?.documentId != fresh.documentId || snapshot?.conversationId != fresh.conversationId {
+            if let previous = actionPending,
+               previous.conversation != fresh.conversationId || previous.documentId != fresh.documentId {
+                // The in-flight command remains queryable, but no longer owns B's controls.
+                parkedActions[previous.id] = previous
+                actionPending = nil
+            }
+            if actionPending == nil, let returned = parkedActions.values.first(where: {
+                $0.server == c.identity && $0.conversation == fresh.conversationId &&
+                ($0.documentId == nil || $0.documentId == fresh.documentId)
+            }) {
+                actionPending = returned
+                parkedActions.removeValue(forKey: returned.id)
+            }
+            // Result/option menus belong to the old PC document, never the new chat.
+            modelCatalogGeneration += 1
+            modelPickerLoading = false
+            modelOptions = []
+            modelOptionsLevel = ""
+            modelOptionsDocumentId = ""
+            modelOptionsConversationId = ""
+            if controlNotice?.contains("选择结果") == true { controlNotice = nil }
             older = []; historyCursor = nil; historyHasMore = nil
             verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
         }
@@ -1085,14 +1116,22 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func loadModelOptions(menuLevel: String = "model") async {
         guard menuLevel == "model" || menuLevel == "effort" else { return }
+        guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        modelCatalogGeneration += 1
+        let catalogGeneration = modelCatalogGeneration
+        modelOptionsLevel = menuLevel
+        modelOptionsDocumentId = snap.documentId
+        modelOptionsConversationId = snap.conversationId
         modelOptions = []
         controlNotice = nil
-        guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
-        modelPickerLoading = true; defer { modelPickerLoading = false }
+        modelPickerLoading = true
+        defer { if modelCatalogGeneration == catalogGeneration { modelPickerLoading = false } }
         do {
             let value: STModelCatalog = try await request("/v1/sessions/\(id)/actions", using: c,
                 body: ["action": "model_catalog", "menuLevel": menuLevel,
                        "commandId": UUID().uuidString, "documentId": snap.documentId])
+            guard modelCatalogGeneration == catalogGeneration && modelOptionsLevel == menuLevel &&
+                  snapshot?.documentId == snap.documentId && snapshot?.conversationId == snap.conversationId else { return }
             modelOptions = value.available ? value.options : []
             let selectedStep = modelOptions.first { $0.kind == "slider" && $0.selected == true && $0.disabled != true }
             if let th = value.thinking, th.observed == true, let eff = th.effort, !eff.isEmpty {
@@ -1109,7 +1148,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
             }
             if modelOptions.isEmpty { controlNotice = "PC 当前未提供可镜像的模型或思考选项" }
-        } catch { controlNotice = error.localizedDescription }
+        } catch {
+            if modelCatalogGeneration == catalogGeneration { controlNotice = error.localizedDescription }
+        }
     }
     func chooseModel(_ option: STModelOption, value: Double? = nil) async {
         guard canPickModel, let c = connection, let id = sessionID, let snap = snapshot else { return }
@@ -1117,11 +1158,23 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             controlNotice = "上一操作尚未确认，请等待 PC 确认或核对回执"
             return
         }
-        modelPickerLoading = true; defer { modelPickerLoading = false }
+        guard !modelPickerLoading, modelOptionsDocumentId == snap.documentId,
+              modelOptionsConversationId == snap.conversationId,
+              ["model", "effort"].contains(modelOptionsLevel),
+              modelOptions.contains(where: { $0.id == option.id && $0.disabled != true }) else {
+            controlNotice = "PC 选项已变化，请重新读取当前菜单"
+            return
+        }
+        modelCatalogGeneration += 1 // A user selection invalidates old catalog requests.
+        let selectionGeneration = modelCatalogGeneration
+        let selectionLevel = modelOptionsLevel
+        modelPickerLoading = true
+        defer { if modelCatalogGeneration == selectionGeneration { modelPickerLoading = false } }
         let commandId = UUID().uuidString
         let pending = STActionPending(id: commandId, server: c.identity, conversation: snap.conversationId,
                                       kind: "model_select", stopTargetId: nil, documentId: snap.documentId,
-                                      optionId: option.id, targetLabel: option.label)
+                                      optionId: option.id, targetLabel: option.label,
+                                      optionMenuLevel: modelOptionsLevel)
         actionPending = pending
         guard save() else {
             actionPending = nil
@@ -1137,12 +1190,27 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             ]
             if let targetValue = value ?? option.value { body["value"] = targetValue }
             let result: STModelChoice = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
+            if snapshot?.documentId != snap.documentId || snapshot?.conversationId != snap.conversationId ||
+               modelCatalogGeneration != selectionGeneration || modelOptionsLevel != selectionLevel {
+                // Another route or newer catalog took ownership while this
+                // exact PC click was in flight; settle its identity only.
+                // Do not apply stale model options or notice.
+                if result.status == "option_clicked" || result.status == "not_selected" {
+                    if actionPending?.id == commandId { actionPending = nil }
+                    parkedActions.removeValue(forKey: commandId)
+                    save()
+                }
+                return
+            }
             guard result.status == "option_clicked" else {
                 actionPending = nil; save()
                 throw STError(code: result.error ?? "model_option_changed")
             }
             if result.submenuOpened == true {
                 actionPending = nil; save()
+                modelOptionsLevel = "effort"
+                modelOptionsDocumentId = snap.documentId
+                modelOptionsConversationId = snap.conversationId
                 modelOptions = result.options ?? []
                 controlNotice = "请选择 PC 网页实际提供的细分档位"
                 return
@@ -1194,8 +1262,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 try? await refresh(using: c)
             }
         } catch {
-            controlNotice = "选择结果待确认；不会自动重试。请核对 PC 页面。"
-            status = "选择结果待确认 · 不会自动重试"
+            if snapshot?.documentId == snap.documentId && snapshot?.conversationId == snap.conversationId &&
+               modelCatalogGeneration == selectionGeneration && modelOptionsLevel == selectionLevel {
+                controlNotice = "选择结果待确认；不会自动重试。请核对 PC 页面。"
+                status = "选择结果待确认 · 不会自动重试"
+            }
             save()
         }
     }
@@ -1220,7 +1291,8 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func send() async {
         guard canSubmit, let c = connection, let id = sessionID, let snap = snapshot else { return }
-        busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text); let generation = epoch
+        busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text)
+        let generation = epoch, submittedOwner = owner
         do {
             let command = try ledger.reserve(owner, server: c.identity, temporary: snap.conversationId.isEmpty)
             guard save() else { ledger.definitelyNotSent(command.id); throw STError(code: "local_storage_failed") }
@@ -1228,7 +1300,19 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             if let project = snap.projectId { body["projectId"] = project }
             let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: body)
             resolve(receipt, using: c); try current(generation); try? await refresh(using: c)
-        } catch { self.error = error.localizedDescription; if currentPending != nil { status = "发送结果待确认 · 不会自动重发" }; save() }
+        } catch {
+            // The bound PC page may move from A to B while A's POST is
+            // in flight. Preserve A's uncertain ledger, but never paint its
+            // network error or pending status over B's active composer.
+            if owner == submittedOwner && snapshot?.documentId == snap.documentId &&
+               snapshot?.conversationId == snap.conversationId && connection?.identity == c.identity {
+                self.error = error.localizedDescription
+                if ledger.pendingFor(submittedOwner) != nil {
+                    status = "发送结果待确认 · 不会自动重发"
+                }
+            }
+            save()
+        }
     }
     // One explicit tap maps to ONE PC-native Stop button; never infer a stop
     // from generic in_progress status, and never replay an uncertain click.
@@ -1256,14 +1340,42 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             // official generation finished. Refresh native state separately.
             try? await refresh(using: c)
         } catch {
-            self.error = "中止结果待确认；不会再次点击。请核对回执或 PC 页面。"
-            status = "中止结果待确认 · 不会自动重试"
+            if snapshot?.conversationId == snap.conversationId &&
+               snapshot?.documentId == snap.documentId && connection?.identity == c.identity {
+                self.error = "中止结果待确认；不会再次点击。请核对回执或 PC 页面。"
+                status = "中止结果待确认 · 不会自动重试"
+            }
             save()
         }
     }
     private func resolveAction(_ receipt: STReceipt, using c: STConnection) {
-        guard let pending = actionPending, pending.id == receipt.commandId,
+        let parked = parkedActions[receipt.commandId]
+        guard let pending = (actionPending?.id == receipt.commandId ? actionPending : parked),
               pending.server == c.identity else { return }
+        let receiptScopeMatches = (receipt.result?.documentId == nil || receipt.result?.documentId == pending.documentId) &&
+                                  (receipt.result?.conversationId == nil || receipt.result?.conversationId == pending.conversation)
+        if parked != nil {
+            // The command's durable terminal state settles A, but never
+            // asserts a model/interaction result in currently visible B.
+            if receiptScopeMatches && (receipt.state == "failed" || receipt.state == "done") {
+                parkedActions.removeValue(forKey: receipt.commandId)
+                save()
+            }
+            return
+        }
+        // A receipt with a foreign, explicitly observed route must never
+        // unlock or confirm the current pending action, even if commandId matches.
+        guard receiptScopeMatches else { return }
+        if snapshot?.conversationId != pending.conversation ||
+           (pending.documentId != nil && snapshot?.documentId != pending.documentId) {
+            // Reconcile a terminal, ID-bound old receipt without changing the
+            // current conversation's model UI, notices, draft or Send state.
+            if receiptScopeMatches && (receipt.state == "failed" ||
+               (receipt.state == "done" && ["option_clicked", "not_selected", "interaction_clicked", "stop_clicked"].contains(receipt.result?.status ?? ""))) {
+                actionPending = nil; save()
+            }
+            return
+        }
         if receipt.state == "failed" {
             actionPending = nil
             error = STError(code: receipt.result?.error ?? "pc_operation_failed").localizedDescription
@@ -1318,22 +1430,44 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     private func resolve(_ receipt: STReceipt, using c: STConnection) {
         guard let command = ledger.pending[receipt.commandId], command.server == c.identity else { return }
+        // Receipt ownership comes from the reserved command, not the currently
+        // displayed PC route. Always settle A's ledger, never change B's UI.
+        let affectsCurrentConversation = command.owner == owner
         if receipt.state == "done" && receipt.result?.status == "sent_confirmed" {
             let actualOwner = receipt.result?.conversationId.map { c.identity + "|" + $0 }
             ledger.confirmed(command.id, actualOwner: actualOwner)
-            if command.temporary, owner == command.owner, let actualOwner { owner = actualOwner }
-            text = ledger.draft(owner).text
-            status = ledger.pendingFor(owner) == nil ? "消息已发送" : "新消息已发送 · 另有旧回执待确认"
-            error = nil
+            if affectsCurrentConversation {
+                if command.temporary, let actualOwner { owner = actualOwner }
+                text = ledger.draft(owner).text
+                status = ledger.pendingFor(owner) == nil ? "消息已发送" : "新消息已发送 · 另有旧回执待确认"
+                error = nil
+            }
         } else if receipt.state == "failed" {
-            ledger.definitelyNotSent(command.id); error = STError(code: receipt.result?.error ?? "not_sent").localizedDescription; status = "确定未发送 · 草稿已保留"
-        } else { status = "发送结果待确认 · 不会自动重发" }
+            ledger.definitelyNotSent(command.id)
+            if affectsCurrentConversation {
+                error = STError(code: receipt.result?.error ?? "not_sent").localizedDescription
+                status = "确定未发送 · 草稿已保留"
+            }
+        } else if affectsCurrentConversation {
+            status = "发送结果待确认 · 不会自动重发"
+        }
         save()
     }
-    func checkReceipts() async { guard !busy, let c = connection else { return }; busy = true; defer { busy = false }; await checkReceiptsInternal(using: c) }
+    // A slow receipt lookup for an older chat is read-only. It must never
+    // hold the current conversation's global Send/navigation busy lock.
+    func checkReceipts() async {
+        guard !busy, !receiptChecking, let c = connection else { return }
+        receiptChecking = true; defer { receiptChecking = false }
+        await checkReceiptsInternal(using: c)
+    }
     private func checkReceiptsInternal(using c: STConnection) async {
         for command in Array(ledger.pending.values).filter({ $0.server == c.identity }) {
             if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) { resolve(receipt, using: c) }
+        }
+        for old in Array(parkedActions.values).filter({ $0.server == c.identity }) {
+            if let receipt: STReceipt = try? await request("/v1/commands/\(old.id)", using: c) {
+                resolveAction(receipt, using: c)
+            }
         }
         if let pending = actionPending, pending.server == c.identity,
            let receipt: STReceipt = try? await request("/v1/commands/\(pending.id)", using: c) {
@@ -1352,12 +1486,22 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func interact(_ button: PCInteractionButton, document: String) async {
         guard online, !busy, actionPending == nil, let c = connection, let id = sessionID, let snap = snapshot, snap.documentId == document else { error = STError(code: "pc_route_changed").localizedDescription; return }
-        busy = true; defer { busy = false }; let pending = STActionPending(id: UUID().uuidString, server: c.identity, conversation: snap.conversationId); actionPending = pending
+        busy = true; defer { busy = false }; let pending = STActionPending(id: UUID().uuidString,
+            server: c.identity, conversation: snap.conversationId, documentId: document)
+        actionPending = pending
         guard save() else { actionPending = nil; return }
         do {
             let result: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: ["action": "interact", "commandId": pending.id, "documentId": document, "interactionId": button.id, "interactionRevision": button.revision, "confirmed": true])
             resolveAction(result, using: c)
-        } catch { self.error = "操作结果待确认；不会重复点击。" }
+            // Re-read the PC result after the one confirmed click; never click twice.
+            try? await refresh(using: c)
+        } catch {
+            if snapshot?.conversationId == snap.conversationId &&
+               snapshot?.documentId == snap.documentId && connection?.identity == c.identity {
+                self.error = "操作结果待确认；不会重复点击。"
+            }
+            save()
+        }
     }
     func loadEarlier() async {
         guard canLoadHistory, let c = connection, let id = sessionID, let snap = snapshot, let cursor = historyCursor ?? snap.historyCursor else { return }
