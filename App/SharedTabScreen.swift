@@ -239,18 +239,44 @@ struct SharedTabScreen: View {
                             }
                         }
                         Section("思考强度") {
-                            if let slider = model.modelOptions.first(where: { $0.kind == "slider" }) {
-                                if let description = slider.description, !description.isEmpty {
-                                    Text(description).font(.caption2).foregroundStyle(.secondary)
+                            let effortOptions = model.modelOptions.filter { $0.kind == "effort" }
+                            if !effortOptions.isEmpty {
+                                ForEach(effortOptions) { option in
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Button {
+                                            Task { await model.chooseModel(option) }
+                                        } label: {
+                                            HStack {
+                                                Text(option.label)
+                                                Spacer()
+                                                if option.selected == true { Image(systemName: "checkmark") }
+                                                if option.submenu == true || option.kind == "submenu" {
+                                                    Image(systemName: "chevron.right")
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                        }
+                                        .disabled(model.modelPickerLoading || option.disabled == true)
+                                        .accessibilityIdentifier("shared.model.\(option.id)")
+                                        if let desc = option.description, !desc.isEmpty {
+                                            Text(desc).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
                                 }
-                                if let current = slider.valueText, !current.isEmpty {
-                                    Text(current).font(.caption2).foregroundStyle(.secondary)
-                                        .accessibilityIdentifier("shared.slider.value.\(slider.id)")
+                            } else {
+                                if let slider = model.modelOptions.first(where: { $0.kind == "slider" }) {
+                                    if let description = slider.description, !description.isEmpty {
+                                        Text(description).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                    if let current = slider.valueText, !current.isEmpty {
+                                        Text(current).font(.caption2).foregroundStyle(.secondary)
+                                            .accessibilityIdentifier("shared.slider.value.\(slider.id)")
+                                    }
                                 }
-                            }
-                            STEffortChoices(options: model.modelOptions,
-                                            busy: model.modelPickerLoading) { option, value in
-                                Task { await model.chooseModel(option, value: value) }
+                                STEffortChoices(options: model.modelOptions,
+                                                busy: model.modelPickerLoading) { option, value in
+                                    Task { await model.chooseModel(option, value: value) }
+                                }
                             }
                             if model.modelOptions.contains(where: { $0.kind == "effort" }) {
                                 Button("返回模型列表") {
