@@ -9,7 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = "https://ipa.781751.xyz:58443"
+BASE = "https://ipa.781751.xyz:58443"  # Debian-hosted signed IPA and manifest URLs
+SIGNING_BASE = "https://ipa.78175132.xyz"  # CF Tunnel forwards signing requests to Debian
 DIST = pathlib.Path("dist")
 IPA = DIST / "candidate-unsigned.ipa"
 RUN = os.environ.get("GITHUB_RUN_ID", "")
@@ -60,7 +61,7 @@ def classify(code, body):
 
 def lookup():
     query = urllib.parse.urlencode({"app_key": "chatgpt-web", "run_id": RUN, "sha": SHA})
-    code, raw = request(BASE + STATUS_PATH + "?" + query, timeout=25)
+    code, raw = request(SIGNING_BASE + STATUS_PATH + "?" + query, timeout=25)
     doc = decode(raw)
     if code == 200 and doc.get("status") == "SIGNED":
         return "signed", doc
@@ -96,7 +97,7 @@ def main():
         or IPA.stat().st_size > 64 * 1024 * 1024):
         raise SignFailure("SIGNING_BAD_INPUT", "repo, run, SHA, token, or IPA artifact invalid")
     DIST.mkdir(exist_ok=True)
-    before_code, before_raw = request(BASE + "/api/v1/apps/chatgpt-web/latest")
+    before_code, before_raw = request(SIGNING_BASE + "/api/v1/apps/chatgpt-web/latest")
     if before_code != 200:
         raise SignFailure("SIGNING_STABLE_LOOKUP", f"stable before HTTP {before_code}")
     before = decode(before_raw)
@@ -121,8 +122,10 @@ def main():
                 "X-App-Key": "chatgpt-web",
                 "Content-Type": "application/octet-stream",
             }
-            code, raw = request(BASE + "/api/v1/sign?channel=candidate",
+            code, raw = request(SIGNING_BASE + "/api/v1/sign?channel=candidate",
                                 data=ipa_bytes, headers=headers, timeout=240)
+            # Safe diagnostics only; do not print token, request body, or server response.
+            print(f"R78 candidate sign attempt {attempt + 1}/3: HTTP {code}", flush=True)
             if code in (200, 201):
                 # A successful POST is still reconciled with the authoritative index.
                 state, doc = lookup()
@@ -143,7 +146,7 @@ def main():
             time.sleep(DELAYS[attempt])
     if signed is None:
         raise SignFailure("SIGNING_RETRIES_EXHAUSTED", "3 attempts max; no verified signed candidate")
-    after_code, after_raw = request(BASE + "/api/v1/apps/chatgpt-web/latest")
+    after_code, after_raw = request(SIGNING_BASE + "/api/v1/apps/chatgpt-web/latest")
     if after_code != 200:
         raise SignFailure("SIGNING_STABLE_LOOKUP", f"stable after HTTP {after_code}")
     after = decode(after_raw)

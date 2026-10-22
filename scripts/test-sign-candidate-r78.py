@@ -40,7 +40,19 @@ class SigningRetries(unittest.TestCase):
  def test_already_signed_does_not_post_again(self):
   calls=self.run_with([(200,json.dumps(STABLE)),(200,json.dumps(SIGNED)),(200,json.dumps(STABLE))])
   self.assertFalse(any(method=="POST" for method,_ in calls))
+  self.assertTrue(all(url.startswith(MODULE.SIGNING_BASE+"/api/") for _,url in calls))
+  self.assertNotEqual(MODULE.SIGNING_BASE, MODULE.BASE)
   self.assertEqual(json.loads((MODULE.DIST/"candidate-sign-result.json").read_text())["id"],SIGNED["id"])
+ def test_cf_upload_and_debian_result_urls(self):
+  calls=self.run_with([(200,json.dumps(STABLE)),(404,'{"status":"NOT_FOUND"}'),
+                       (201,'{"ok":true}'),(200,json.dumps(SIGNED)),
+                       (200,json.dumps(STABLE))])
+  self.assertEqual([method for method,_ in calls].count("POST"),1)
+  self.assertEqual([url for method,url in calls if method=="POST"],
+                   [MODULE.SIGNING_BASE+"/api/v1/sign?channel=candidate"])
+  self.assertTrue(all(url.startswith(MODULE.SIGNING_BASE+"/api/") for _,url in calls))
+  self.assertTrue(SIGNED["ipa_url"].startswith(MODULE.BASE+"/ipa/"))
+  self.assertTrue(SIGNED["manifest_url"].startswith(MODULE.BASE+"/manifest/"))
  def test_502_response_with_successful_server_commit_is_not_retried(self):
   calls=self.run_with([(200,json.dumps(STABLE)),(404,'{"status":"NOT_FOUND"}'),
                        (502,'Bad Gateway'),(200,json.dumps(SIGNED)),
