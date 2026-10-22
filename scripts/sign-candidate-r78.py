@@ -29,7 +29,8 @@ class SignFailure(Exception):
 
 def request(url, *, data=None, headers=None, timeout=25):
     method = "POST" if data is not None else "GET"
-    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    request_headers = {"User-Agent": "IPA-Signer-GitHub-Actions/1.0", **(headers or {})}
+    req = urllib.request.Request(url, data=data, method=method, headers=request_headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read(32768).decode("utf-8", errors="replace")

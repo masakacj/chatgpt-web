@@ -16,6 +16,18 @@ SIGNED={"status":"SIGNED","ok":True,"id":"a1111111-b222-c333-d444-e55555555555",
         "bundle_id":"com.masakacj.chatgptweb","ipa_url":MODULE.BASE+"/ipa/a1111111-b222-c333-d444-e55555555555.ipa",
         "manifest_url":MODULE.BASE+"/manifest/a1111111-b222-c333-d444-e55555555555.plist"}
 class SigningRetries(unittest.TestCase):
+ def test_cloudflare_user_agent_preserves_authorization(self):
+  with mock.patch.object(MODULE.urllib.request, "urlopen") as urlopen:
+   response = urlopen.return_value.__enter__.return_value
+   response.status = 200
+   response.read.return_value = b'{}'
+   code, body = MODULE.request(MODULE.SIGNING_BASE + '/api/v1/sign?channel=candidate',
+                               data=b'test', headers={'Authorization':'Bearer dummy'})
+   req = urlopen.call_args.args[0]
+   self.assertEqual(code, 200)
+   self.assertEqual(body, '{}')
+   self.assertEqual(req.get_header('User-agent'), 'IPA-Signer-GitHub-Actions/1.0')
+   self.assertEqual(req.get_header('Authorization'), 'Bearer dummy')
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory()
   self.addCleanup(self.temp.cleanup)
