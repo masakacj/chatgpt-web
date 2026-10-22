@@ -104,6 +104,15 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             messages = longMessages
         }
         if let sentText { messages.append(message("sent-user-\(sends)", "user", sentText)); messages.append(message("sent-answer-\(sends)", "assistant", "原生回复：" + sentText)) }
+        if args.contains("--shared-fixture-generated-image") {
+            messages.append([
+                "id": "fixture-generated-image", "role": "assistant", "text": "",
+                "blocks": [[
+                    "kind": "image", "text": "PC 生成图片预览", "url": "",
+                    "thumbnail": "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAGklEQVR42mP0rl3KQApgYiARjGoY1TB0NAAAjugBjdv7rv8AAAAASUVORK5CYII="
+                ]], "links": [], "truncated": false
+            ])
+        }
         if args.contains("--shared-fixture-native-resources") {
             messages.append(["id": "fixture-native-resources", "role": "assistant", "text": "公开链接和文件", "blocks": [
                 ["kind": "text", "text": "公开链接和文件"],

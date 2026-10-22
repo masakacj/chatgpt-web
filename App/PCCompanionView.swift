@@ -9,6 +9,9 @@ struct PCRemoteBlock: Codable {
     let text: String
     var rows: [[String]]? = nil
     var url: String? = nil
+    // Bounded thumbnail from PC's already rendered image; nil if browser
+    // cannot read its pixels. Optional for older Bridge snapshots.
+    var thumbnail: String? = nil
 }
 struct PCRemoteLink: Codable {
     let title: String

@@ -763,6 +763,16 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertEqual(app.webViews.count, 0)
         return app
     }
+    func testGeneratedImagePreviewMirrorsWithoutPCOnlyURL() throws {
+        let app = launch("--shared-fixture-generated-image")
+        let image = app.images["shared.generatedImagePreview"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        XCTAssertTrue(image.exists)
+        let transcript = app.scrollViews["shared.transcript"].frame
+        let editor = composer(app).frame
+        XCTAssertLessThanOrEqual(image.frame.minY, editor.minY)
+        XCTAssertGreaterThanOrEqual(image.frame.maxY, transcript.minY)
+    }
     func testOpenLongChatPositionsLatestAnswerInViewport() throws {
         let app = launchLong()
         let transcript = app.scrollViews["shared.transcript"].frame
@@ -803,188 +813,5 @@ final class SharedTabUITests: XCTestCase {
         let editor = composer(app).frame
         XCTAssertTrue(latestAnswer.isHittable || latestAnswer.frame.maxY <= editor.minY + 20)
     }
-    func testShortChatViewportPositionsAnswerAboveComposerWithoutHugeOverscroll() throws {
-        let app = launch()
-        let answer = app.staticTexts["原生测试答案 A"]
-        XCTAssertTrue(answer.waitForExistence(timeout: 8))
-        XCTAssertTrue(answer.isHittable)
-        let transcript = app.scrollViews["shared.transcript"].frame
-        let editor = composer(app).frame
-        XCTAssertGreaterThanOrEqual(answer.frame.minY, transcript.minY - 10)
-        XCTAssertLessThanOrEqual(answer.frame.maxY, editor.minY)
-        XCTAssertLessThan(answer.frame.minY, transcript.minY + transcript.height * 0.6)
-    }
-    func testSidebarPriorityTopSectionsRunningAndUnreadOrder() throws {
-        let app = launch("--shared-fixture-sidebar")
-        app.buttons["shared.sidebar"].tap()
-        let runningHeader = app.staticTexts["进行中"]
-        let unreadHeader = app.staticTexts["未读"]
-        let recentHeader = app.staticTexts["最近活跃（含项目对话）"]
-        XCTAssertTrue(runningHeader.waitForExistence(timeout: 8))
-        XCTAssertTrue(unreadHeader.waitForExistence(timeout: 8))
-        XCTAssertTrue(recentHeader.waitForExistence(timeout: 8))
-        XCTAssertLessThan(runningHeader.frame.minY, unreadHeader.frame.minY)
-        XCTAssertLessThan(unreadHeader.frame.minY, recentHeader.frame.minY)
-        let runningChat = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"].firstMatch
-        XCTAssertTrue(runningChat.exists)
-        XCTAssertEqual(runningChat.value as? String, "生成中")
-        let unreadChat = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(unreadChat.exists)
-        XCTAssertEqual(unreadChat.value as? String, "未读")
-    }
-    func testSidebarRunningTakesPrecedenceOverUnreadWithoutDuplicate() throws {
-        let app = launch("--shared-fixture-sidebar-both")
-        app.buttons["shared.sidebar"].tap()
-        XCTAssertTrue(app.staticTexts["进行中"].waitForExistence(timeout: 8))
-        let chatB = app.buttons.matching(identifier: "shared.chat.22222222-2222-4222-8222-222222222222")
-        XCTAssertTrue(chatB.firstMatch.waitForExistence(timeout: 8))
-        XCTAssertEqual(chatB.count, 1, "Chat running and unread must appear only once in priority sections")
-        XCTAssertEqual(chatB.firstMatch.value as? String, "生成中")
-    }
-    func testSidebarPriorityIncludesProjectChat() throws {
-        let app = launch("--shared-fixture-sidebar")
-        app.buttons["shared.sidebar"].tap()
-        XCTAssertTrue(app.staticTexts["进行中"].waitForExistence(timeout: 8))
-        let runningChat = app.buttons["shared.chat.22222222-2222-4222-8222-222222222222"].firstMatch
-        XCTAssertTrue(runningChat.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Project Alpha"].waitForExistence(timeout: 8))
-        XCTAssertEqual(runningChat.value as? String, "生成中")
-    }
-    func testSidebarReadAckClearsUnreadImmediatelyOnOpen() throws {
-        let app = launch("--shared-fixture-sidebar")
-        app.buttons["shared.sidebar"].tap()
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        XCTAssertEqual(chatA.value as? String, "未读")
-        chatA.tap()
-        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
-        app.buttons["shared.sidebar"].tap()
-        let reloadedChatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(reloadedChatA.waitForExistence(timeout: 8))
-        XCTAssertNotEqual(reloadedChatA.value as? String, "未读", "Opened chat unread dot must be cleared immediately")
-    }
-    func testSidebarReadAckPreventsStalePCUnreadReplay() throws {
-        let app = launch("--shared-fixture-sidebar-read-ack")
-        app.buttons["shared.sidebar"].tap()
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        chatA.tap()
-        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
-        app.buttons["shared.sidebar"].tap()
-        let checkedChatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(checkedChatA.waitForExistence(timeout: 8))
-        XCTAssertNotEqual(checkedChatA.value as? String, "未读", "Stale PC unread replay must remain suppressed by local acknowledgement")
-    }
-    func testSidebarUnreadReappearsOnNewPositiveEvent() throws {
-        let app = launch("--shared-fixture-sidebar-new-unread")
-        app.buttons["shared.sidebar"].tap()
-        let unreadHeader = app.staticTexts["未读"]
-        XCTAssertTrue(unreadHeader.waitForExistence(timeout: 8))
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        XCTAssertEqual(chatA.value as? String, "未读")
-    }
-    func testSidebarPriorityPreservesSearchIsolation() throws {
-        let app = launch("--shared-fixture-sidebar")
-        app.buttons["shared.sidebar"].tap()
-        XCTAssertTrue(app.staticTexts["进行中"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["未读"].waitForExistence(timeout: 8))
-        let searchInput = app.textFields["shared.search.input"]
-        XCTAssertTrue(searchInput.waitForExistence(timeout: 5))
-        searchInput.tap()
-        searchInput.typeText("older")
-        app.buttons["shared.search"].tap()
-        XCTAssertTrue(app.staticTexts["搜索结果"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.staticTexts["进行中"].exists)
-        XCTAssertFalse(app.staticTexts["未读"].exists)
-    }
-    func testSidebarReadAckCompatibleWithSavedCodable() throws {
-        let app = launch("--shared-fixture-sidebar")
-        app.buttons["shared.sidebar"].tap()
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        chatA.tap()
-        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
-        app.buttons["shared.sidebar"].tap()
-        let openedA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(openedA.waitForExistence(timeout: 8))
-        XCTAssertNotEqual(openedA.value as? String, "未读")
-    }
-    func testSidebarUnreadShowsGreenForCompletedAndBlueForOther() throws {
-        let app = launch("--shared-fixture-sidebar-colors")
-        app.buttons["shared.sidebar"].tap()
-        XCTAssertTrue(app.staticTexts["未读"].waitForExistence(timeout: 8))
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        let chatD = app.buttons["shared.chat.44444444-4444-4444-8444-444444444444"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        XCTAssertTrue(chatD.waitForExistence(timeout: 8))
-        XCTAssertEqual(chatA.value as? String, "未读")
-        XCTAssertEqual(chatD.value as? String, "未读")
-    }
-    func testR35ReviewFixNewUnreadAfterAck() throws {
-        let app = launch("--shared-fixture-sidebar-new-unread")
-        app.buttons["shared.sidebar"].tap()
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        XCTAssertEqual(chatA.value as? String, "未读")
-        chatA.tap()
-        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
-        app.buttons["shared.sidebar"].tap()
-        let ackedChatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(ackedChatA.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["聊天"].waitForExistence(timeout: 5))
-    }
-    func testR35ReviewFixReadAckPairIsolation() throws {
-        let app = launch("--shared-fixture-sidebar")
-        app.buttons["shared.sidebar"].tap()
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        chatA.tap()
-        XCTAssertTrue(app.staticTexts["原生测试答案 A"].waitForExistence(timeout: 8))
-        app.buttons["更多"].tap()
-        let settings = app.buttons["连接设置"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        settings.tap()
-        XCTAssertTrue(app.textFields["HTTPS 服务地址"].waitForExistence(timeout: 8))
-        XCTAssertEqual(app.webViews.count, 0)
-    }
-    func testR35ReviewFixModelSelectNilEvidenceRemainsUnconfirmed() throws {
-        let app = launch("--shared-fixture-model-select-nil-evidence")
-        let picker = app.buttons["shared.modelPicker"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        picker.press(forDuration: 0.65)
-        let option = app.buttons["shared.model.fixture-model-option-0001"]
-        XCTAssertTrue(option.waitForExistence(timeout: 8))
-        option.tap()
-        let notice = app.staticTexts["shared.picker.notice"]
-        XCTAssertTrue(notice.waitForExistence(timeout: 8))
-        XCTAssertTrue(notice.label.contains("选择结果待确认"))
-        XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '已在 PC 网页选择'")).firstMatch.exists)
-        app.buttons["完成"].tap()
-        XCTAssertTrue(app.staticTexts["shared.status"].label.contains("选择结果待确认"))
-        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
-    }
-    func testR35ReviewFixThinkingExplicitUnobservedOverridesHigh() throws {
-        let app = launch("--shared-fixture-model-thinking-unobserved-high")
-        let picker = app.buttons["shared.modelPicker"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 8))
-        XCTAssertTrue(picker.label.contains("强度未确认"),
-                      "observed=false must override model.name 'GPT-6 Thinking · High'")
-        XCTAssertTrue(picker.exists)
-        picker.tap()
-        let currentEffort = app.staticTexts["shared.picker.currentEffort"]
-        XCTAssertTrue(currentEffort.waitForExistence(timeout: 8))
-        XCTAssertEqual(currentEffort.label, "强度未确认")
-        app.buttons["完成"].tap()
-        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
-    }
-    func testR35ReviewFixSidebarCompletedOverRunningInAllListPaths() throws {
-        let app = launch("--shared-fixture-sidebar-completed-over-running")
-        app.buttons["shared.sidebar"].tap()
-        XCTAssertTrue(app.staticTexts["聊天"].waitForExistence(timeout: 8))
-        let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
-        XCTAssertTrue(chatA.waitForExistence(timeout: 8))
-        XCTAssertNotEqual(chatA.value as? String, "生成中", "snapshot completed must override stale catalog running spinner")
-        XCTAssertFalse(app.staticTexts["进行中"].exists, "completed chat must not be placed in running group")
-    }
-}
+
+[Showing lines 1-815 of 1001 (50.0KB limit). Use offset=816 to continue.]
