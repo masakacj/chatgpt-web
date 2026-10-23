@@ -515,7 +515,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func bind(_ tab: STTab) async {
         guard !busy else { return }; busy = true; defer { busy = false }; error = nil
-        ledger.edit(owner, text: text); save()
+        save()
         do {
             let c = try config()
             if connection?.identity != c.identity {
@@ -605,7 +605,13 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         }
         let newOwner = ownerKey(fresh, c)
         let waitingForNewReceipt = busy && currentPending?.temporary == true && !fresh.conversationId.isEmpty
-        if newOwner != owner && !waitingForNewReceipt { ledger.edit(owner, text: text); owner = newOwner; text = ledger.draft(owner).text }
+        if newOwner != owner && !waitingForNewReceipt {
+            // edited() persisted this draft; a stale editor must not undo a confirmed ledger clear.
+            owner = newOwner; text = ledger.draft(owner).text
+        } else if newOwner == owner && text != ledger.draft(owner).text {
+            text = ledger.draft(owner).text
+            if text.isEmpty { composerResetToken += 1 }
+        }
         if let acknowledged = stopAcknowledgedTarget,
            fresh.documentId != snapshot?.documentId || fresh.canStop != true || fresh.stopTargetId != acknowledged {
             stopAcknowledgedTarget = nil
@@ -843,7 +849,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         let id = sessionID; sessionID = nil
         if let id, let c = connection { let _: STOK? = try? await request("/v1/sessions/\(id)", using: c, method: "DELETE") }
     }
-    func disconnect() async { ledger.edit(owner, text: text); save(); await disconnectSession() }
+    func disconnect() async { save(); await disconnectSession() }
     // Make the signed development IPA usable against the separately verified
     // public Bridge stage. Never send a saved production pairing key to stage.
     // Drafts are already persisted by disconnect() and remain keyed by server.
@@ -915,7 +921,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     func newChat(project: STProject? = nil) async { await navigate("new", fields: project.map { ["projectId": $0.id] } ?? [:]) }
     private func navigate(_ action: String, fields: [String: Any]) async {
         guard online, !busy, !libraryLoading, let c = connection, let id = sessionID, let snap = snapshot else { return }
-        busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text); save(); let generation = epoch
+        busy = true; defer { busy = false }; error = nil; save(); let generation = epoch
         do {
             var body: [String: Any] = ["action": action, "commandId": UUID().uuidString, "documentId": snap.documentId]; body.merge(fields) { _, value in value }
             let result: STLibrary = try await request("/v1/sessions/\(id)/actions", using: c, body: body)
@@ -1301,7 +1307,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func send() async {
         guard canSubmit, let c = connection, let id = sessionID, let snap = snapshot else { return }
-        busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text)
+        busy = true; defer { busy = false }; error = nil
         let generation = epoch, submittedOwner = owner
         var submittedID: String?
         do {
@@ -1323,7 +1329,8 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             }
             // A may have sent while the PC switched to B. Do not paint A's
             // failure or pending status over B's composer.
-            if owner == submittedOwner && snapshot?.documentId == snap.documentId &&
+            if epoch == generation && foreground && !Task.isCancelled &&
+               owner == submittedOwner && snapshot?.documentId == snap.documentId &&
                snapshot?.conversationId == snap.conversationId && connection?.identity == c.identity {
                 if let submittedID, ledger.pending[submittedID] != nil {
                     self.error = failure.localizedDescription

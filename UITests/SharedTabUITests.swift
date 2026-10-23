@@ -220,6 +220,12 @@ final class SharedTabUITests: XCTestCase {
             app.buttons["shared.send"].tap()
             wait("label CONTAINS '发送请求：2'", on: app.staticTexts["shared.fixture.counters"])
             XCTAssertTrue(app.staticTexts["原生回复：B draft must not change"].waitForExistence(timeout: 10))
+            app.buttons["shared.sidebar"].tap()
+            let chatA = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"]
+            XCTAssertTrue(chatA.waitForExistence(timeout: 8)); chatA.tap()
+            let restoredA = String(describing: composer(app).value)
+            if failureMode { XCTAssertTrue(restoredA.contains("old A pending message")) }
+            else { XCTAssertFalse(restoredA.contains("old A pending message"), "confirmed A must not resurrect after B") }
             app.terminate()
         }
     }
