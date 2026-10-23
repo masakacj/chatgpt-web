@@ -431,7 +431,13 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             sentText = input["text"] as? String; revision += 1
             var result: [String: Any] = ["status": "sent_confirmed", "conversationId": current]
             if let projectID { result["projectId"] = projectID }
-            let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": result]; receipts[id] = value; return (200, value)
+            let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": result]
+            receipts[id] = value
+            if args.contains("--shared-fixture-send-response-lost") {
+                // PC accepted the message, but its first HTTP response never arrived.
+                return (504, ["error": "pc_result_unknown"])
+            }
+            return (200, value)
         }
         if path.hasPrefix("/v1/commands/") {
             let commandId = String(path.split(separator: "/").last ?? "")

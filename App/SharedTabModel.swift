@@ -248,6 +248,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     @Published var snapshot: STSnapshot?
     @Published var older: [PCRemoteMessage] = []
     @Published var text = ""
+    @Published private(set) var composerResetToken = 0
     @Published var online = false
     @Published var busy = false
     @Published var loading = false
@@ -1302,23 +1303,31 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard canSubmit, let c = connection, let id = sessionID, let snap = snapshot else { return }
         busy = true; defer { busy = false }; error = nil; ledger.edit(owner, text: text)
         let generation = epoch, submittedOwner = owner
+        var submittedID: String?
         do {
             let command = try ledger.reserve(owner, server: c.identity, temporary: snap.conversationId.isEmpty)
             guard save() else { ledger.definitelyNotSent(command.id); throw STError(code: "local_storage_failed") }
+            submittedID = command.id
             var body: [String: Any] = ["commandId": command.id, "action": "compose", "documentId": snap.documentId, "baseDraftHash": snap.draftHash, "text": command.text]
             if let project = snap.projectId { body["projectId"] = project }
             let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: body)
             resolve(receipt, using: c); try current(generation); try? await refresh(using: c)
         } catch {
-            // The bound PC page may move from A to B while A's POST is
-            // in flight. Preserve A's uncertain ledger, but never paint its
-            // network error or pending status over B's active composer.
+            let failure = error
+            // A lost POST response may follow a confirmed Send. Query the original
+            // command ID once; never replay compose or infer success from page text.
+            if let submittedID, ledger.pending[submittedID] != nil,
+               let receipt: STReceipt = try? await request("/v1/commands/\(submittedID)", using: c) {
+                resolve(receipt, using: c)
+            }
+            // A may have sent while the PC switched to B. Do not paint A's
+            // failure or pending status over B's composer.
             if owner == submittedOwner && snapshot?.documentId == snap.documentId &&
                snapshot?.conversationId == snap.conversationId && connection?.identity == c.identity {
-                self.error = error.localizedDescription
-                if ledger.pendingFor(submittedOwner) != nil {
+                if let submittedID, ledger.pending[submittedID] != nil {
+                    self.error = failure.localizedDescription
                     status = "发送结果待确认 · 不会自动重发"
-                }
+                } else if submittedID == nil { self.error = failure.localizedDescription }
             }
             save()
         }
@@ -1448,6 +1457,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             if affectsCurrentConversation {
                 if command.temporary, let actualOwner { owner = actualOwner }
                 text = ledger.draft(owner).text
+                if text.isEmpty { composerResetToken += 1 }
                 status = ledger.pendingFor(owner) == nil ? "消息已发送" : "新消息已发送 · 另有旧回执待确认"
                 error = nil
             }

@@ -99,6 +99,30 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertFalse(String(describing: composer(app).value).contains("mobile send once"))
         XCTAssertFalse(String(describing: composer(app).value).contains("PC_TEXT"))
     }
+    func testConfirmedSendClearsFocusedComposerWithoutLosingNextMessage() throws {
+        let app = launch()
+        composer(app).tap()
+        composer(app).typeText("confirmed input must clear")
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：confirmed input must clear"].waitForExistence(timeout: 10))
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        wait("NOT value CONTAINS 'confirmed input must clear'", on: composer(app))
+        XCTAssertFalse(app.buttons["shared.receipt"].exists)
+        composer(app).tap()
+        composer(app).typeText("new reply draft")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        XCTAssertFalse(String(describing: composer(app).value).contains("confirmed input must clear"))
+    }
+    func testLostSendResponseRecoveredViaOriginalReceiptWithoutReplay() throws {
+        let app = launch("--shared-fixture-send-response-lost")
+        composer(app).tap()
+        composer(app).typeText("sent but response lost")
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["原生回复：sent but response lost"].waitForExistence(timeout: 10))
+        wait("label CONTAINS '发送请求：1'", on: app.staticTexts["shared.fixture.counters"])
+        wait("NOT value CONTAINS 'sent but response lost'", on: composer(app))
+        XCTAssertFalse(app.buttons["shared.receipt"].exists)
+    }
     func testPerChatDraftsSurviveSearchAndSwitchWithoutSyncingPC() throws {
         let app = launch(); composer(app).tap(); composer(app).typeText("draft A local")
         searchB(app)

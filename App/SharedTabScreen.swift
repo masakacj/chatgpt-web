@@ -498,6 +498,7 @@ struct SharedTabScreen: View {
                 }
                 TextField("发送消息", text: Binding(get: { model.text }, set: { model.edited($0) }), axis: .vertical)
                     .lineLimit(1...6).font(.body).focused($editing).padding(.vertical, 11).padding(.leading, 15)
+                    .id(model.composerResetToken)
                     .accessibilityIdentifier("shared.composer")
                 if model.canPickModel || showQuickPicker {
                     Text(STCompactEffort.code(model.displayedEffortName))
