@@ -36,5 +36,9 @@ Expected: after authenticated command receipt `state=done, result.status=sent_co
 - Independent CC Review A1 Run `cc-21c6f4e5-17f7-4593-aa6e-e45925b367f2`: **CHANGES_REQUESTED** (`R134-1`): an obsolete Send HTTP response may arrive after `epoch` changes and still update current composer/UI. Repair retains durable command ledger settlement and original receipt lookup, but adds `displayOnCurrent` boolean requiring `epoch == generation && foreground && !Task.isCancelled` on both direct and GET-reconcile paths; a stale result cannot reset the active editor/status. Existing A/B late-receipt regression stays required.
 - These fixes change source SHA; original A1 verdict and failed CI remain historical only. New candidate must pass fresh macOS CI, Host QA and a distinct independent reviewer run.
 
+## Second Review / restored UI test source
+- Independent CC Review A2 Run `cc-c51e2de8-7d1b-4c34-ba8e-d534e345b71a` returned `CHANGES_REQUESTED` R134-2: upstream `UITests/SharedTabUITests.swift` ended at line 841 with literal `[Showing lines 1-815 of 1001 (50.0KB limit)]`, deleting the final 15 existing test methods. Host inspected the exact file and confirmed the marker was real and invalid Swift. Restored the precise previous complete test tail from parent `a8c6331`, preserving the two new send-clear tests and previous test coverage.
+- Scanned all 25 Swift source/test files for `[Showing lines` fragments: **0 remaining**. Existing source version/build metadata remains 0.7.16 (18). Requires a **new** candidate source SHA, macOS test run and separate CC independent Review; earlier A2 review is not an approval.
+
 ## Status
 Developer local Windows source checks passed on repaired isolated candidate. macOS/XCTest cannot run on Windows and must not be marked PASS until the **new** GitHub Actions run succeeds. Old R81 monitor is scoped to another R87 SHA / branch; do not overwrite it without verifying its lifecycle.
