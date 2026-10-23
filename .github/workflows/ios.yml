@@ -98,24 +98,24 @@ jobs:
           fi
       - name: Current iPhone Release compilation (never signs or promotes)
         run: |
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.15 CURRENT_PROJECT_VERSION=17 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/CurrentReleaseDevice" MARKETING_VERSION=0.7.16 CURRENT_PROJECT_VERSION=18 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Package unsigned IPA (independent of signing)
-        if: github.ref == 'refs/heads/feature/mirror-r55-0712-20261020'
+        if: github.ref == 'refs/heads/fix/mirror-send-state-20261023-composer-clear'
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/CurrentReleaseDevice/Build/Products/Release-iphoneos/ChatGPTWeb.app"
           test -d "$APP/PlugIns/ChatGPTScriptAction.appex"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "0.7.15"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = "17"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "0.7.16"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = "18"
           mkdir -p dist/Payload
           cp -R "$APP" dist/Payload/
           (cd dist && zip -qry candidate-unsigned.ipa Payload && rm -rf Payload)
           (cd dist && shasum -a 256 candidate-unsigned.ipa > candidate-unsigned.sha256)
       - name: Preserve unsigned IPA for sign-only retries
-        if: github.ref == 'refs/heads/feature/mirror-r55-0712-20261020'
+        if: github.ref == 'refs/heads/fix/mirror-send-state-20261023-composer-clear'
         uses: actions/upload-artifact@v4
         with:
-          name: mirror-0712-unsigned
+          name: mirror-0716-unsigned
           path: |
             dist/candidate-unsigned.ipa
             dist/candidate-unsigned.sha256
@@ -132,7 +132,7 @@ jobs:
   # R78: signing is independent from the 59 simulator tests. On transient
   # transport failures, use "Re-run failed jobs" without rebuilding unsigned IPA.
   sign-candidate:
-    if: github.ref == 'refs/heads/feature/mirror-r55-0712-20261020'
+    if: github.ref == 'refs/heads/fix/mirror-send-state-20261023-composer-clear'
     needs: validate-build
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -143,14 +143,14 @@ jobs:
       - name: Restore SHA-verified unsigned IPA from this workflow run
         uses: actions/download-artifact@v4
         with:
-          name: mirror-0712-unsigned
+          name: mirror-0716-unsigned
           path: dist
       - name: Verify unsigned IPA artifact checksum
         run: |
           set -euo pipefail
           cd dist
           sha256sum --check candidate-unsigned.sha256
-      - name: Sign R87 0.7.15 candidate only after successful Simulator and device Release
+      - name: Sign 0.7.16 candidate only after successful Simulator and device Release
         env:
           GH_RUN_TOKEN: ${{ github.token }}
         run: python3 scripts/sign-candidate-r78.py
@@ -166,7 +166,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r55-mirror-0712-candidate-evidence
+          name: mirror-0716-sendclear-candidate-evidence
           path: |
             dist/candidate-sign-result.json
             dist/stable-before.json
