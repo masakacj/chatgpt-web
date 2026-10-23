@@ -1481,8 +1481,12 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         await checkReceiptsInternal(using: c)
     }
     private func checkReceiptsInternal(using c: STConnection) async {
+        let receiptEpoch = epoch
         for command in Array(ledger.pending.values).filter({ $0.server == c.identity }) {
-            if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) { resolve(receipt, using: c) }
+            if let receipt: STReceipt = try? await request("/v1/commands/\(command.id)", using: c) {
+                resolve(receipt, using: c, displayOnCurrent: receiptEpoch == epoch && foreground &&
+                        !Task.isCancelled && connection?.identity == c.identity)
+            }
         }
         for old in Array(parkedActions.values).filter({ $0.server == c.identity }) {
             if let receipt: STReceipt = try? await request("/v1/commands/\(old.id)", using: c) {
