@@ -840,5 +840,57 @@ private struct STRemoteMediaBlock: View {
                 AsyncImage(url: remote) { phase in
                     if let image = phase.image {
                         image.resizable().scaledToFit().frame(maxHeight: 320)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    } else {
+                        Label(block.text.isEmpty ? "图片" : block.text, systemImage: "photo")
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+                .accessibilityLabel(block.text.isEmpty ? "PC 网页图片" : block.text)
+            } else {
+                Label(block.text.isEmpty ? "仅 PC 可查看的图片" : block.text + " · 请在 PC 查看", systemImage: "photo")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        } else if let url = STResourcePolicy.publicURL(block.url) {
+            STNativeFileLink(title: block.text, url: url)
+        } else {
+            Label(block.text + " · 仅 PC 可获取", systemImage: "doc")
+                .font(.footnote).foregroundStyle(.secondary)
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
 
-[Showing lines 1-841 of 896 (50.0KB limit). Use offset=842 to continue.]
+private struct STRemoteTableBlock: View {
+    let block: PCRemoteBlock
+    var body: some View {
+        if let rows = block.rows, !rows.isEmpty {
+            ScrollView(.horizontal) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                        HStack(spacing: 0) {
+                            ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                                Text(cell).font(rowIndex == 0 ? .subheadline.weight(.semibold) : .subheadline)
+                                    .textSelection(.enabled)
+                                    .frame(minWidth: 130, maxWidth: 200, alignment: .leading)
+                                    .padding(.horizontal, 10).padding(.vertical, 9)
+                            }
+                        }
+                        .background(rowIndex == 0 ? Color(uiColor: .tertiarySystemFill) : Color.clear)
+                        .overlay(alignment: .bottom) { Rectangle().fill(.quaternary).frame(height: 0.5) }
+                    }
+                }
+            }
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        } else {
+            ScrollView(.horizontal) {
+                Text(block.text).font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled).padding(12)
+            }.background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+}

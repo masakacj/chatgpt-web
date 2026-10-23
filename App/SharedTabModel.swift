@@ -1311,14 +1311,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             var body: [String: Any] = ["commandId": command.id, "action": "compose", "documentId": snap.documentId, "baseDraftHash": snap.draftHash, "text": command.text]
             if let project = snap.projectId { body["projectId"] = project }
             let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: body)
-            resolve(receipt, using: c); try current(generation); try? await refresh(using: c)
+            resolve(receipt, using: c, displayOnCurrent: epoch == generation && foreground && !Task.isCancelled)
+            try current(generation); try? await refresh(using: c)
         } catch {
             let failure = error
             // A lost POST response may follow a confirmed Send. Query the original
             // command ID once; never replay compose or infer success from page text.
             if let submittedID, ledger.pending[submittedID] != nil,
                let receipt: STReceipt = try? await request("/v1/commands/\(submittedID)", using: c) {
-                resolve(receipt, using: c)
+                resolve(receipt, using: c, displayOnCurrent: epoch == generation && foreground && !Task.isCancelled)
             }
             // A may have sent while the PC switched to B. Do not paint A's
             // failure or pending status over B's composer.
@@ -1446,11 +1447,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         }
         save()
     }
-    private func resolve(_ receipt: STReceipt, using c: STConnection) {
+    private func resolve(_ receipt: STReceipt, using c: STConnection, displayOnCurrent: Bool = true) {
         guard let command = ledger.pending[receipt.commandId], command.server == c.identity else { return }
-        // Receipt ownership comes from the reserved command, not the currently
-        // displayed PC route. Always settle A's ledger, never change B's UI.
-        let affectsCurrentConversation = command.owner == owner
+        // A stale send still settles its durable ledger, but never changes the
+        // current composer after backgrounding, rebinding or moving to B.
+        let affectsCurrentConversation = displayOnCurrent && command.owner == owner
         if receipt.state == "done" && receipt.result?.status == "sent_confirmed" {
             let actualOwner = receipt.result?.conversationId.map { c.identity + "|" + $0 }
             ledger.confirmed(command.id, actualOwner: actualOwner)

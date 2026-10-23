@@ -31,5 +31,10 @@ Expected: after authenticated command receipt `state=done, result.status=sent_co
 5. Independent GPT-6 CC/Web source Review on exact commit SHA; source changes after QA/review require new SHA and new review. Failure → reproduce from actual logs and minimum fix, rerun.
 6. Device acceptance remains separate: user should confirm after installing candidate. Do not claim completed release unless actual candidate URL, signature, CI tests and independent review are observed.
 
+## First CI and independent Review follow-up
+- First full branch CI Run `39977920347`, source `9878d9dbd76b0d8825d097b968b9a4751590e5f6`: **FAILED in Simulator Swift compilation**, before any XCTest ran. Error: `App/SharedTabScreen.swift:844` contained a literal `[Showing lines ... (50.0KB limit)]` fragment committed by upstream `e2a01bb` after a partial file read. Restored only the missing tail of `STRemoteMediaBlock` and `STRemoteTableBlock` from the last complete parent `a8c6331`, retaining the new thumbnail preview prefix. No unrelated source rewrite.
+- Independent CC Review A1 Run `cc-21c6f4e5-17f7-4593-aa6e-e45925b367f2`: **CHANGES_REQUESTED** (`R134-1`): an obsolete Send HTTP response may arrive after `epoch` changes and still update current composer/UI. Repair retains durable command ledger settlement and original receipt lookup, but adds `displayOnCurrent` boolean requiring `epoch == generation && foreground && !Task.isCancelled` on both direct and GET-reconcile paths; a stale result cannot reset the active editor/status. Existing A/B late-receipt regression stays required.
+- These fixes change source SHA; original A1 verdict and failed CI remain historical only. New candidate must pass fresh macOS CI, Host QA and a distinct independent reviewer run.
+
 ## Status
-Developer local Windows source checks passed on initial isolated candidate. macOS/XCTest cannot run on Windows and must not be marked PASS until GitHub Actions actual results arrive. Old R81 monitor currently scoped to another R87 SHA / branch; do not overwrite it without verifying its lifecycle.
+Developer local Windows source checks passed on repaired isolated candidate. macOS/XCTest cannot run on Windows and must not be marked PASS until the **new** GitHub Actions run succeeds. Old R81 monitor is scoped to another R87 SHA / branch; do not overwrite it without verifying its lifecycle.
