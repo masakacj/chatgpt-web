@@ -841,9 +841,43 @@ final class SharedTabUITests: XCTestCase {
         let editor = composer(app).frame
         let latestAnswer = app.staticTexts.containing(NSPredicate(format: "label CONTAINS '长对话回答 第 15 轮'")).firstMatch
         XCTAssertTrue(latestAnswer.waitForExistence(timeout: 8))
-        XCTAssertTrue(latestAnswer.isHittable || (latestAnswer.frame.maxY <= editor.minY + 20 && latestAnswer.frame.minY >= transcript.minY))
+        XCTAssertLessThanOrEqual(latestAnswer.frame.maxY, editor.minY + 8,
+                                 "The full latest reply footer should be above the composer")
+        XCTAssertGreaterThanOrEqual(latestAnswer.frame.maxY, transcript.minY + 25)
         XCTAssertLessThanOrEqual(latestAnswer.frame.minY, editor.minY)
         XCTAssertGreaterThanOrEqual(latestAnswer.frame.maxY, transcript.minY)
+    }
+    func testReopeningAlreadySelectedLongChatReturnsToActualLastReply() throws {
+        let app = launchLong()
+        let transcript = app.scrollViews["shared.transcript"]
+        transcript.swipeDown()
+        let returnButton = app.buttons["回到最新消息"]
+        XCTAssertTrue(returnButton.waitForExistence(timeout: 6), "User intentionally moved into history")
+        app.buttons["shared.sidebar"].tap()
+        let current = app.buttons["shared.chat.11111111-1111-4111-8111-111111111111"].firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 8), "Current conversation is selectable")
+        current.tap()
+        wait("exists == false", on: returnButton, timeout: 8)
+        let answer = app.staticTexts.containing(NSPredicate(format: "label CONTAINS '长对话回答 第 15 轮'")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 8))
+        let editor = composer(app).frame
+        let viewport = transcript.frame
+        XCTAssertLessThanOrEqual(answer.frame.maxY, editor.minY + 8,
+            "Latest reply footer must be fully above the composer without swiping up")
+        XCTAssertGreaterThan(answer.frame.maxY, viewport.minY + 30,
+            "Reopening must not overscroll the entire answer above the viewport")
+    }
+    func testTallFinalReplyFooterIsVisibleWithoutManualSwipeUp() throws {
+        let app = launchLong("--shared-fixture-tall-last-reply")
+        let footer = app.staticTexts["最新回复结束标记"]
+        XCTAssertTrue(footer.waitForExistence(timeout: 12),
+                      "The actual end of a tall final assistant reply must hydrate")
+        let editor = composer(app).frame
+        let viewport = app.scrollViews["shared.transcript"].frame
+        XCTAssertLessThanOrEqual(footer.frame.maxY, editor.minY + 8,
+                                 "The latest reply must not continue below the composer")
+        XCTAssertGreaterThanOrEqual(footer.frame.maxY, viewport.minY + 35,
+                                    "The final reply must not be overscrolled above the viewport")
     }
     func testSendFollowsNewLatestMessageToVisibleTail() throws {
         let app = launchLong()

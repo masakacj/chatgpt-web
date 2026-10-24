@@ -10,6 +10,16 @@ private struct STTranscriptContentHeight: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+private struct STTranscriptViewportHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct STTranscriptLastMessageBottom: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 private struct STSelectedInteraction: Identifiable {
     let card: PCInteractionCard; let button: PCInteractionButton; let document: String
     var id: String { button.id }
@@ -38,6 +48,9 @@ struct SharedTabScreen: View {
     @State private var query = ""
     @State private var expanded = Set<String>()
     @State private var followLatest = true
+    @State private var latestScrollRequest = 0
+    @State private var latestMessageBottom: CGFloat = 0
+    @State private var transcriptViewportHeight: CGFloat = 0
     @State private var interaction: STSelectedInteraction?
     @State private var showFilePicker = false
     @State private var showQuickPicker = false
@@ -312,6 +325,9 @@ struct SharedTabScreen: View {
     private func scrollToLatest(proxy: ScrollViewProxy, animated: Bool = false) {
         guard followLatest, let lastId = model.displayMessages.last?.id else { return }
         DispatchQueue.main.async {
+            // A queued layout correction must never override intentional
+            // history browsing or scroll an already-switched conversation.
+            guard followLatest, model.displayMessages.last?.id == lastId else { return }
             if animated {
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(lastId, anchor: .bottom)
@@ -394,7 +410,18 @@ struct SharedTabScreen: View {
                             }.frame(maxWidth: .infinity).padding(.top, 90)
                         }
                         ForEach(model.displayMessages) { message in
-                            STMessageView(message: message, onLink: { link in Task { await model.followRemoteLink(link) } }).id(message.id)
+                            STMessageView(message: message, onLink: { link in Task { await model.followRemoteLink(link) } })
+                                .id(message.id)
+                                .background {
+                                    if message.id == model.displayMessages.last?.id {
+                                        // Measure the actual rendered bottom, not the
+                                        // estimated LazyVStack content height.
+                                        GeometryReader { last in
+                                            Color.clear.preference(key: STTranscriptLastMessageBottom.self,
+                                                value: last.frame(in: .named("shared.transcript.viewport")).maxY)
+                                        }
+                                    }
+                                }
                         }
                         if model.thinking {
                             HStack(spacing: 8) { ProgressView().controlSize(.small); Text("思考中").foregroundStyle(.secondary) }
@@ -427,6 +454,12 @@ struct SharedTabScreen: View {
                     .contentShape(Rectangle())
                 }
                 .accessibilityIdentifier("shared.transcript")
+                .coordinateSpace(name: "shared.transcript.viewport")
+                .background {
+                    GeometryReader { viewport in
+                        Color.clear.preference(key: STTranscriptViewportHeight.self, value: viewport.size.height)
+                    }
+                }
                 .scrollDismissesKeyboard(.interactively)
                 .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
                 .simultaneousGesture(
@@ -443,6 +476,25 @@ struct SharedTabScreen: View {
                 // message, not a spacer below the transcript.
                 .onPreferenceChange(STTranscriptContentHeight.self) { _ in
                     if followLatest { scrollToLatest(proxy: proxy) }
+                }
+                .onPreferenceChange(STTranscriptViewportHeight.self) { height in
+                    transcriptViewportHeight = height
+                    if followLatest && height > 0 && latestMessageBottom > height + 12 {
+                        scrollToLatest(proxy: proxy)
+                    }
+                }
+                .onPreferenceChange(STTranscriptLastMessageBottom.self) { bottom in
+                    latestMessageBottom = bottom
+                    // A first scrollTo can use LazyVStack's estimated height.
+                    // Correct only when the real last reply footer is still
+                    // BELOW the visible transcript after SwiftUI lays it out.
+                    if followLatest && transcriptViewportHeight > 0 &&
+                        bottom > transcriptViewportHeight + 12 {
+                        scrollToLatest(proxy: proxy)
+                    }
+                }
+                .onChange(of: latestScrollRequest) { _, _ in
+                    scrollToLatest(proxy: proxy)
                 }
                 .onChange(of: model.snapshot?.conversationId) { _, _ in
                     followLatest = true
@@ -690,6 +742,10 @@ struct SharedTabScreen: View {
     private func chatRow(_ chat: STChat) -> some View {
         Button {
             dismissKeyboard(); sidebar = false
+            // Even selecting the ALREADY active conversation is an explicit
+            // request to show its latest answer; its IDs may not change.
+            followLatest = true
+            latestScrollRequest += 1
             Task { await model.open(chat) }
         } label: {
             HStack {

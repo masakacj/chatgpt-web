@@ -101,7 +101,16 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             var longMessages: [[String: Any]] = []
             for i in 1...15 {
                 longMessages.append(message("long-u-\(i)", "user", "长对话提问 第 \(i) 轮：请分析多阶段架构和分布式系统的一致性保障。"))
-                longMessages.append(message("long-a-\(i)", "assistant", "长对话回答 第 \(i) 轮：这是第 \(i) 轮详细的回复内容。分布式系统的每个节点在执行变更前必须通过共识协议提交日志，确保状态机在任何副本崩溃恢复后能够重建完全一致的状态视图。\n\n关键要点：\n1. 严格的领导者选举与心跳机制；\n2. 多数派写确认；\n3. 租约与幂等防重放保护。"))
+                let answer = "长对话回答 第 \(i) 轮：这是第 \(i) 轮详细的回复内容。分布式系统的每个节点在执行变更前必须通过共识协议提交日志，确保状态机在任何副本崩溃恢复后能够重建完全一致的状态视图。\n\n关键要点：\n1. 严格的领导者选举与心跳机制；\n2. 多数派写确认；\n3. 租约与幂等防重放保护。"
+                if i == 15 && args.contains("--shared-fixture-tall-last-reply") {
+                    let paragraphs = String(repeating: "长回复布局验收：这是已加载的原生段落，不能因为延迟测量而隐藏最后一行。\n", count: 170)
+                    var last = message("long-a-\(i)", "assistant", answer + paragraphs + "最新回复结束标记")
+                    last["blocks"] = [["kind": "text", "text": answer + paragraphs],
+                                      ["kind": "text", "text": "最新回复结束标记"]]
+                    longMessages.append(last)
+                } else {
+                    longMessages.append(message("long-a-\(i)", "assistant", answer))
+                }
             }
             messages = longMessages
         }
