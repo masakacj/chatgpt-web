@@ -1055,6 +1055,20 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.textFields["HTTPS 服务地址"].waitForExistence(timeout: 8))
         XCTAssertEqual(app.webViews.count, 0)
     }
+    func testModelPickerRemainsAvailableDuringLongTranscriptLayoutCorrection() throws {
+        let app = launchLong("--shared-fixture-model-select-nil-evidence")
+        let picker = app.buttons["shared.modelPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        picker.press(forDuration: 0.65)
+        let choice = app.buttons["shared.model.fixture-model-option-0001"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 10),
+                      "Layout correction must not dismiss the model selection popover")
+        choice.tap()
+        let notice = app.staticTexts["shared.picker.notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 8))
+        XCTAssertTrue(notice.label.contains("选择结果待确认"))
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("模型选择：1"))
+    }
     func testR35ReviewFixModelSelectNilEvidenceRemainsUnconfirmed() throws {
         let app = launch("--shared-fixture-model-select-nil-evidence")
         let picker = app.buttons["shared.modelPicker"]

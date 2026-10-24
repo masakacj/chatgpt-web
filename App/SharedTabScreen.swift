@@ -49,7 +49,6 @@ struct SharedTabScreen: View {
     @State private var expanded = Set<String>()
     @State private var followLatest = true
     @State private var latestScrollRequest = 0
-    @State private var latestMessageBottom: CGFloat = 0
     @State private var transcriptViewportHeight: CGFloat = 0
     @State private var interaction: STSelectedInteraction?
     @State private var showFilePicker = false
@@ -323,11 +322,12 @@ struct SharedTabScreen: View {
         }
     }
     private func scrollToLatest(proxy: ScrollViewProxy, animated: Bool = false) {
-        guard followLatest, let lastId = model.displayMessages.last?.id else { return }
+        guard followLatest, !showQuickPicker, let lastId = model.displayMessages.last?.id else { return }
         DispatchQueue.main.async {
             // A queued layout correction must never override intentional
             // history browsing or scroll an already-switched conversation.
-            guard followLatest, model.displayMessages.last?.id == lastId else { return }
+            guard followLatest, !showQuickPicker,
+                  model.displayMessages.last?.id == lastId else { return }
             if animated {
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(lastId, anchor: .bottom)
@@ -475,21 +475,21 @@ struct SharedTabScreen: View {
                 // without changing its text or ID. Follow the actual last
                 // message, not a spacer below the transcript.
                 .onPreferenceChange(STTranscriptContentHeight.self) { _ in
-                    if followLatest { scrollToLatest(proxy: proxy) }
+                    if followLatest && !showQuickPicker { scrollToLatest(proxy: proxy) }
                 }
                 .onPreferenceChange(STTranscriptViewportHeight.self) { height in
+                    guard abs(height - transcriptViewportHeight) > 1 else { return }
                     transcriptViewportHeight = height
-                    if followLatest && height > 0 && latestMessageBottom > height + 12 {
-                        scrollToLatest(proxy: proxy)
-                    }
+                    // Keyboard/safe-area resizing changes the visible tail.
+                    if followLatest && !showQuickPicker { scrollToLatest(proxy: proxy) }
                 }
                 .onPreferenceChange(STTranscriptLastMessageBottom.self) { bottom in
-                    latestMessageBottom = bottom
-                    // A first scrollTo can use LazyVStack's estimated height.
-                    // Correct only when the real last reply footer is still
-                    // BELOW the visible transcript after SwiftUI lays it out.
-                    if followLatest && transcriptViewportHeight > 0 &&
-                        bottom > transcriptViewportHeight + 12 {
+                    // Measure without writing state on every scroll frame: this
+                    // avoids re-rendering the composer and dismissing its model menu.
+                    // Correct only when actual reply content is BELOW the viewport.
+                    if followLatest && !showQuickPicker && !sidebar &&
+                       transcriptViewportHeight > 0 && bottom.isFinite &&
+                       bottom > transcriptViewportHeight + 12 {
                         scrollToLatest(proxy: proxy)
                     }
                 }
