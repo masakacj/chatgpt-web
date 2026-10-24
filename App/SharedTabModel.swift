@@ -286,6 +286,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private var foreground = true
     private var resuming = false
     private var pollTask: Task<Void, Never>?
+    private var receiptRecoveryTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempts = 0
     private var capabilities = Set<String>()
@@ -822,6 +823,9 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 error = nil
                 startPolling()
                 await checkReceiptsInternal(using: c)
+                if let command = ledger.pendingFor(owner), let activeId = sessionID {
+                    recoverSendReceipt(command.id, using: c, sessionId: activeId, generation: epoch)
+                }
             }
         } catch {
             online = false
@@ -837,6 +841,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func pause() {
         foreground = false; epoch += 1
+        receiptRecoveryTask?.cancel()
         pollTask?.cancel()
         reconnectTask?.cancel(); reconnectTask = nil; reconnectAttempts = 0
         online = false; save(); status = "本地快照"
@@ -844,7 +849,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
            error?.contains("超时") == true { error = nil }
     }
     private func disconnectSession() async {
-        epoch += 1; pollTask?.cancel(); online = false; revision = -1
+        epoch += 1; receiptRecoveryTask?.cancel(); pollTask?.cancel(); online = false; revision = -1
         verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
         let id = sessionID; sessionID = nil
         if let id, let c = connection { let _: STOK? = try? await request("/v1/sessions/\(id)", using: c, method: "DELETE") }
@@ -870,9 +875,35 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         status = "测试通道 · 请复制 PC 13213 的配对密钥"
         needsSettings = true
     }
-    private func refresh(using c: STConnection) async throws {
+    private func refresh(using c: STConnection, fromPC: Bool = false) async throws {
         guard let id = sessionID else { return }; let generation = epoch
-        let value: STEnvelope = try await request("/v1/sessions/\(id)?after=-1", using: c); try current(generation); try apply(value, using: c)
+        // The ordinary cached GET is not enough when a PC Send timed out after
+        // a real native click. Explicitly read the SAME bound PC tab, never POST.
+        let path = "/v1/sessions/\(id)?after=-1" + (fromPC ? "&refresh=1" : "")
+        let value: STEnvelope = try await request(path, using: c)
+        try current(generation); try apply(value, using: c)
+    }
+    private func recoverSendReceipt(_ commandId: String, using c: STConnection,
+                                    sessionId: String, generation: Int) {
+        receiptRecoveryTask?.cancel()
+        receiptRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            // Bounded read-only reconciliation. UNKNOWN is never an excuse
+            // to submit another compose with the same or a new command ID.
+            for delay in [UInt64(500_000_000), 1_500_000_000, 3_000_000_000] {
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled, self.foreground, self.epoch == generation,
+                      self.sessionID == sessionId, self.connection?.identity == c.identity,
+                      self.ledger.pending[commandId] != nil else { return }
+                try? await self.refresh(using: c, fromPC: true)
+                guard !Task.isCancelled, self.epoch == generation,
+                      self.connection?.identity == c.identity else { return }
+                if let receipt: STReceipt = try? await self.request("/v1/commands/\(commandId)", using: c) {
+                    self.resolve(receipt, using: c,
+                                 displayOnCurrent: self.foreground && self.epoch == generation && !Task.isCancelled)
+                }
+            }
+        }
     }
     // Explicit recovery when the PC already finished but the iOS UI is
     // displaying an old "loading" snapshot. This only refreshes the existing
@@ -1318,7 +1349,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             if let project = snap.projectId { body["projectId"] = project }
             let receipt: STReceipt = try await request("/v1/sessions/\(id)/commands", using: c, body: body)
             resolve(receipt, using: c, displayOnCurrent: epoch == generation && foreground && !Task.isCancelled)
-            try current(generation); try? await refresh(using: c)
+            try current(generation); try? await refresh(using: c, fromPC: true)
         } catch {
             let failure = error
             // A lost POST response may follow a confirmed Send. Query the original
@@ -1337,7 +1368,20 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                     status = "发送结果待确认 · 不会自动重发"
                 } else if submittedID == nil { self.error = failure.localizedDescription }
             }
+            if epoch == generation && foreground && !Task.isCancelled &&
+               sessionID == id && connection?.identity == c.identity {
+                try? await refresh(using: c, fromPC: true)
+                if let submittedID, ledger.pending[submittedID] != nil,
+                   let receipt: STReceipt = try? await request("/v1/commands/\(submittedID)", using: c) {
+                    resolve(receipt, using: c, displayOnCurrent: epoch == generation && foreground && !Task.isCancelled)
+                }
+            }
             save()
+        }
+        if let submittedID, ledger.pending[submittedID] != nil &&
+           epoch == generation && foreground && !Task.isCancelled &&
+           sessionID == id && connection?.identity == c.identity {
+            recoverSendReceipt(submittedID, using: c, sessionId: id, generation: generation)
         }
     }
     // One explicit tap maps to ONE PC-native Stop button; never infer a stop

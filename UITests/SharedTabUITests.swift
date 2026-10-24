@@ -123,6 +123,20 @@ final class SharedTabUITests: XCTestCase {
         wait("NOT value CONTAINS 'sent but response lost'", on: composer(app))
         XCTAssertFalse(app.buttons["shared.receipt"].exists)
     }
+    func testPCAlreadyThinkingAfterUnconfirmedSendRefreshesTranscriptAndClearsOriginalDraft() throws {
+        let app = launch("--shared-fixture-delayed-native-send-confirm")
+        composer(app).tap()
+        composer(app).typeText("PC accepted and now thinking")
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.staticTexts["PC accepted and now thinking"].waitForExistence(timeout: 12),
+                      "Read-only refresh must display the PC-accepted user turn")
+        XCTAssertTrue(app.staticTexts["shared.thinking"].waitForExistence(timeout: 12),
+                      "The phone must reflect the already-running PC response")
+        wait("NOT value CONTAINS 'PC accepted and now thinking'", on: composer(app), timeout: 12)
+        XCTAssertFalse(app.buttons["shared.receipt"].exists,
+                       "The original positive receipt settles without a second send")
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：1"))
+    }
     func testPerChatDraftsSurviveSearchAndSwitchWithoutSyncingPC() throws {
         let app = launch(); composer(app).tap(); composer(app).typeText("draft A local")
         searchB(app)

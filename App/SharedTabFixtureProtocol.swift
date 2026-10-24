@@ -30,6 +30,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var effortName: String? = "High"
     private static var effortObserved = true
     private static var sentText: String?
+    private static var deferredSendConfirmation: String?
     private static var receipts: [String: [String: Any]] = [:]
     private var cancelled = false
     private let instanceLock = NSLock()
@@ -40,7 +41,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; lateSettlements = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; receipts = [:]; reportOldSessionClosed = false
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; lateSettlements = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; deferredSendConfirmation = nil; receipts = [:]; reportOldSessionClosed = false
     }
     static func simulateOldSessionClosed() {
         lock.lock(); defer { lock.unlock() }
@@ -103,7 +104,12 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             }
             messages = longMessages
         }
-        if let sentText { messages.append(message("sent-user-\(sends)", "user", sentText)); messages.append(message("sent-answer-\(sends)", "assistant", "原生回复：" + sentText)) }
+        if let sentText {
+            messages.append(message("sent-user-\(sends)", "user", sentText))
+            if !args.contains("--shared-fixture-delayed-native-send-confirm") {
+                messages.append(message("sent-answer-\(sends)", "assistant", "原生回复：" + sentText))
+            }
+        }
         if args.contains("--shared-fixture-generated-image") {
             messages.append([
                 "id": "fixture-generated-image", "role": "assistant", "text": "",
@@ -153,6 +159,12 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
 
         var s: [String: Any] = ["schema": 1, "sharedTab": true, "documentId": document, "conversationId": current, "title": title, "messages": messages, "status": "completed", "draftHash": PCCompanionPolicy.hash(""), "draft": "PC_TEXT_MUST_NEVER_APPEAR_IN_PHONE", "temporary": current.isEmpty, "canSend": true, "pcDraftOccupied": false, "composing": false, "responsePhase": "completed", "model": modelPayload, "interactions": [], "hasOlder": args.contains("--shared-fixture-history"), "historyCursor": "oldest-visible-turn"]
+        if args.contains("--shared-fixture-delayed-native-send-confirm") && sentText != nil {
+            s["status"] = "running"
+            s["responsePhase"] = "thinking"
+            s["canStop"] = true
+            s["stopTargetId"] = nativeStopId
+        }
         if args.contains("--shared-fixture-pc-done-loading") && stalePCLoading {
             // PC's initial loading frame was observed, but the live page has
             // since completed without advancing the old long-poll revision.
@@ -433,6 +445,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
             if let projectID { result["projectId"] = projectID }
             let value: [String: Any] = ["ok": true, "commandId": id, "state": "done", "result": result]
             receipts[id] = value
+            if args.contains("--shared-fixture-delayed-native-send-confirm") {
+                deferredSendConfirmation = id
+                receipts[id] = ["ok": true, "commandId": id, "state": "unknown", "result": ["status": "sent_unconfirmed"]]
+                return (504, ["error": "pc_result_unknown"])
+            }
             if args.contains("--shared-fixture-send-response-lost") {
                 // PC accepted the message, but its first HTTP response never arrived.
                 return (504, ["error": "pc_result_unknown"])
@@ -458,6 +475,14 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if path.contains("/sessions/") {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }
             reads += 1
+            if args.contains("--shared-fixture-delayed-native-send-confirm") &&
+               req.url?.query?.contains("refresh=1") == true,
+               let command = deferredSendConfirmation {
+                deferredSendConfirmation = nil
+                receipts[command] = ["ok": true, "commandId": command, "state": "done",
+                    "result": ["status": "sent_confirmed", "conversationId": current]]
+                revision += 1
+            }
             if args.contains("--shared-fixture-old-session-closed") && reportOldSessionClosed {
                 reportOldSessionClosed = false
                 return (200, ["ok": true, "sessionId": "shared-fixture-session-001",
