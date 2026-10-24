@@ -286,7 +286,11 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     private var foreground = true
     private var resuming = false
     private var pollTask: Task<Void, Never>?
-    private var receiptRecoveryTask: Task<Void, Never>?
+    private var receiptRecoveryTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
+    private func cancelReceiptRecoveryTasks() {
+        for item in receiptRecoveryTasks.values { item.task.cancel() }
+        receiptRecoveryTasks.removeAll()
+    }
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempts = 0
     private var capabilities = Set<String>()
@@ -823,8 +827,10 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 error = nil
                 startPolling()
                 await checkReceiptsInternal(using: c)
-                if let command = ledger.pendingFor(owner), let activeId = sessionID {
-                    recoverSendReceipt(command.id, using: c, sessionId: activeId, generation: epoch)
+                if let activeId = sessionID {
+                    for command in ledger.pending.values where command.server == c.identity {
+                        recoverSendReceipt(command.id, using: c, sessionId: activeId, generation: epoch)
+                    }
                 }
             }
         } catch {
@@ -841,7 +847,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func pause() {
         foreground = false; epoch += 1
-        receiptRecoveryTask?.cancel()
+        cancelReceiptRecoveryTasks()
         pollTask?.cancel()
         reconnectTask?.cancel(); reconnectTask = nil; reconnectAttempts = 0
         online = false; save(); status = "本地快照"
@@ -849,7 +855,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
            error?.contains("超时") == true { error = nil }
     }
     private func disconnectSession() async {
-        epoch += 1; receiptRecoveryTask?.cancel(); pollTask?.cancel(); online = false; revision = -1
+        epoch += 1; cancelReceiptRecoveryTasks(); pollTask?.cancel(); online = false; revision = -1
         verifiedEffort = nil; verifiedEffortDocId = nil; verifiedEffortConvId = nil
         let id = sessionID; sessionID = nil
         if let id, let c = connection { let _: STOK? = try? await request("/v1/sessions/\(id)", using: c, method: "DELETE") }
@@ -885,9 +891,15 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     private func recoverSendReceipt(_ commandId: String, using c: STConnection,
                                     sessionId: String, generation: Int) {
-        receiptRecoveryTask?.cancel()
-        receiptRecoveryTask = Task { [weak self] in
+        guard receiptRecoveryTasks[commandId] == nil else { return }
+        let token = UUID()
+        let task = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.receiptRecoveryTasks[commandId]?.token == token {
+                    self.receiptRecoveryTasks.removeValue(forKey: commandId)
+                }
+            }
             // Bounded read-only reconciliation. UNKNOWN is never an excuse
             // to submit another compose with the same or a new command ID.
             for delay in [UInt64(500_000_000), 1_500_000_000, 3_000_000_000] {
@@ -904,6 +916,7 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                 }
             }
         }
+        receiptRecoveryTasks[commandId] = (token: token, task: task)
     }
     // Explicit recovery when the PC already finished but the iOS UI is
     // displaying an old "loading" snapshot. This only refreshes the existing

@@ -32,16 +32,17 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var sentText: String?
     private static var deferredSendConfirmation: String?
     private static var receipts: [String: [String: Any]] = [:]
+    private static var receiptReadsByID: [String: Int] = [:]
     private var cancelled = false
     private let instanceLock = NSLock()
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 模型选择：\(modelSelects) · 旧回执结算：\(lateSettlements)"
+        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 模型选择：\(modelSelects) · 旧回执结算：\(lateSettlements) · 双回执自动轮询：\(receiptReadsByID.values.filter { $0 >= 5 }.count)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; lateSettlements = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; deferredSendConfirmation = nil; receipts = [:]; reportOldSessionClosed = false
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; lateSettlements = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; deferredSendConfirmation = nil; receipts = [:]; receiptReadsByID = [:]; reportOldSessionClosed = false
     }
     static func simulateOldSessionClosed() {
         lock.lock(); defer { lock.unlock() }
@@ -458,6 +459,7 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
         if path.hasPrefix("/v1/commands/") {
             let commandId = String(path.split(separator: "/").last ?? "")
+            receiptReadsByID[commandId, default: 0] += 1
             if current == b, let existing = receipts[commandId], existing["state"] as? String == "unknown" {
                 if args.contains("--shared-fixture-late-old-send-confirm") {
                     lateSettlements += 1

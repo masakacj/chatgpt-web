@@ -294,6 +294,24 @@ final class SharedTabUITests: XCTestCase {
         wait("label CONTAINS '发送请求：2'", on: app.staticTexts["shared.fixture.counters"])
         XCTAssertTrue(app.buttons["shared.receipt"].exists, "the first unknown receipt remains queryable")
     }
+    func testTwoUnknownSendsKeepIndependentReadOnlyReceiptRecovery() throws {
+        let app = launch("--shared-fixture-unknown")
+        let input = composer(app)
+        input.tap()
+        input.typeText("first uncertain phone send")
+        app.buttons["shared.send"].tap()
+        XCTAssertTrue(app.buttons["shared.receipt"].waitForExistence(timeout: 9))
+        XCTAssertTrue(String(describing: composer(app).value).contains("first uncertain phone send"))
+        input.tap()
+        input.typeText(" changed second message")
+        XCTAssertTrue(app.buttons["shared.send"].isEnabled)
+        app.buttons["shared.send"].tap()
+        wait("label CONTAINS '发送请求：2'", on: app.staticTexts["shared.fixture.counters"])
+        wait("label CONTAINS '双回执自动轮询：2'",
+             on: app.staticTexts["shared.fixture.counters"], timeout: 18)
+        XCTAssertTrue(app.buttons["shared.receipt"].exists, "both original IDs stay queryable")
+        XCTAssertTrue(String(describing: composer(app).value).contains("changed second message"))
+    }
     func testStopAndUncertainSendCanCoexistWithoutPermanentlyGrayFollowUp() throws {
         let app = launch("--shared-fixture-stop-and-unknown-send")
         let stop = app.buttons["shared.stop"]
