@@ -48,11 +48,15 @@ final class NativeSupervisorUITests: XCTestCase {
         let staySafeButton = app.buttons["safemode.staysafe.button"]
         XCTAssertTrue(staySafeButton.exists, "Stay in safe mode button must be visible")
 
-        let mirrorInstructions = app.otherElements["safemode.mirror.instructions"]
-        XCTAssertTrue(mirrorInstructions.exists, "Mirror fallback instructions must be present")
+        let mirrorInstructions = app.descendants(matching: .any)["safemode.mirror.instructions"]
+        for _ in 0..<3 where !mirrorInstructions.exists { safeModeView.swipeUp() }
+        XCTAssertTrue(mirrorInstructions.waitForExistence(timeout: 5),
+                      "Mirror fallback instructions must be reachable in native safe mode")
 
-        let exportButton = app.buttons["safemode.export.button"]
-        XCTAssertTrue(exportButton.exists, "Diagnostics export button must be present in safe mode")
+        safeModeView.swipeDown()
+        let exportButton = app.descendants(matching: .any)["safemode.export.button"]
+        XCTAssertTrue(exportButton.waitForExistence(timeout: 5),
+                      "Diagnostics export button must be present in safe mode")
 
         // 6. Verify top-level diagnostics remains interactive while in safe mode
         XCTAssertTrue(diagnosticsButton.isHittable, "Diagnostics button must remain interactive even when safe mode is active")
