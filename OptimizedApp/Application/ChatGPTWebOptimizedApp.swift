@@ -18,10 +18,15 @@ struct OptimizedRootView: View {
     @StateObject private var resourceGate = NativeResourceGate()
     @Environment(\.scenePhase) private var scenePhase
 
-    init(supervisor: NativeOptimizationSupervisor = NativeOptimizationSupervisor(),
-         model: OptimizedAppModel = OptimizedAppModel(),
-         owner: ConversationManagerOwner = ConversationManagerOwner(),
-         telemetry: OptimizedTelemetry = OptimizedTelemetry()) {
+    @MainActor
+    init(supervisor: NativeOptimizationSupervisor? = nil,
+         model: OptimizedAppModel? = nil,
+         owner: ConversationManagerOwner? = nil,
+         telemetry: OptimizedTelemetry? = nil) {
+        let supervisor = supervisor ?? NativeOptimizationSupervisor()
+        let model = model ?? OptimizedAppModel()
+        let owner = owner ?? ConversationManagerOwner()
+        let telemetry = telemetry ?? OptimizedTelemetry()
         _supervisor = StateObject(wrappedValue: supervisor)
         model.supervisor = supervisor
         if supervisor.isSafeModeActive || supervisor.isCircuitOpen {
