@@ -6,9 +6,23 @@ struct OptimizedWebView: UIViewRepresentable {
     @ObservedObject var model: OptimizedAppModel
     @ObservedObject var owner: ConversationManagerOwner
     let telemetry: OptimizedTelemetry
+    let supervisor: NativeOptimizationSupervisor?
+    let resourceGate: NativeResourceGate
+
+    init(model: OptimizedAppModel,
+         owner: ConversationManagerOwner,
+         telemetry: OptimizedTelemetry,
+         supervisor: NativeOptimizationSupervisor? = nil,
+         resourceGate: NativeResourceGate) {
+        self.model = model
+        self.owner = owner
+        self.telemetry = telemetry
+        self.supervisor = supervisor
+        self.resourceGate = resourceGate
+    }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model, owner: owner, telemetry: telemetry)
+        Coordinator(model: model, owner: owner, telemetry: telemetry, supervisor: supervisor)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -34,9 +48,16 @@ struct OptimizedWebView: UIViewRepresentable {
                 return result as? Bool ?? false
             } catch { return false }
         }
-        webView.load(URLRequest(url: URL(string: "https://chatgpt.com/")!,
-                                cachePolicy: .useProtocolCachePolicy,
-                                timeoutInterval: 45))
+        let coordinator = context.coordinator
+        let request = URLRequest(url: model.targetURL,
+                                 cachePolicy: .useProtocolCachePolicy,
+                                 timeoutInterval: 45)
+        WebConfigurationFactory.installResourceGate(resourceGate, in: configuration,
+                                                     safeMode: supervisor?.isSafeModeActive == true) { _ in
+            // Do not navigate a retired web view if the user entered native safe mode.
+            guard coordinator.webView === webView, !model.processTerminated else { return }
+            webView.load(request)
+        }
         return webView
     }
 
@@ -62,15 +83,20 @@ struct OptimizedWebView: UIViewRepresentable {
         let model: OptimizedAppModel
         let owner: ConversationManagerOwner
         let telemetry: OptimizedTelemetry
+        weak var supervisor: NativeOptimizationSupervisor?
         let handler: WeakOptimizedObservationHandler
         weak var webView: WKWebView?
         private var destinations: [ObjectIdentifier: URL] = [:]
+        private var hasTerminated = false
 
-        init(model: OptimizedAppModel, owner: ConversationManagerOwner,
-             telemetry: OptimizedTelemetry) {
+        init(model: OptimizedAppModel,
+             owner: ConversationManagerOwner,
+             telemetry: OptimizedTelemetry,
+             supervisor: NativeOptimizationSupervisor?) {
             self.model = model
             self.owner = owner
             self.telemetry = telemetry
+            self.supervisor = supervisor
             handler = WeakOptimizedObservationHandler(owner: owner)
         }
 
@@ -95,13 +121,22 @@ struct OptimizedWebView: UIViewRepresentable {
             recordNavigationError(error, webView: webView)
         }
 
+        /// On WebContent termination:
+        /// Invalidate ConversationManagerOwner generation, detach old handlers,
+        /// call supervisor exactly once, record content-free telemetry,
+        /// and show native Safe Mode without automatically regenerating WKWebView.
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            guard self.webView === webView, !hasTerminated else { return }
+            hasTerminated = true
             let route = routeCategory(for: webView)
             telemetry.record(.contentTerminated, route: route, urgent: true)
             owner.invalidateDocument(processTerminated: true)
-            model.markProcessTerminated()
-            telemetry.record(model.processTerminated ? .recoveryPaused : .automaticRecovery,
-                             route: route, urgent: true)
+            handler.webView = nil
+            model.retryHandler = nil
+            model.markProcessTerminated(route: route, isSynthetic: false)
+            if let sup = supervisor ?? model.supervisor, sup.isCircuitOpen {
+                telemetry.record(.recoveryPaused, route: route, urgent: true)
+            }
         }
 
         private func recordNavigationError(_ error: Error, webView: WKWebView) {

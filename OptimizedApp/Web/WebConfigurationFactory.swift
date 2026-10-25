@@ -53,4 +53,15 @@ enum WebConfigurationFactory {
         configuration.mediaTypesRequiringUserActionForPlayback = []
         return configuration
     }
+
+    /// Rules must be installed before the first load; a compile error never blocks navigation.
+    @MainActor
+    static func installResourceGate(_ gate: NativeResourceGate,
+                                    in configuration: WKWebViewConfiguration,
+                                    safeMode: Bool,
+                                    completion: @escaping (Bool) -> Void) {
+        gate.install(to: configuration.userContentController,
+                     safeMode: safeMode,
+                     completion: completion)
+    }
 }
