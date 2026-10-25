@@ -41,7 +41,9 @@ public final class NativeOptimizationSupervisor: ObservableObject {
     @Published public private(set) var lastFailureReason: String?
 
     public init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+        // UI-test injected circuit uses a separate preference domain, never the user's durable journal.
+        let fixture = ProcessInfo.processInfo.arguments.contains("-uitest-circuit-open")
+        self.defaults = (fixture ? UserDefaults(suiteName: "optimized.native.ui-test-circuit.v1") : nil) ?? defaults
         loadPersistedState()
     }
 

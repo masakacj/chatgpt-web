@@ -9,6 +9,17 @@ final class NativeSupervisorUITests: XCTestCase {
         app = XCUIApplication()
     }
 
+    private func findSimulatedTerminationButton() -> XCUIElement {
+        let button = app.buttons["diagnostics.simulate.termination"]
+        // The medium-height diagnostics sheet uses a lazily mounted List.
+        let list = app.collectionViews.firstMatch
+        for _ in 0..<3 where !button.exists {
+            if list.exists { list.swipeUp() } else { app.swipeUp() }
+        }
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "Simulation button must be reachable in diagnostics")
+        return button
+    }
+
     func testSimulatedTerminationShowsNativeSafeModeAndAllowsRebuild() {
         app.launch()
 
@@ -22,8 +33,7 @@ final class NativeSupervisorUITests: XCTestCase {
         diagnosticsButton.tap()
 
         // 3. Find and trigger the simulated termination test action
-        let simulateButton = app.buttons["diagnostics.simulate.termination"]
-        XCTAssertTrue(simulateButton.waitForExistence(timeout: 5), "Simulated termination action must exist in diagnostics")
+        let simulateButton = findSimulatedTerminationButton()
         simulateButton.tap()
 
         // 4. Verify Native Safe Mode view replaces the web view (no WebContent instance beneath)
@@ -66,8 +76,7 @@ final class NativeSupervisorUITests: XCTestCase {
         XCTAssertTrue(diagnosticsButton.waitForExistence(timeout: 10))
         diagnosticsButton.tap()
 
-        let simulateButton = app.buttons["diagnostics.simulate.termination"]
-        XCTAssertTrue(simulateButton.waitForExistence(timeout: 5))
+        let simulateButton = findSimulatedTerminationButton()
         simulateButton.tap()
 
         let safeModeView = app.scrollViews["native.safemode.view"]
