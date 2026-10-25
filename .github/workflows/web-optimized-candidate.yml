@@ -33,6 +33,8 @@ jobs:
         run: node scripts/validate-userscript.mjs
       - name: Mirror project-label regression
         run: node scripts/test-project-labels.mjs
+      - name: Live Debug Worker policy regression
+        run: node --test telemetry-worker/test/live-debug.test.mjs
       - name: Optimized observer syntax
         run: node --check OptimizedResources/Observation/conversation-observer.js
       - name: Optimized target boundary
@@ -51,8 +53,8 @@ jobs:
       - name: Compile and package unsigned candidate
         run: |
           set -euo pipefail
-          VERSION=0.1.3
-          BUILD=4
+          VERSION=0.1.4
+          BUILD=5
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/OptimizedCandidate" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" build
           APP="$RUNNER_TEMP/OptimizedCandidate/Build/Products/Release-iphoneos/ChatGPTWebOptimized.app"
           test -d "$APP"
@@ -89,7 +91,7 @@ jobs:
           assert result['ok'] and result['channel']=='candidate' and result['promoted'] is False
           assert result['source_sha']==os.environ['GITHUB_SHA']
           assert result['bundle_id']=='com.masakacj.chatgptweb.optimized'
-          assert result['version']=='0.1.3' and str(result['build'])=='4'
+          assert result['version']=='0.1.4' and str(result['build'])=='5'
           print(json.dumps({'candidate':result['install_page'],'mirrorStableUnchanged':True}))
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
               f.write('\nWeb Optimized signed candidate: '+result['install_page']+'\n\nMirror stable unchanged. Physical-iPhone acceptance remains required before promotion.\n')
@@ -112,12 +114,12 @@ jobs:
               names=z.namelist()
               info=plistlib.loads(z.read('Payload/ChatGPTWebOptimized.app/Info.plist'))
               assert info['CFBundleIdentifier']=='com.masakacj.chatgptweb.optimized'
-              assert info['CFBundleShortVersionString']=='0.1.3'
-              assert str(info['CFBundleVersion'])=='4'
+              assert info['CFBundleShortVersionString']=='0.1.4'
+              assert str(info['CFBundleVersion'])=='5'
               assert 'Payload/ChatGPTWebOptimized.app/embedded.mobileprovision' in names
               assert 'Payload/ChatGPTWebOptimized.app/_CodeSignature/CodeResources' in names
           digest=hashlib.sha256(Path('dist/candidate-signed.ipa').read_bytes()).hexdigest()
-          Path('dist/candidate-verification.json').write_text(json.dumps({'bundleId':info['CFBundleIdentifier'],'version':'0.1.3','build':'4','sha256':digest,'zipCRC':True,'physicalIPhoneAccepted':False,'promoted':False},indent=2))
+          Path('dist/candidate-verification.json').write_text(json.dumps({'bundleId':info['CFBundleIdentifier'],'version':'0.1.4','build':'5','sha256':digest,'zipCRC':True,'physicalIPhoneAccepted':False,'promoted':False},indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()

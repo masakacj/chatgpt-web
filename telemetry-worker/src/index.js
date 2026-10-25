@@ -1,3 +1,6 @@
+import { LiveDebugRoom, handleLiveDebug } from './live-debug.js';
+export { LiveDebugRoom };
+
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SAMPLES = 20;
 
@@ -235,6 +238,9 @@ async function ingest(request, env, headers) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Live debug is header-authenticated, has no browser CORS and never touches D1.
+    if (url.pathname.startsWith('/v1/live/'))
+      return handleLiveDebug(request, env, url.pathname);
     const headers =
       corsHeaders(
         request.headers.get('Origin')

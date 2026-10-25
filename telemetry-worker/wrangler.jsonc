@@ -9,5 +9,9 @@
       "database_name": "chatgpt-web-telemetry",
       "database_id": "8e773bfa-13a5-4fba-82ad-82e7fce19002"
     }
-  ]
+  ],
+  "durable_objects": {
+    "bindings": [{"name":"LIVE_DEBUG","class_name":"LiveDebugRoom"}]
+  },
+  "migrations": [{"tag":"live-debug-r1","new_sqlite_classes":["LiveDebugRoom"]}]
 }

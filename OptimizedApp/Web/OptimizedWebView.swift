@@ -8,21 +8,25 @@ struct OptimizedWebView: UIViewRepresentable {
     let telemetry: OptimizedTelemetry
     let supervisor: NativeOptimizationSupervisor?
     let resourceGate: NativeResourceGate
+    let liveDebug: OptimizedLiveDebug
 
     init(model: OptimizedAppModel,
          owner: ConversationManagerOwner,
          telemetry: OptimizedTelemetry,
          supervisor: NativeOptimizationSupervisor? = nil,
-         resourceGate: NativeResourceGate) {
+         resourceGate: NativeResourceGate,
+         liveDebug: OptimizedLiveDebug) {
         self.model = model
         self.owner = owner
         self.telemetry = telemetry
         self.supervisor = supervisor
         self.resourceGate = resourceGate
+        self.liveDebug = liveDebug
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model, owner: owner, telemetry: telemetry, supervisor: supervisor)
+        Coordinator(model: model, owner: owner, telemetry: telemetry,
+                    supervisor: supervisor, liveDebug: liveDebug)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -32,6 +36,7 @@ struct OptimizedWebView: UIViewRepresentable {
         webView.accessibilityIdentifier = "optimized.webview"
         handler.webView = webView
         context.coordinator.webView = webView
+        liveDebug.attach(webView)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
@@ -66,6 +71,7 @@ struct OptimizedWebView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.liveDebug.detach(webView)
         coordinator.owner.invalidateDocument()
         coordinator.model.retryHandler = nil
         webView.stopLoading()
@@ -83,6 +89,7 @@ struct OptimizedWebView: UIViewRepresentable {
         let model: OptimizedAppModel
         let owner: ConversationManagerOwner
         let telemetry: OptimizedTelemetry
+        let liveDebug: OptimizedLiveDebug
         weak var supervisor: NativeOptimizationSupervisor?
         let handler: WeakOptimizedObservationHandler
         weak var webView: WKWebView?
@@ -92,10 +99,12 @@ struct OptimizedWebView: UIViewRepresentable {
         init(model: OptimizedAppModel,
              owner: ConversationManagerOwner,
              telemetry: OptimizedTelemetry,
-             supervisor: NativeOptimizationSupervisor?) {
+             supervisor: NativeOptimizationSupervisor?,
+             liveDebug: OptimizedLiveDebug) {
             self.model = model
             self.owner = owner
             self.telemetry = telemetry
+            self.liveDebug = liveDebug
             self.supervisor = supervisor
             handler = WeakOptimizedObservationHandler(owner: owner)
         }
@@ -104,11 +113,13 @@ struct OptimizedWebView: UIViewRepresentable {
             owner.invalidateDocument()
             model.status = "正在加载"
             telemetry.record(.navigationStart, route: routeCategory(for: webView))
+            liveDebug.navigationStart()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             model.markReady()
             telemetry.record(.navigationFinish, route: routeCategory(for: webView))
+            liveDebug.navigationFinish()
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -130,6 +141,7 @@ struct OptimizedWebView: UIViewRepresentable {
             hasTerminated = true
             let route = routeCategory(for: webView)
             telemetry.record(.contentTerminated, route: route, urgent: true)
+            liveDebug.processTerminated()
             owner.invalidateDocument(processTerminated: true)
             handler.webView = nil
             model.retryHandler = nil
@@ -145,6 +157,7 @@ struct OptimizedWebView: UIViewRepresentable {
             guard code != NSURLErrorCancelled else { return }
             telemetry.record(.navigationError, route: routeCategory(for: webView),
                              errorCode: code, urgent: true)
+            liveDebug.navigationError()
         }
 
         private func routeCategory(for webView: WKWebView) -> String {

@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 
 @main
 struct ChatGPTWebOptimizedApp: App {
@@ -16,6 +17,7 @@ struct OptimizedRootView: View {
     @StateObject private var owner: ConversationManagerOwner
     @StateObject private var telemetry: OptimizedTelemetry
     @StateObject private var resourceGate = NativeResourceGate()
+    @StateObject private var liveDebug = OptimizedLiveDebug()
     @Environment(\.scenePhase) private var scenePhase
 
     @MainActor
@@ -67,7 +69,8 @@ struct OptimizedRootView: View {
                 .transition(.opacity)
             } else {
                 OptimizedWebView(model: model, owner: owner, telemetry: telemetry,
-                                 supervisor: supervisor, resourceGate: resourceGate)
+                                 supervisor: supervisor, resourceGate: resourceGate,
+                                 liveDebug: liveDebug)
                     .id(model.webViewGeneration)
             }
         }
@@ -96,6 +99,18 @@ struct OptimizedRootView: View {
                         Text("当前没有经过实机验证的可阻断资源；此开关不会过滤 ChatGPT 请求，也不代表已提升性能。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                    }
+
+                    Section("实时性能调试（独立于 D1）") {
+                        Toggle("允许远程只读性能采样", isOn: $liveDebug.isEnabled)
+                        LabeledContent("在线状态", value: liveDebug.state)
+                        LabeledContent("调试会话", value: liveDebug.room)
+                        LabeledContent("最近采样", value: liveDebug.lastProbe)
+                        Button("复制调试配对码") {
+                            UIPasteboard.general.string = liveDebug.pairingCode
+                        }
+                        Text("配对码包含访问密钥，请只交给可信的测试端；远端只能读取指标和请求固定快照，无法发送消息或执行任意脚本。关闭后停止响应请求。")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
 
                     Section("故障演练与测试") {
@@ -158,6 +173,7 @@ struct OptimizedRootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             owner.setAppActive(phase == .active)
+            liveDebug.setForeground(phase == .active)
             if phase == .active {
                 supervisor.recordForeground()
                 telemetry.record(.foreground)
@@ -169,6 +185,9 @@ struct OptimizedRootView: View {
         }
         .onAppear {
             model.supervisor = supervisor
+            liveDebug.resourceGate = resourceGate
+            liveDebug.supervisor = supervisor
+            liveDebug.setForeground(scenePhase == .active)
             supervisor.recordLaunch()
             if supervisor.isCircuitOpen {
                 model.processTerminated = true
@@ -184,6 +203,7 @@ struct OptimizedRootView: View {
         .onReceive(NotificationCenter.default.publisher(
             for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
             telemetry.record(.memoryWarning, urgent: true)
+            liveDebug.memoryWarning()
         }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             telemetry.periodicTick(isActive: scenePhase == .active)
