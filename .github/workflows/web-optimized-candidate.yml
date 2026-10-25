@@ -1,9 +1,17 @@
 name: Web Optimized Signed Candidate
-# ARCHIVED 2026-10-13: standalone WKWebView Result Only was evaluated NO-GO.
-# Keep historical recipe for rollback; stop automatic candidate signing on pushes.
-# docs/optimized/RESULT_ONLY_GO_NO_GO_20261013.md
+# Strict standalone Result Only remains NO-GO (docs/optimized/RESULT_ONLY_GO_NO_GO_20261013.md).
+# R1 Native Supervisor / Resource Gate is a separate user-authorized 2026-10-25 candidate.
+# Signed candidate runs only on a reviewed, explicitly marked R1 commit (or authorized manual dispatch).
 on:
   workflow_dispatch:
+  push:
+    branches: ['feature/web-optimized-010-20261013']
+    paths:
+      - 'OptimizedApp/**'
+      - 'OptimizedTests/**'
+      - 'OptimizedUITests/**'
+      - 'project.yml'
+      - '.github/workflows/web-optimized-candidate.yml'
 permissions:
   contents: read
 concurrency:
@@ -11,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   candidate:
-    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/web-optimized-010-20261013'
+    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/web-optimized-010-20261013' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[native-r1-candidate]'))
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
@@ -43,8 +51,8 @@ jobs:
       - name: Compile and package unsigned candidate
         run: |
           set -euo pipefail
-          VERSION=0.1.2
-          BUILD=3
+          VERSION=0.1.3
+          BUILD=4
           xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/OptimizedCandidate" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" build
           APP="$RUNNER_TEMP/OptimizedCandidate/Build/Products/Release-iphoneos/ChatGPTWebOptimized.app"
           test -d "$APP"
@@ -81,7 +89,7 @@ jobs:
           assert result['ok'] and result['channel']=='candidate' and result['promoted'] is False
           assert result['source_sha']==os.environ['GITHUB_SHA']
           assert result['bundle_id']=='com.masakacj.chatgptweb.optimized'
-          assert result['version']=='0.1.2' and str(result['build'])=='3'
+          assert result['version']=='0.1.3' and str(result['build'])=='4'
           print(json.dumps({'candidate':result['install_page'],'mirrorStableUnchanged':True}))
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
               f.write('\nWeb Optimized signed candidate: '+result['install_page']+'\n\nMirror stable unchanged. Physical-iPhone acceptance remains required before promotion.\n')
@@ -104,12 +112,12 @@ jobs:
               names=z.namelist()
               info=plistlib.loads(z.read('Payload/ChatGPTWebOptimized.app/Info.plist'))
               assert info['CFBundleIdentifier']=='com.masakacj.chatgptweb.optimized'
-              assert info['CFBundleShortVersionString']=='0.1.2'
-              assert str(info['CFBundleVersion'])=='3'
+              assert info['CFBundleShortVersionString']=='0.1.3'
+              assert str(info['CFBundleVersion'])=='4'
               assert 'Payload/ChatGPTWebOptimized.app/embedded.mobileprovision' in names
               assert 'Payload/ChatGPTWebOptimized.app/_CodeSignature/CodeResources' in names
           digest=hashlib.sha256(Path('dist/candidate-signed.ipa').read_bytes()).hexdigest()
-          Path('dist/candidate-verification.json').write_text(json.dumps({'bundleId':info['CFBundleIdentifier'],'version':'0.1.2','build':'3','sha256':digest,'zipCRC':True,'physicalIPhoneAccepted':False,'promoted':False},indent=2))
+          Path('dist/candidate-verification.json').write_text(json.dumps({'bundleId':info['CFBundleIdentifier'],'version':'0.1.3','build':'4','sha256':digest,'zipCRC':True,'physicalIPhoneAccepted':False,'promoted':False},indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
