@@ -34,6 +34,7 @@ enum WebConfigurationFactory {
     static let observationWorld = WKContentWorld.world(name: "ChatGPTWebOptimized.Observation.v1")
     static let handlerName = "optimizedConversation"
 
+    @MainActor
     static func make(owner: ConversationManagerOwner,
                      handler: WeakOptimizedObservationHandler,
                      pcHistoryEnabled: Bool,
