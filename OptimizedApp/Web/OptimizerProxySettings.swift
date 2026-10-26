@@ -57,11 +57,11 @@ struct OptimizerProxyPlan: Equatable {
 }
 
 enum OptimizerProxyCredential {
-    static func load(_ kind: OptimizerProxyMode) -> String? {
+    static func load(_ kind: OptimizerProxyMode, pending: Bool = false) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.masakacj.chatgptweb.optimized.proxy",
-            kSecAttrAccount as String: kind.rawValue,
+            kSecAttrAccount as String: pending ? "pending-\(kind.rawValue)" : kind.rawValue,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -72,11 +72,12 @@ enum OptimizerProxyCredential {
     }
 
     @discardableResult
-    static func save(_ password: String, kind: OptimizerProxyMode) -> Bool {
+    static func save(_ password: String, kind: OptimizerProxyMode,
+                     pending: Bool = false) -> Bool {
         let key: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.masakacj.chatgptweb.optimized.proxy",
-            kSecAttrAccount as String: kind.rawValue
+            kSecAttrAccount as String: pending ? "pending-\(kind.rawValue)" : kind.rawValue
         ]
         guard !password.isEmpty else { return true } // blank means retain existing credential
         let data = Data(password.utf8)
@@ -88,6 +89,21 @@ enum OptimizerProxyCredential {
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
     }
+
+    /// Called only during native startup, before constructing any WKWebView.
+    static func commitPending() -> Bool {
+        for kind in [OptimizerProxyMode.home, .office] {
+            guard let staged = load(kind, pending: true), !staged.isEmpty else { continue }
+            guard save(staged, kind: kind) else { return false }
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: "com.masakacj.chatgptweb.optimized.proxy",
+                kSecAttrAccount as String: "pending-\(kind.rawValue)"
+            ]
+            SecItemDelete(query as CFDictionary)
+        }
+        return true
+    }
 }
 
 /// The only owner of proxy selection. Routes are applied before WKWebView load,
@@ -95,6 +111,7 @@ enum OptimizerProxyCredential {
 @MainActor
 final class OptimizerProxySettings: ObservableObject {
     private static let key = "optimized.proxy.plan.v1"
+    private static let pendingCredentialsKey = "optimized.proxy.pending.credentials.v1"
     private let defaults: UserDefaults
 
     @Published private(set) var plan: OptimizerProxyPlan
@@ -104,6 +121,10 @@ final class OptimizerProxySettings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        if defaults.bool(forKey: Self.pendingCredentialsKey),
+           OptimizerProxyCredential.commitPending() {
+            defaults.set(false, forKey: Self.pendingCredentialsKey)
+        }
         if let raw = defaults.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode(OptimizerProxyPlan.self, from: raw) {
             plan = saved
@@ -123,8 +144,12 @@ final class OptimizerProxySettings: ObservableObject {
             error = "Home 和 Office 必须填写有效的代理主机及端口；不会自动改为直连。"
             return false
         }
-        guard OptimizerProxyCredential.save(homePassword, kind: .home),
-              OptimizerProxyCredential.save(officePassword, kind: .office) else {
+        // Never overwrite active credentials in a process whose WebKit store
+        // has already been configured. Staged Keychain entries are promoted
+        // only on the next app startup, before any WKWebView is constructed.
+        let pending = routeLockedForProcess
+        guard OptimizerProxyCredential.save(homePassword, kind: .home, pending: pending),
+              OptimizerProxyCredential.save(officePassword, kind: .office, pending: pending) else {
             error = "代理密码未能写入 Keychain。"
             return false
         }
@@ -134,6 +159,7 @@ final class OptimizerProxySettings: ObservableObject {
                                           [(candidate.office, .office), (candidate.home, .home)]
             for (index, item) in profiles.enumerated() where index == 0 || candidate.backupEnabled {
                 if !item.0.username.isEmpty &&
+                    (OptimizerProxyCredential.load(item.1, pending: pending)?.isEmpty != false) &&
                     (OptimizerProxyCredential.load(item.1)?.isEmpty != false) {
                     error = "已填写代理用户名，但缺少 Keychain 密码。"
                     return false
@@ -145,6 +171,9 @@ final class OptimizerProxySettings: ObservableObject {
             return false
         }
         defaults.set(data, forKey: Self.key)
+        if pending && (!homePassword.isEmpty || !officePassword.isEmpty) {
+            defaults.set(true, forKey: Self.pendingCredentialsKey)
+        }
         if routeLockedForProcess {
             // Same-process WKWebsiteDataStore.default() is shared even after
             // temporary safe-mode views. Do not replace active route until relaunch.
