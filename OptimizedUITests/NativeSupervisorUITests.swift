@@ -21,6 +21,7 @@ final class NativeSupervisorUITests: XCTestCase {
     }
 
     func testSimulatedTerminationShowsNativeSafeModeAndAllowsRebuild() {
+        app.launchArguments = ["-uitest-proxy-direct"]
         app.launch()
 
         // 1. Verify app launches with its independent webview
@@ -74,6 +75,7 @@ final class NativeSupervisorUITests: XCTestCase {
     }
 
     func testStayInSafeModeKeepsSafeScreenActive() {
+        app.launchArguments = ["-uitest-proxy-direct"]
         app.launch()
 
         let diagnosticsButton = app.buttons["navigation.diagnostics.button"]

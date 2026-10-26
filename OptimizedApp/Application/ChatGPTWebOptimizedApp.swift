@@ -18,6 +18,8 @@ struct OptimizedRootView: View {
     @StateObject private var telemetry: OptimizedTelemetry
     @StateObject private var resourceGate = NativeResourceGate()
     @StateObject private var liveDebug = OptimizedLiveDebug()
+    @StateObject private var proxySettings = OptimizerProxySettings()
+    @State private var showingProxySettings = false
     @AppStorage("optimized.pcHistory.enabled.v1") private var pcHistoryEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
@@ -48,6 +50,14 @@ struct OptimizedRootView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
+                    showingProxySettings = true
+                } label: {
+                    Image(systemName: "network")
+                        .frame(width: 36, height: 32)
+                }
+                .accessibilityLabel("代理设置")
+                .accessibilityIdentifier("navigation.proxy.button")
+                Button {
                     model.diagnosticsEnabled = true
                 } label: {
                     Image(systemName: "stethoscope")
@@ -68,12 +78,37 @@ struct OptimizedRootView: View {
                     supervisor: supervisor
                 )
                 .transition(.opacity)
+            } else if !proxySettings.canLoadWebView {
+                VStack(spacing: 16) {
+                    Image(systemName: "network")
+                        .font(.system(size: 38))
+                    Text("请配置 Home / Office 代理")
+                        .font(.headline)
+                    Text("已启用禁止自动直连。没有已配置的代理时不会加载 ChatGPT。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("设置代理") { showingProxySettings = true }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("proxy.configure.button")
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 OptimizedWebView(model: model, owner: owner, telemetry: telemetry,
                                  supervisor: supervisor, resourceGate: resourceGate,
                                  liveDebug: liveDebug,
-                                 pcHistoryEnabled: pcHistoryEnabled)
+                                 pcHistoryEnabled: pcHistoryEnabled,
+                                 proxySettings: proxySettings)
                     .id(model.webViewGeneration)
+            }
+        }
+        .sheet(isPresented: $showingProxySettings) {
+            OptimizerProxyEditor(settings: proxySettings,
+                                 canReload: owner.projection.task != .running && owner.projection.task != .waiting) {
+                owner.invalidateDocument()
+                model.webViewGeneration = UUID()
+                showingProxySettings = false
             }
         }
         .sheet(isPresented: $model.diagnosticsEnabled) {
@@ -98,6 +133,17 @@ struct OptimizedRootView: View {
                     Section("PC Chrome 长对话优化") {
                         Toggle("历史内容布局减负（下次重建网页生效）", isOn: $pcHistoryEnabled)
                         Text("与 PC 扩展保持相同的低干预方向：长对话至少 24 个消息块才启用，只对较早历史应用 WebKit 布局减负；最新 12 条消息及正在运行、等待授权的内容保持原样。不裁剪 DOM 或拦截 MCP。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+
+                    Section("独立网络代理") {
+                        LabeledContent("当前线路", value: proxySettings.plan.description)
+                        LabeledContent("代理配置", value: proxySettings.canLoadWebView ? "就绪" : "尚未配置或缺少代理凭据")
+                        Button("修改代理设置") {
+                            model.diagnosticsEnabled = false
+                            showingProxySettings = true
+                        }
+                        Text("仅作用于 Optimizer 的 WebKit 页面；禁止代理失效时静默直连，切换线路必须由用户确认。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
 

@@ -10,6 +10,7 @@ struct OptimizedWebView: UIViewRepresentable {
     let resourceGate: NativeResourceGate
     let liveDebug: OptimizedLiveDebug
     let pcHistoryEnabled: Bool
+    let proxySettings: OptimizerProxySettings
 
     init(model: OptimizedAppModel,
          owner: ConversationManagerOwner,
@@ -17,7 +18,8 @@ struct OptimizedWebView: UIViewRepresentable {
          supervisor: NativeOptimizationSupervisor? = nil,
          resourceGate: NativeResourceGate,
          liveDebug: OptimizedLiveDebug,
-         pcHistoryEnabled: Bool) {
+         pcHistoryEnabled: Bool,
+         proxySettings: OptimizerProxySettings) {
         self.model = model
         self.owner = owner
         self.telemetry = telemetry
@@ -25,17 +27,21 @@ struct OptimizedWebView: UIViewRepresentable {
         self.resourceGate = resourceGate
         self.liveDebug = liveDebug
         self.pcHistoryEnabled = pcHistoryEnabled
+        self.proxySettings = proxySettings
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(model: model, owner: owner, telemetry: telemetry,
-                    supervisor: supervisor, liveDebug: liveDebug)
+                    supervisor: supervisor, liveDebug: liveDebug,
+                    proxySettings: proxySettings)
     }
 
     func makeUIView(context: Context) -> WKWebView {
         let handler = context.coordinator.handler
-        let configuration = WebConfigurationFactory.make(owner: owner, handler: handler,
-                                                         pcHistoryEnabled: pcHistoryEnabled && supervisor?.isSafeModeActive != true)
+        let (configuration, proxyReady) = WebConfigurationFactory.make(
+            owner: owner, handler: handler,
+            pcHistoryEnabled: pcHistoryEnabled && supervisor?.isSafeModeActive != true,
+            proxySettings: proxySettings)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.accessibilityIdentifier = "optimized.webview"
         handler.webView = webView
@@ -61,6 +67,10 @@ struct OptimizedWebView: UIViewRepresentable {
         let request = URLRequest(url: model.targetURL,
                                  cachePolicy: .useProtocolCachePolicy,
                                  timeoutInterval: 45)
+        guard proxyReady else {
+            model.status = "代理未就绪：为防止直连，网页没有发起任何请求"
+            return webView
+        }
         WebConfigurationFactory.installResourceGate(resourceGate, in: configuration,
                                                      safeMode: supervisor?.isSafeModeActive == true) { _ in
             // Do not navigate a retired web view if the user entered native safe mode.
@@ -94,21 +104,26 @@ struct OptimizedWebView: UIViewRepresentable {
         let owner: ConversationManagerOwner
         let telemetry: OptimizedTelemetry
         let liveDebug: OptimizedLiveDebug
+        let proxySettings: OptimizerProxySettings
         weak var supervisor: NativeOptimizationSupervisor?
         let handler: WeakOptimizedObservationHandler
         weak var webView: WKWebView?
         private var destinations: [ObjectIdentifier: URL] = [:]
         private var hasTerminated = false
+        private var hasCommittedNavigation = false
+        private var bootstrapFailoverAttempted = false
 
         init(model: OptimizedAppModel,
              owner: ConversationManagerOwner,
              telemetry: OptimizedTelemetry,
              supervisor: NativeOptimizationSupervisor?,
-             liveDebug: OptimizedLiveDebug) {
+             liveDebug: OptimizedLiveDebug,
+             proxySettings: OptimizerProxySettings) {
             self.model = model
             self.owner = owner
             self.telemetry = telemetry
             self.liveDebug = liveDebug
+            self.proxySettings = proxySettings
             self.supervisor = supervisor
             handler = WeakOptimizedObservationHandler(owner: owner)
         }
@@ -120,7 +135,12 @@ struct OptimizedWebView: UIViewRepresentable {
             liveDebug.navigationStart()
         }
 
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            hasCommittedNavigation = true
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            hasCommittedNavigation = true
             model.markReady()
             telemetry.record(.navigationFinish, route: routeCategory(for: webView))
             liveDebug.navigationFinish()
@@ -132,8 +152,24 @@ struct OptimizedWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            model.status = "无法打开页面"
             recordNavigationError(error, webView: webView)
+            let nsError = error as NSError
+            let transportFailure = nsError.domain == NSURLErrorDomain &&
+                [NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost,
+                 NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost].contains(nsError.code)
+            // Only a never-committed initial ChatGPT home navigation can retry via
+            // another configured proxy. Never replay a saved conversation or POST.
+            if self.webView === webView && !bootstrapFailoverAttempted &&
+                !hasCommittedNavigation && model.targetURL.host == "chatgpt.com" &&
+                model.targetURL.path == "/" && transportFailure &&
+                proxySettings.selectBackupForInitialLoad() {
+                bootstrapFailoverAttempted = true
+                model.status = "主代理连接失败，正在尝试备用代理"
+                owner.invalidateDocument()
+                model.webViewGeneration = UUID()
+                return
+            }
+            model.status = "代理连接失败（不会自动直连）"
         }
 
         /// On WebContent termination:

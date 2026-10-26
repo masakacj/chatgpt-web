@@ -36,7 +36,8 @@ enum WebConfigurationFactory {
 
     static func make(owner: ConversationManagerOwner,
                      handler: WeakOptimizedObservationHandler,
-                     pcHistoryEnabled: Bool) -> WKWebViewConfiguration {
+                     pcHistoryEnabled: Bool,
+                     proxySettings: OptimizerProxySettings) -> (WKWebViewConfiguration, Bool) {
         let controller = WKUserContentController()
         controller.addScriptMessageHandler(handler, contentWorld: observationWorld, name: handlerName)
         if let url = Bundle.main.url(forResource: "pc-long-chat-adapter", withExtension: "js"),
@@ -53,13 +54,15 @@ enum WebConfigurationFactory {
         }
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
-        configuration.websiteDataStore = .default()
+        let websiteDataStore = WKWebsiteDataStore.default()
+        let proxyReady = proxySettings.configure(websiteDataStore)
+        configuration.websiteDataStore = websiteDataStore
         configuration.processPool = WKProcessPool()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        return configuration
+        return (configuration, proxyReady)
     }
 
     /// Rules must be installed before the first load; a compile error never blocks navigation.
