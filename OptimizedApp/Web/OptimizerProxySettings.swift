@@ -112,30 +112,47 @@ enum OptimizerProxyCredential {
 final class OptimizerProxySettings: ObservableObject {
     private static let key = "optimized.proxy.plan.v1"
     private static let pendingCredentialsKey = "optimized.proxy.pending.credentials.v1"
+    // @MainActor process-wide guard: WindowGroup can create multiple scenes.
+    // Do not promote staged credentials or reconfigure the shared default
+    // WebKit data store from a second settings owner in the same process.
+    private static var didAttemptStartupPromotion = false
+    private static var configuredThisProcess = false
+    private static var processPlan: OptimizerProxyPlan?
     private let defaults: UserDefaults
+    private var locallyConfigured = false
+
+    private var routeLockedForProcess: Bool {
+        get { defaults === UserDefaults.standard ? Self.configuredThisProcess : locallyConfigured }
+        set {
+            if defaults === UserDefaults.standard { Self.configuredThisProcess = newValue }
+            else { locallyConfigured = newValue }
+        }
+    }
 
     @Published private(set) var plan: OptimizerProxyPlan
     @Published private(set) var error: String?
     @Published private(set) var pendingRestart = false
-    private var routeLockedForProcess = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if defaults.bool(forKey: Self.pendingCredentialsKey),
-           OptimizerProxyCredential.commitPending() {
-            defaults.set(false, forKey: Self.pendingCredentialsKey)
+        let production = defaults === UserDefaults.standard
+        if !production || !Self.didAttemptStartupPromotion {
+            if defaults.bool(forKey: Self.pendingCredentialsKey),
+               OptimizerProxyCredential.commitPending() {
+                defaults.set(false, forKey: Self.pendingCredentialsKey)
+            }
+            if production { Self.didAttemptStartupPromotion = true }
         }
-        if let raw = defaults.data(forKey: Self.key),
-           let saved = try? JSONDecoder().decode(OptimizerProxyPlan.self, from: raw) {
-            plan = saved
-        } else {
-            plan = OptimizerProxyPlan()
-        }
+        let stored = defaults.data(forKey: Self.key)
+            .flatMap { try? JSONDecoder().decode(OptimizerProxyPlan.self, from: $0) }
+            ?? OptimizerProxyPlan()
+        plan = production ? (Self.processPlan ?? stored) : stored
         // An explicitly tagged simulator fixture keeps old native UI tests isolated
         // from production's fail-closed proxy bootstrap.
         if ProcessInfo.processInfo.arguments.contains("-uitest-proxy-direct") {
             plan.mode = .direct
         }
+        if production && Self.processPlan == nil { Self.processPlan = plan }
     }
 
     func apply(_ candidate: OptimizerProxyPlan, homePassword: String,
@@ -180,6 +197,7 @@ final class OptimizerProxySettings: ObservableObject {
             pendingRestart = true
         } else {
             plan = candidate
+            if defaults === UserDefaults.standard { Self.processPlan = candidate }
         }
         error = nil
         return true
