@@ -35,9 +35,17 @@ enum WebConfigurationFactory {
     static let handlerName = "optimizedConversation"
 
     static func make(owner: ConversationManagerOwner,
-                     handler: WeakOptimizedObservationHandler) -> WKWebViewConfiguration {
+                     handler: WeakOptimizedObservationHandler,
+                     pcHistoryEnabled: Bool) -> WKWebViewConfiguration {
         let controller = WKUserContentController()
         controller.addScriptMessageHandler(handler, contentWorld: observationWorld, name: handlerName)
+        if let url = Bundle.main.url(forResource: "pc-long-chat-adapter", withExtension: "js"),
+           let source = try? String(contentsOf: url, encoding: .utf8) {
+            let prefix = "globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ = \(pcHistoryEnabled);\n"
+            controller.addUserScript(WKUserScript(source: prefix + source,
+                                                 injectionTime: .atDocumentEnd,
+                                                 forMainFrameOnly: true, in: observationWorld))
+        }
         if let url = Bundle.main.url(forResource: "conversation-observer", withExtension: "js"),
            let source = try? String(contentsOf: url, encoding: .utf8) {
             controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentEnd,

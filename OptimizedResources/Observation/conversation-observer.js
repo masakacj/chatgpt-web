@@ -33,7 +33,7 @@
     const turn = turns[turns.length - 1] || null;
     const states = turn?.querySelectorAll('[data-talvt-turn-state]') || [];
     const stateNode = turn?.hasAttribute('data-talvt-turn-state') ? turn : states[states.length - 1] || null;
-    return { root, turn, stateNode, key: turn?.getAttribute('data-turn-key') || turn?.getAttribute('data-testid') || null };
+    return { root, turn, stateNode, turns, key: turn?.getAttribute('data-turn-key') || turn?.getAttribute('data-testid') || null };
   };
   const answerReady = turn => {
     if (!turn) return false;
@@ -71,7 +71,7 @@
     return { panel: main, button: button(main) || null };
   };
   const snapshot = () => {
-    const { root, turn, stateNode, key } = latest();
+    const { root, turn, stateNode, turns, key } = latest();
     const raw = stateNode?.getAttribute('data-talvt-turn-state') || '';
     const currentTurn = !(priorTurnKey && key === priorTurnKey);
     const newTurn = Boolean(currentTurn && key && lastTurnKey && key !== lastTurnKey);
@@ -83,6 +83,8 @@
     const fields = [...document.querySelectorAll('#prompt-textarea,main textarea,main [contenteditable="true"]')];
     const hasDraft = fields.some(node => ((node.value || node.textContent || '').trim().length > 0));
     const error = loadError(root || document.querySelector('main'));
+    // Reuse the already bounded CM turn scan; do not create a second observer.
+    globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.refresh(current, turns, { running, waiting });
     let nativeStatus = 'unknown';
     if (waiting) nativeStatus = 'waiting';
     else if (running) nativeStatus = 'running';
@@ -139,6 +141,7 @@
     const id = conversationId();
     if (!force && id === current) { bind(); return; }
     if (id !== current) {
+      globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.reset();
       priorTurnKey = current ? lastTurnKey : null; current = id; routeSerial++;
       recoveryCanceled = false; submitUntil = 0;
       clearTimeout(activeTimer); timers.delete(activeTimer); activeTimer = 0;
@@ -178,6 +181,7 @@
   };
   const destroy = () => {
     destroyed = true; observer?.disconnect(); timers.forEach(clearTimeout); timers.clear();
+    globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.destroy();
     document.removeEventListener('click', clicked, true);
     document.removeEventListener('submit', submit, true);
     document.removeEventListener('input', input, true);

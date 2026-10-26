@@ -9,19 +9,22 @@ struct OptimizedWebView: UIViewRepresentable {
     let supervisor: NativeOptimizationSupervisor?
     let resourceGate: NativeResourceGate
     let liveDebug: OptimizedLiveDebug
+    let pcHistoryEnabled: Bool
 
     init(model: OptimizedAppModel,
          owner: ConversationManagerOwner,
          telemetry: OptimizedTelemetry,
          supervisor: NativeOptimizationSupervisor? = nil,
          resourceGate: NativeResourceGate,
-         liveDebug: OptimizedLiveDebug) {
+         liveDebug: OptimizedLiveDebug,
+         pcHistoryEnabled: Bool) {
         self.model = model
         self.owner = owner
         self.telemetry = telemetry
         self.supervisor = supervisor
         self.resourceGate = resourceGate
         self.liveDebug = liveDebug
+        self.pcHistoryEnabled = pcHistoryEnabled
     }
 
     func makeCoordinator() -> Coordinator {
@@ -31,7 +34,8 @@ struct OptimizedWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let handler = context.coordinator.handler
-        let configuration = WebConfigurationFactory.make(owner: owner, handler: handler)
+        let configuration = WebConfigurationFactory.make(owner: owner, handler: handler,
+                                                         pcHistoryEnabled: pcHistoryEnabled && supervisor?.isSafeModeActive != true)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.accessibilityIdentifier = "optimized.webview"
         handler.webView = webView

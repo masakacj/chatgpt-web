@@ -18,6 +18,7 @@ struct OptimizedRootView: View {
     @StateObject private var telemetry: OptimizedTelemetry
     @StateObject private var resourceGate = NativeResourceGate()
     @StateObject private var liveDebug = OptimizedLiveDebug()
+    @AppStorage("optimized.pcHistory.enabled.v1") private var pcHistoryEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
     @MainActor
@@ -70,7 +71,8 @@ struct OptimizedRootView: View {
             } else {
                 OptimizedWebView(model: model, owner: owner, telemetry: telemetry,
                                  supervisor: supervisor, resourceGate: resourceGate,
-                                 liveDebug: liveDebug)
+                                 liveDebug: liveDebug,
+                                 pcHistoryEnabled: pcHistoryEnabled)
                     .id(model.webViewGeneration)
             }
         }
@@ -91,6 +93,12 @@ struct OptimizedRootView: View {
                         if let reason = supervisor.lastFailureReason {
                             LabeledContent("最近状态", value: reason)
                         }
+                    }
+
+                    Section("PC Chrome 长对话优化") {
+                        Toggle("历史内容布局减负（下次重建网页生效）", isOn: $pcHistoryEnabled)
+                        Text("与 PC 扩展保持相同的低干预方向：长对话至少 24 个消息块才启用，只对较早历史应用 WebKit 布局减负；最新 12 条消息及正在运行、等待授权的内容保持原样。不裁剪 DOM 或拦截 MCP。")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
 
                     Section("资源加载策略") {
