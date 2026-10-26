@@ -60,6 +60,10 @@ struct OptimizerProxyEditor: View {
                 Section("应用") {
                     Text(draft.description)
                         .font(.subheadline)
+                    if settings.pendingRestart {
+                        Text("配置已保存。请彻底退出并重新打开 App 应用新线路。")
+                            .foregroundStyle(.orange).font(.footnote)
+                    }
                     if let error = settings.error {
                         Text(error).foregroundStyle(.red).font(.footnote)
                     }

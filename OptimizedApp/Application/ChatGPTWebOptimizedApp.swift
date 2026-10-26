@@ -138,7 +138,7 @@ struct OptimizedRootView: View {
 
                     Section("独立网络代理") {
                         LabeledContent("当前线路", value: proxySettings.plan.description)
-                        LabeledContent("代理配置", value: proxySettings.canLoadWebView ? "就绪" : "尚未配置或缺少代理凭据")
+                        LabeledContent("代理配置", value: proxySettings.pendingRestart ? "已保存，需重新打开 App 生效" : (proxySettings.canLoadWebView ? "就绪" : "尚未配置或缺少代理凭据"))
                         Button("修改代理设置") {
                             model.diagnosticsEnabled = false
                             showingProxySettings = true

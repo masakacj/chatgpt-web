@@ -66,6 +66,30 @@ final class OptimizerProxySettingsTests: XCTestCase {
         XCTAssertFalse(serialized.contains("token"))
     }
 
+    func testRouteChangeAfterWebViewCreatedRequiresNewAppProcess() {
+        let name = "optimizer-proxy-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = OptimizerProxySettings(defaults: defaults)
+        var first = settings.plan
+        first.home = endpoint()
+        first.office = endpoint("office.proxy.example", port: 8443)
+        XCTAssertTrue(settings.apply(first, homePassword: "", officePassword: ""))
+        let store = WKWebsiteDataStore.nonPersistent()
+        XCTAssertTrue(settings.configure(store))
+        let oldCount = store.proxyConfigurations.count
+        var new = first
+        new.mode = .direct
+        XCTAssertTrue(settings.apply(new, homePassword: "", officePassword: ""))
+        XCTAssertTrue(settings.pendingRestart)
+        XCTAssertEqual(settings.plan, first, "Current process remains on original proxy")
+        XCTAssertTrue(settings.configure(store))
+        XCTAssertEqual(store.proxyConfigurations.count, oldCount,
+                       "No in-process route reconfiguration, even after WebView rebuild")
+        let relaunched = OptimizerProxySettings(defaults: defaults)
+        XCTAssertEqual(relaunched.plan, new, "New process loads newly persisted choice")
+    }
+
     func testConfiguredNativeProxiesDoNotAllowDirectFailover() {
         let name = "optimizer-proxy-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!

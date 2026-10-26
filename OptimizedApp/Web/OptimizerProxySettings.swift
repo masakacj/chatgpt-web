@@ -99,6 +99,8 @@ final class OptimizerProxySettings: ObservableObject {
 
     @Published private(set) var plan: OptimizerProxyPlan
     @Published private(set) var error: String?
+    @Published private(set) var pendingRestart = false
+    private var routeLockedForProcess = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -143,7 +145,13 @@ final class OptimizerProxySettings: ObservableObject {
             return false
         }
         defaults.set(data, forKey: Self.key)
-        plan = candidate
+        if routeLockedForProcess {
+            // Same-process WKWebsiteDataStore.default() is shared even after
+            // temporary safe-mode views. Do not replace active route until relaunch.
+            pendingRestart = true
+        } else {
+            plan = candidate
+        }
         error = nil
         return true
     }
@@ -163,8 +171,11 @@ final class OptimizerProxySettings: ObservableObject {
     /// No nil proxy when mode expects a configured route: caller must fail closed.
     func configure(_ store: WKWebsiteDataStore) -> Bool {
         guard canLoadWebView else { return false }
+        // An existing store may still be in use by a retired WKWebView.
+        if routeLockedForProcess { return true }
         if plan.mode == .direct {
             store.proxyConfigurations = []
+            routeLockedForProcess = true
             return true
         }
         let routes: [(OptimizerProxyEndpoint, OptimizerProxyMode)]
@@ -197,6 +208,7 @@ final class OptimizerProxySettings: ObservableObject {
         }
         guard !configs.isEmpty else { return false }
         store.proxyConfigurations = configs
+        routeLockedForProcess = true
         return true
     }
 }
