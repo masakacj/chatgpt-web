@@ -191,14 +191,14 @@ struct OptimizedWebView: UIViewRepresentable {
                    let host = url.host?.lowercased(),
                    host != "chatgpt.com" && !host.hasSuffix(".chatgpt.com") &&
                    host != "openai.com" && !host.hasSuffix(".openai.com") {
-                    UIApplication.shared.open(url)
+                    askBeforeOpeningOutsideProxy(url)
                     decisionHandler(.cancel)
                 } else {
                     decisionHandler(.allow)
                 }
                 return
             }
-            if UIApplication.shared.canOpenURL(url) { UIApplication.shared.open(url) }
+            if UIApplication.shared.canOpenURL(url) { askBeforeOpeningOutsideProxy(url) }
             decisionHandler(.cancel)
         }
 
@@ -220,7 +220,7 @@ struct OptimizedWebView: UIViewRepresentable {
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
                 if url.scheme == "https" { webView.load(URLRequest(url: url)) }
-                else if UIApplication.shared.canOpenURL(url) { UIApplication.shared.open(url) }
+                else if UIApplication.shared.canOpenURL(url) { askBeforeOpeningOutsideProxy(url) }
             }
             return nil
         }
@@ -287,6 +287,19 @@ struct OptimizedWebView: UIViewRepresentable {
             destinations.removeValue(forKey: ObjectIdentifier(download))
             model.status = "下载失败"
             telemetry.record(.downloadError, errorCode: (error as NSError).code, urgent: true)
+        }
+
+        private func askBeforeOpeningOutsideProxy(_ url: URL) {
+            let destination = url.host ?? (url.scheme ?? "其他应用")
+            let prompt = UIAlertController(
+                title: "将离开 Optimizer 代理",
+                message: "即将交给外部应用打开 \(destination)。外部应用不受 Optimizer 独立代理保护，可能通过手机网络直连。是否继续？",
+                preferredStyle: .alert)
+            prompt.addAction(UIAlertAction(title: "取消", style: .cancel))
+            prompt.addAction(UIAlertAction(title: "仍要在外部应用打开", style: .default) { _ in
+                UIApplication.shared.open(url)
+            })
+            present(prompt)
         }
 
         private func present(_ controller: UIViewController) {
