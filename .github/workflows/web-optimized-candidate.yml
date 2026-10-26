@@ -1,6 +1,6 @@
 name: Web Optimized Signed Candidate
 # Strict standalone Result Only remains NO-GO (docs/optimized/RESULT_ONLY_GO_NO_GO_20261013.md).
-# R1 Native Supervisor / Resource Gate is a separate user-authorized 2026-10-25 candidate.
+# Optimizer 0.1.6 app-only Home/Office CONNECT candidate (CC independent R6 approved).
 # Signed candidate runs only on a reviewed, explicitly marked R1 commit (or authorized manual dispatch).
 on:
   workflow_dispatch:
