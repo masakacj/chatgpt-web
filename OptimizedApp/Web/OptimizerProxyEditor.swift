@@ -67,12 +67,12 @@ struct OptimizerProxyEditor: View {
                         Text("当前对话仍在执行或等待工具授权，暂不允许切换代理。")
                             .foregroundStyle(.orange).font(.footnote)
                     }
-                    Button("保存并重新连接网页") {
+                    Button("保存配置（重启 App 后生效）") {
                         showApplyConfirmation = true
                     }
                     .disabled(!draft.ready || !canReload)
                     .accessibilityIdentifier("proxy.apply.button")
-                    Text("保存会复用现有 Optimizer 登录态，在新的 WKWebView 导航前应用代理。不清空 Cookie；目前端点未由系统自动填入。")
+                    Text("设置将在下次完全退出并重新打开 App 时应用；首次尚未加载网页的安装可直接开始。避免在旧 WebView 连接仍存活时修改共享 WebKit 数据存储。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -83,17 +83,17 @@ struct OptimizerProxyEditor: View {
                 }
             }
             .onAppear { draft = settings.plan }
-            .confirmationDialog("应用新的网络代理？",
+            .confirmationDialog("保存新的网络代理配置？",
                                 isPresented: $showApplyConfirmation,
                                 titleVisibility: .visible) {
-                Button("重新连接（不重发消息）") {
+                Button("保存（不重发消息）") {
                     if settings.apply(draft, homePassword: homePassword,
                                       officePassword: officePassword) {
                         onApplied()
                     }
                 }
             } message: {
-                Text("旧 WebView 将被销毁并新建。请确认没有未完成的上传、发送或工具确认操作。")
+                Text("当前网页不会热重建；请在完成当前任务后完全退出并重新打开 Optimizer，新配置才会生效。")
             }
         }
     }

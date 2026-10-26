@@ -99,7 +99,6 @@ final class OptimizerProxySettings: ObservableObject {
 
     @Published private(set) var plan: OptimizerProxyPlan
     @Published private(set) var error: String?
-    @Published private(set) var activeBackup = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -127,13 +126,24 @@ final class OptimizerProxySettings: ObservableObject {
             error = "代理密码未能写入 Keychain。"
             return false
         }
+        if candidate.mode != .direct {
+            let profiles: [(OptimizerProxyEndpoint, OptimizerProxyMode)] =
+                candidate.mode == .home ? [(candidate.home, .home), (candidate.office, .office)] :
+                                          [(candidate.office, .office), (candidate.home, .home)]
+            for (index, item) in profiles.enumerated() where index == 0 || candidate.backupEnabled {
+                if !item.0.username.isEmpty &&
+                    (OptimizerProxyCredential.load(item.1)?.isEmpty != false) {
+                    error = "已填写代理用户名，但缺少 Keychain 密码。"
+                    return false
+                }
+            }
+        }
         guard let data = try? JSONEncoder().encode(candidate) else {
             error = "代理配置保存失败。"
             return false
         }
         defaults.set(data, forKey: Self.key)
         plan = candidate
-        activeBackup = false
         error = nil
         return true
     }
@@ -150,15 +160,6 @@ final class OptimizerProxySettings: ObservableObject {
         return true
     }
 
-    /// Failover is permitted only at initial GET bootstrap before any navigation commits.
-    /// It changes the order for the next new WKWebView and never retries a POST.
-    func selectBackupForInitialLoad() -> Bool {
-        guard plan.mode != .direct, plan.backupEnabled, !activeBackup,
-              plan.home.valid, plan.office.valid else { return false }
-        activeBackup = true
-        return true
-    }
-
     /// No nil proxy when mode expects a configured route: caller must fail closed.
     func configure(_ store: WKWebsiteDataStore) -> Bool {
         guard canLoadWebView else { return false }
@@ -167,7 +168,7 @@ final class OptimizerProxySettings: ObservableObject {
             return true
         }
         let routes: [(OptimizerProxyEndpoint, OptimizerProxyMode)]
-        let useHomeFirst = (plan.mode == .home) != activeBackup
+        let useHomeFirst = plan.mode == .home
         if useHomeFirst {
             routes = plan.backupEnabled ? [(plan.home, .home), (plan.office, .office)] :
                 [(plan.home, .home)]

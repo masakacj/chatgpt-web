@@ -66,22 +66,6 @@ final class OptimizerProxySettingsTests: XCTestCase {
         XCTAssertFalse(serialized.contains("token"))
     }
 
-    func testBackupIsOneShotAndNeverBecomesDirect() {
-        let defaults = UserDefaults(suiteName: "optimizer-proxy-" + UUID().uuidString)!
-        var plan = OptimizerProxyPlan()
-        plan.home = endpoint()
-        plan.office = endpoint("office.proxy.example", port: 8443)
-        let settings = OptimizerProxySettings(defaults: defaults)
-        XCTAssertTrue(settings.apply(plan, homePassword: "", officePassword: ""))
-        XCTAssertTrue(settings.selectBackupForInitialLoad())
-        XCTAssertTrue(settings.activeBackup)
-        XCTAssertFalse(settings.selectBackupForInitialLoad())
-        XCTAssertEqual(settings.plan.mode, .home, "Saved choice remains Home")
-        plan.backupEnabled = false
-        XCTAssertTrue(settings.apply(plan, homePassword: "", officePassword: ""))
-        XCTAssertFalse(settings.selectBackupForInitialLoad())
-    }
-
     func testConfiguredNativeProxiesDoNotAllowDirectFailover() {
         let name = "optimizer-proxy-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!

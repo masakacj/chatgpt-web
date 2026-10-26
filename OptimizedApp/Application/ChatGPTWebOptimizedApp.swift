@@ -106,8 +106,8 @@ struct OptimizedRootView: View {
         .sheet(isPresented: $showingProxySettings) {
             OptimizerProxyEditor(settings: proxySettings,
                                  canReload: owner.projection.task != .running && owner.projection.task != .waiting) {
-                owner.invalidateDocument()
-                model.webViewGeneration = UUID()
+                // Do not mutate the shared WKWebsiteDataStore while an old WebView
+                // might still own an in-flight connection. Next app start applies it.
                 showingProxySettings = false
             }
         }

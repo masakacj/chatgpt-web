@@ -32,8 +32,7 @@ struct OptimizedWebView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(model: model, owner: owner, telemetry: telemetry,
-                    supervisor: supervisor, liveDebug: liveDebug,
-                    proxySettings: proxySettings)
+                    supervisor: supervisor, liveDebug: liveDebug)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -104,26 +103,21 @@ struct OptimizedWebView: UIViewRepresentable {
         let owner: ConversationManagerOwner
         let telemetry: OptimizedTelemetry
         let liveDebug: OptimizedLiveDebug
-        let proxySettings: OptimizerProxySettings
         weak var supervisor: NativeOptimizationSupervisor?
         let handler: WeakOptimizedObservationHandler
         weak var webView: WKWebView?
         private var destinations: [ObjectIdentifier: URL] = [:]
         private var hasTerminated = false
-        private var hasCommittedNavigation = false
-        private var bootstrapFailoverAttempted = false
 
         init(model: OptimizedAppModel,
              owner: ConversationManagerOwner,
              telemetry: OptimizedTelemetry,
              supervisor: NativeOptimizationSupervisor?,
-             liveDebug: OptimizedLiveDebug,
-             proxySettings: OptimizerProxySettings) {
+             liveDebug: OptimizedLiveDebug) {
             self.model = model
             self.owner = owner
             self.telemetry = telemetry
             self.liveDebug = liveDebug
-            self.proxySettings = proxySettings
             self.supervisor = supervisor
             handler = WeakOptimizedObservationHandler(owner: owner)
         }
@@ -135,12 +129,7 @@ struct OptimizedWebView: UIViewRepresentable {
             liveDebug.navigationStart()
         }
 
-        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            hasCommittedNavigation = true
-        }
-
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            hasCommittedNavigation = true
             model.markReady()
             telemetry.record(.navigationFinish, route: routeCategory(for: webView))
             liveDebug.navigationFinish()
@@ -153,23 +142,7 @@ struct OptimizedWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             recordNavigationError(error, webView: webView)
-            let nsError = error as NSError
-            let transportFailure = nsError.domain == NSURLErrorDomain &&
-                [NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost,
-                 NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost].contains(nsError.code)
-            // Only a never-committed initial ChatGPT home navigation can retry via
-            // another configured proxy. Never replay a saved conversation or POST.
-            if self.webView === webView && !bootstrapFailoverAttempted &&
-                !hasCommittedNavigation && model.targetURL.host == "chatgpt.com" &&
-                model.targetURL.path == "/" && transportFailure &&
-                proxySettings.selectBackupForInitialLoad() {
-                bootstrapFailoverAttempted = true
-                model.status = "主代理连接失败，正在尝试备用代理"
-                owner.invalidateDocument()
-                model.webViewGeneration = UUID()
-                return
-            }
-            model.status = "代理连接失败（不会自动直连）"
+            model.status = "代理连接失败（不会自动直连或重放请求）"
         }
 
         /// On WebContent termination:
