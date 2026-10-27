@@ -20,6 +20,13 @@ final class OptimizedLiveDebug: ObservableObject {
     private var navigationMs = 0.0
     private var loop: Task<Void, Never>?
     private var foreground = true
+    private var activeUntil = Date.distantPast
+    private let activeInterval: TimeInterval = 3.0
+    private let idleInterval: TimeInterval = 20.0
+
+    var pollInterval: TimeInterval {
+        Date() < activeUntil ? activeInterval : idleInterval
+    }
 
     @Published var isEnabled: Bool {
         didSet {
@@ -51,7 +58,10 @@ final class OptimizedLiveDebug: ObservableObject {
     }
 
     func detach(_ view: WKWebView) {
-        if webView === view { webView = nil }
+        if webView === view {
+            webView = nil
+            stop()
+        }
     }
 
     func setForeground(_ value: Bool) {
@@ -77,21 +87,37 @@ final class OptimizedLiveDebug: ObservableObject {
     func memoryWarning() { report(kind: "memory_warning") }
 
     private func start() {
-        guard isEnabled, foreground, loop == nil else { return }
+        guard isEnabled, foreground, webView != nil, supervisor?.isSafeModeActive != true, loop == nil else { return }
         state = "实时连接中"
         loop = Task { [weak self] in
             while !Task.isCancelled {
-                guard self != nil else { return }
-                await self?.poll()
-                try? await Task.sleep(for: .seconds(3))
+                guard let self else { return }
+                guard self.isEnabled, self.foreground, self.webView != nil, self.supervisor?.isSafeModeActive != true else {
+                    self.stop()
+                    return
+                }
+                await self.poll()
+                let interval = self.pollInterval
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
 
-    private func stop() {
+    func stop() {
         loop?.cancel()
         loop = nil
-        state = isEnabled ? "后台暂停" : "关闭"
+        activeUntil = .distantPast
+        if !isEnabled {
+            state = "关闭"
+        } else if supervisor?.isSafeModeActive == true {
+            state = "安全模式暂停"
+        } else if webView == nil {
+            state = "网页未就绪暂停"
+        } else if !foreground {
+            state = "后台暂停"
+        } else {
+            state = "暂停"
+        }
     }
 
     private func request(_ action: String, method: String = "GET",
@@ -126,25 +152,33 @@ final class OptimizedLiveDebug: ObservableObject {
     }
 
     private func poll() async {
-        guard isEnabled, foreground else { return }
+        guard isEnabled, foreground, webView != nil, supervisor?.isSafeModeActive != true else {
+            stop()
+            return
+        }
         do {
             let result = try await request("poll")
             state = "实时连接正常"
             guard let commands = result["requests"] as? [[String: Any]] else { return }
             for command in commands {
-                guard isEnabled && foreground else { return }
+                guard isEnabled && foreground && webView != nil && supervisor?.isSafeModeActive != true else { return }
                 guard let id = command["id"] as? String,
                       UUID(uuidString: id) != nil,
                       command["kind"] as? String == "snapshot" else { continue }
                 let sample = await snapshot()
-                guard isEnabled && foreground else { return }
+                guard isEnabled && foreground && webView != nil && supervisor?.isSafeModeActive != true else { return }
                 _ = try await request("response", method: "POST",
                                       payload: ["id": id, "measurement": sample])
                 lastProbe = Date().formatted(date: .omitted, time: .standard)
+                activeUntil = Date().addingTimeInterval(60)
             }
         } catch {
             state = "联机失败，自动重试"
         }
+    }
+
+    func activateActiveIntervalForTesting(seconds: TimeInterval = 60) {
+        activeUntil = Date().addingTimeInterval(seconds)
     }
 
     /// A fixed numeric-only DOM probe. No textContent, HTML, URL, cookies or site state exposed.
@@ -155,7 +189,8 @@ final class OptimizedLiveDebug: ObservableObject {
             "resourceRuleCount": NativeResourceGate.approvedRuleCount,
             "resourceGateEnabled": resourceGate?.isEnabled == true ? 1 : 0,
             "safeMode": supervisor?.isSafeModeActive == true ? 1 : 0,
-            "webviewAttached": webView == nil ? 0 : 1
+            "webviewAttached": webView == nil ? 0 : 1,
+            "thermalState": ProcessInfo.processInfo.thermalState.rawValue
         ]
         guard let view = webView else { return result }
         result["webLoading"] = view.isLoading ? 1 : 0

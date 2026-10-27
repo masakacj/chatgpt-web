@@ -45,10 +45,20 @@ struct OptimizedWebView: UIViewRepresentable {
         webView.accessibilityIdentifier = "optimized.webview"
         handler.webView = webView
         context.coordinator.webView = webView
+        context.coordinator.observeBackHistory(of: webView)
         liveDebug.attach(webView)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
+        // ChatGPT owns its sidebar edge gesture; external pages use WebKit history.
         webView.allowsBackForwardNavigationGestures = false
+        model.goBackHandler = { [weak webView] in
+            guard let webView, webView.canGoBack else { return }
+            webView.goBack()
+        }
+        model.goForwardHandler = { [weak webView] in
+            guard let webView, webView.canGoForward else { return }
+            webView.goForward()
+        }
         webView.scrollView.keyboardDismissMode = .interactive
         webView.isInspectable = model.diagnosticsEnabled
         model.retryHandler = { [weak webView] document, sequence in
@@ -84,9 +94,14 @@ struct OptimizedWebView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.stopObservingBackHistory()
         coordinator.liveDebug.detach(webView)
         coordinator.owner.invalidateDocument()
         coordinator.model.retryHandler = nil
+        coordinator.model.goBackHandler = nil
+        coordinator.model.goForwardHandler = nil
+        coordinator.model.setCanGoBack(false)
+        coordinator.model.setCanGoForward(false)
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
@@ -107,6 +122,9 @@ struct OptimizedWebView: UIViewRepresentable {
         let handler: WeakOptimizedObservationHandler
         weak var webView: WKWebView?
         private var destinations: [ObjectIdentifier: URL] = [:]
+        private var backHistoryObservation: NSKeyValueObservation?
+        private var forwardHistoryObservation: NSKeyValueObservation?
+        private var currentURLObservation: NSKeyValueObservation?
         private var hasTerminated = false
 
         init(model: OptimizedAppModel,
@@ -122,7 +140,39 @@ struct OptimizedWebView: UIViewRepresentable {
             handler = WeakOptimizedObservationHandler(owner: owner)
         }
 
+        func observeBackHistory(of webView: WKWebView) {
+            let changed: (WKWebView) -> Void = { [weak self] view in
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view, self.webView === view, !self.hasTerminated else { return }
+                    self.syncNavigationState(for: view)
+                }
+            }
+            // Same-document ChatGPT SPA history can change without a navigation delegate callback.
+            backHistoryObservation = webView.observe(\.canGoBack, options: [.initial, .new]) { view, _ in changed(view) }
+            forwardHistoryObservation = webView.observe(\.canGoForward, options: [.initial, .new]) { view, _ in changed(view) }
+            currentURLObservation = webView.observe(\.url, options: [.initial, .new]) { view, _ in changed(view) }
+        }
+
+        private func syncNavigationState(for webView: WKWebView) {
+            model.setCanGoBack(webView.canGoBack)
+            model.setCanGoForward(webView.canGoForward)
+            // Disable native edge history on chatgpt.com so its sidebar can receive the swipe.
+            let host = webView.url?.host?.lowercased() ?? ""
+            let external = !host.isEmpty && host != "chatgpt.com" && !host.hasSuffix(".chatgpt.com")
+            webView.allowsBackForwardNavigationGestures = external
+        }
+
+        func stopObservingBackHistory() {
+            backHistoryObservation?.invalidate()
+            forwardHistoryObservation?.invalidate()
+            currentURLObservation?.invalidate()
+            backHistoryObservation = nil
+            forwardHistoryObservation = nil
+            currentURLObservation = nil
+        }
+
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            syncNavigationState(for: webView)
             owner.invalidateDocument()
             model.status = "正在加载"
             telemetry.record(.navigationStart, route: routeCategory(for: webView))
@@ -130,17 +180,20 @@ struct OptimizedWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            syncNavigationState(for: webView)
             model.markReady()
             telemetry.record(.navigationFinish, route: routeCategory(for: webView))
             liveDebug.navigationFinish()
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            syncNavigationState(for: webView)
             model.status = "页面加载失败"
             recordNavigationError(error, webView: webView)
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            syncNavigationState(for: webView)
             recordNavigationError(error, webView: webView)
             model.status = "代理连接失败（不会自动直连或重放请求）"
         }
@@ -152,6 +205,7 @@ struct OptimizedWebView: UIViewRepresentable {
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             guard self.webView === webView, !hasTerminated else { return }
             hasTerminated = true
+            stopObservingBackHistory()
             let route = routeCategory(for: webView)
             telemetry.record(.contentTerminated, route: route, urgent: true)
             liveDebug.processTerminated()
@@ -181,6 +235,17 @@ struct OptimizedWebView: UIViewRepresentable {
             return "home"
         }
 
+        private func isChatGPTHost(_ url: URL?) -> Bool {
+            let host = url?.host?.lowercased() ?? ""
+            return host == "chatgpt.com" || host.hasSuffix(".chatgpt.com")
+        }
+
+        private func shouldConfirmExternalLink(_ url: URL, from webView: WKWebView) -> Bool {
+            guard isChatGPTHost(webView.url), let host = url.host?.lowercased() else { return false }
+            return host != "chatgpt.com" && !host.hasSuffix(".chatgpt.com") &&
+                   host != "openai.com" && !host.hasSuffix(".openai.com")
+        }
+
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -188,10 +253,10 @@ struct OptimizedWebView: UIViewRepresentable {
             guard let scheme = url.scheme?.lowercased() else { decisionHandler(.cancel); return }
             if scheme == "https" || scheme == "http" {
                 if navigationAction.navigationType == .linkActivated,
-                   let host = url.host?.lowercased(),
-                   host != "chatgpt.com" && !host.hasSuffix(".chatgpt.com") &&
-                   host != "openai.com" && !host.hasSuffix(".openai.com") {
-                    askBeforeOpeningOutsideProxy(url)
+                   navigationAction.targetFrame != nil,
+                   shouldConfirmExternalLink(url, from: webView) {
+                    // Target-blank is handled by createWebViewWith; never prompt twice.
+                    askBeforeOpeningOutsideProxy(url, in: webView)
                     decisionHandler(.cancel)
                 } else {
                     decisionHandler(.allow)
@@ -219,8 +284,16 @@ struct OptimizedWebView: UIViewRepresentable {
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-                if url.scheme == "https" { webView.load(URLRequest(url: url)) }
-                else if UIApplication.shared.canOpenURL(url) { askBeforeOpeningOutsideProxy(url) }
+                let scheme = url.scheme?.lowercased()
+                if scheme == "https" || scheme == "http" {
+                    if shouldConfirmExternalLink(url, from: webView) {
+                        askBeforeOpeningOutsideProxy(url, in: webView)
+                    } else {
+                        webView.load(URLRequest(url: url))
+                    }
+                } else if UIApplication.shared.canOpenURL(url) {
+                    askBeforeOpeningOutsideProxy(url)
+                }
             }
             return nil
         }
@@ -289,13 +362,19 @@ struct OptimizedWebView: UIViewRepresentable {
             telemetry.record(.downloadError, errorCode: (error as NSError).code, urgent: true)
         }
 
-        private func askBeforeOpeningOutsideProxy(_ url: URL) {
+        private func askBeforeOpeningOutsideProxy(_ url: URL, in webView: WKWebView? = nil) {
             let destination = url.host ?? (url.scheme ?? "其他应用")
             let prompt = UIAlertController(
-                title: "将离开 Optimizer 代理",
-                message: "即将交给外部应用打开 \(destination)。外部应用不受 Optimizer 独立代理保护，可能通过手机网络直连。是否继续？",
+                title: "打开外部链接",
+                message: "\(destination) 可在 Optimizer 中通过现有代理打开，滑动或点返回即可回到对话；交给外部应用则不受 Optimizer 代理保护，可能使用手机直连。",
                 preferredStyle: .alert)
             prompt.addAction(UIAlertAction(title: "取消", style: .cancel))
+            if url.scheme?.lowercased() == "https", let webView {
+                prompt.addAction(UIAlertAction(title: "在 Optimizer 内打开（可返回）", style: .default) { [weak webView] _ in
+                    guard let webView, self.webView === webView, !self.hasTerminated else { return }
+                    webView.load(URLRequest(url: url))
+                })
+            }
             prompt.addAction(UIAlertAction(title: "仍要在外部应用打开", style: .default) { _ in
                 UIApplication.shared.open(url)
             })

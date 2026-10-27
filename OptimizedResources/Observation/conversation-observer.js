@@ -10,10 +10,18 @@
   let observer = null, observedList = null, observedState = null;
   let eventTimer = 0, activeTimer = 0, routeSerial = 0, sequence = 0;
   let submitUntil = 0, recoveryCanceled = false, destroyed = false;
+  let armedTurn = null, followUpTimers = [];
 
   const later = (fn, ms) => {
     const timer = setTimeout(() => { timers.delete(timer); if (!destroyed) fn(); }, ms);
     timers.add(timer); return timer;
+  };
+  const clearActive = () => {
+    if (activeTimer) { clearTimeout(activeTimer); timers.delete(activeTimer); activeTimer = 0; }
+  };
+  const cancelFollowUps = () => {
+    for (const t of followUpTimers) { clearTimeout(t); timers.delete(t); }
+    followUpTimers = [];
   };
   const visible = node => node instanceof HTMLElement && !node.closest('[hidden],[aria-hidden="true"]') &&
     node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
@@ -75,6 +83,10 @@
     const raw = stateNode?.getAttribute('data-talvt-turn-state') || '';
     const currentTurn = !(priorTurnKey && key === priorTurnKey);
     const newTurn = Boolean(currentTurn && key && lastTurnKey && key !== lastTurnKey);
+    if (newTurn || (armedTurn && key && armedTurn !== `${current}:${key}`)) {
+      cancelFollowUps();
+      armedTurn = null;
+    }
     if (currentTurn && key) { priorTurnKey = null; lastTurnKey = key; }
     const waiting = ['waiting_user','waiting_for_user','waiting','approval'].includes(raw) || Boolean(turn &&
       [...turn.querySelectorAll('[data-testid*="approval" i] button,[data-testid*="permission" i] button,button[aria-label*="Approve" i],button[aria-label*="授权"]')].some(visible));
@@ -117,10 +129,30 @@
       ...value, kind, sequence: next, at: Date.now(),
       eventId: [documentId, next, kind].join(':')
     }});
+    if (value.answerReady) cancelFollowUps();
+    const identity = `${current}:${value.turnKey}`;
     if (value.nativeStatus === 'completed' && !value.answerReady && value.turnKey && value.currentTurn && value.visible) {
-      for (const ms of [500, 1800, 5500]) later(() => current === value.conversationId && emit(), ms);
+      if (armedTurn !== identity) {
+        armedTurn = identity;
+        cancelFollowUps();
+        const serial = routeSerial, convId = current, turnId = value.turnKey;
+        for (const ms of [500, 1800, 5500]) {
+          const t = later(() => {
+            if (destroyed || document.hidden || serial !== routeSerial || current !== convId || lastTurnKey !== turnId) return;
+            emit();
+          }, ms);
+          followUpTimers.push(t);
+        }
+      }
     }
-    if ((value.running && value.currentTurn) || submitUntil > Date.now()) watchActive();
+    if (value.waiting || value.nativeStatus === 'stopped' || kind === 'stop') {
+      submitUntil = 0;
+      clearActive();
+    } else if (value.visible && value.selected && ((value.running && value.currentTurn) || submitUntil > Date.now())) {
+      watchActive();
+    } else {
+      clearActive();
+    }
   };
   const bind = () => {
     const { root, turn, stateNode } = latest();
@@ -134,34 +166,45 @@
     if (stateNode && stateNode !== list) observer.observe(stateNode, { attributes: true, attributeFilter: ['data-talvt-turn-state'], subtree: false });
   };
   const watchActive = () => {
-    if (activeTimer || destroyed) return;
-    activeTimer = later(() => { activeTimer = 0; bind(); emit(); }, document.hidden ? 6000 : 2500);
+    if (activeTimer || destroyed || document.hidden || !current || current !== conversationId()) return;
+    activeTimer = later(() => {
+      activeTimer = 0;
+      if (destroyed || document.hidden || current !== conversationId()) return;
+      bind();
+      emit();
+    }, 2500);
   };
   const route = (force = false) => {
     const id = conversationId();
-    if (!force && id === current) { bind(); return; }
+    if (!force && id === current) { bind(); emit(); return; }
     if (id !== current) {
+      clearActive();
+      cancelFollowUps();
+      armedTurn = null;
       globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.reset();
       priorTurnKey = current ? lastTurnKey : null; current = id; routeSerial++;
       recoveryCanceled = false; submitUntil = 0;
-      clearTimeout(activeTimer); timers.delete(activeTimer); activeTimer = 0;
       observer?.disconnect(); observedList = null; observedState = null;
     }
     const serial = routeSerial;
     for (const ms of [0, 450, 1600, 4500, 10000, 20000, 45000, 65000]) {
-      later(() => serial === routeSerial && (bind(), emit()), ms);
+      later(() => serial === routeSerial && !destroyed && !document.hidden && (bind(), emit()), ms);
     }
   };
   const submit = () => {
     if (!current) return;
     submitUntil = Date.now() + 30000; recoveryCanceled = true;
-    emit('submit'); watchActive();
+    emit('submit');
   };
   const clicked = event => {
     const target = event.target instanceof Element ? event.target : null;
     const button = target?.closest('button');
     if (button && !button.disabled && button.matches('[data-testid="send-button"],button[aria-label="Send prompt"],button[aria-label="发送消息"]')) submit();
-    if (button?.matches('[data-testid="stop-button"]')) emit('stop', { turnKey: lastTurnKey });
+    if (button?.matches('[data-testid="stop-button"]')) {
+      submitUntil = 0;
+      clearActive();
+      emit('stop', { turnKey: lastTurnKey });
+    }
     if (target?.closest('a[href*="/c/"],button[aria-label*="sidebar" i],button[aria-label*="侧边栏"]')) {
       for (const ms of [0, 200, 800, 2400]) later(() => route(), ms);
     }
@@ -179,19 +222,38 @@
     for (const ms of [400, 1600, 5000]) later(() => emit(), ms);
     return true;
   };
+  const onVisibilityChange = () => {
+    if (document.hidden) {
+      clearActive();
+      cancelFollowUps();
+    } else {
+      const id = conversationId();
+      if (id !== current) route();
+      else { bind(); emit(); }
+    }
+  };
+  const onPopState = () => route();
   const destroy = () => {
-    destroyed = true; observer?.disconnect(); timers.forEach(clearTimeout); timers.clear();
+    destroyed = true;
+    clearActive();
+    cancelFollowUps();
+    armedTurn = null;
+    observer?.disconnect();
+    timers.forEach(clearTimeout);
+    timers.clear();
     globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.destroy();
     document.removeEventListener('click', clicked, true);
     document.removeEventListener('submit', submit, true);
     document.removeEventListener('input', input, true);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('popstate', onPopState);
     delete globalThis.__CHATGPT_WEB_OPTIMIZED_OBSERVER__;
   };
   document.addEventListener('click', clicked, true);
   document.addEventListener('submit', submit, true);
   document.addEventListener('input', input, true);
-  document.addEventListener('visibilitychange', () => !document.hidden && route());
-  window.addEventListener('popstate', () => route());
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('popstate', onPopState);
   globalThis.__CHATGPT_WEB_OPTIMIZED_OBSERVER__ = { version: VERSION, documentId, retry, destroy,
     audit: () => ({ version: VERSION, documentId, sequence, attached: !destroyed, observer: Boolean(observedList?.isConnected) }) };
   send({ type: 'boot' }).then(reply => reply?.ok && route(true));

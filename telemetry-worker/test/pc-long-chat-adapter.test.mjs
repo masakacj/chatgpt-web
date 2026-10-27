@@ -86,3 +86,24 @@ test('interactive approval blocks are preserved, destruction is reversible',()=>
   assert.equal(x.turns.some(t=>t.attrs.has(ATTR)),false);
   assert.equal(x.styles.length,0);
 });
+test('late approval in frozen turn restores native painting on waiting:true',()=>{
+  const x=fixture(true,30);
+  x.api.refresh('c-late',x.turns,{running:false,waiting:false});
+  x.flush();
+  assert.equal(x.turns[5].attrs.has(ATTR),true);
+  x.turns[5].querySelector=sel=>sel.includes('approval')?{}:null;
+  x.api.refresh('c-late',x.turns,{waiting:true});
+  assert.equal(x.turns[5].attrs.has(ATTR),false);
+  assert.equal(x.turns[4].attrs.has(ATTR),true);
+});
+test('late approval in frozen turn restores native painting on idle refresh',()=>{
+  const x=fixture(true,30);
+  x.api.refresh('c-late-idle',x.turns,{running:false,waiting:false});
+  x.flush();
+  assert.equal(x.turns[5].attrs.has(ATTR),true);
+  x.turns[5].querySelector=sel=>sel.includes('approval')?{}:null;
+  x.api.refresh('c-late-idle',x.turns,{running:false,waiting:false});
+  x.flush();
+  assert.equal(x.turns[5].attrs.has(ATTR),false);
+  assert.equal(x.turns[4].attrs.has(ATTR),true);
+});

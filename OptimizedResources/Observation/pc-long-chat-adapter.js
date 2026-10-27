@@ -9,6 +9,7 @@
   const TURN = '[data-turn-key],[data-testid^="conversation-turn-"]';
   const ATTR = 'data-optimized-pc-history';
   const STYLE = 'optimized-pc-history-style';
+  const APPROVAL = '[data-testid*="approval" i],[data-testid*="permission" i],button[aria-label*="Approve" i],button[aria-label*="授权"],iframe';
   const state = {chat: null, count: 0, tail: null, checked: 0, generation: 0,
     optimized: 0, disposed: false};
   function reset() {
@@ -17,6 +18,26 @@
       el.removeAttribute(ATTR);
     state.chat = null; state.count = 0; state.tail = null;
     state.checked = 0; state.optimized = 0;
+  }
+  function unmark(node) {
+    if (!node) return;
+    const has = typeof node.hasAttribute === 'function' ? node.hasAttribute(ATTR) :
+      (typeof node.getAttribute === 'function' ? node.getAttribute(ATTR) !== null : Boolean(node.attrs?.has?.(ATTR)));
+    if (has !== false) node.removeAttribute?.(ATTR);
+  }
+  function hasApproval(node) {
+    if (!node) return false;
+    if (typeof node.matches === 'function' && node.matches('iframe')) return true;
+    return Boolean(node.querySelector?.(APPROVAL));
+  }
+  function restoreApprovals(turns) {
+    const list = document.querySelectorAll?.('[' + ATTR + ']');
+    if (list) {
+      for (const node of list) { if (hasApproval(node)) unmark(node); }
+    }
+    if (turns) {
+      for (const node of turns) { if (hasApproval(node)) unmark(node); }
+    }
   }
   function style() {
     if (!enabled || document.getElementById(STYLE)) return;
@@ -31,6 +52,7 @@
     if (!id) { if (state.chat) reset(); return; }
     if (!enabled || document.hidden || !turns) return;
     if (state.chat && id !== state.chat) reset();
+    restoreApprovals(turns);
     if (activity?.running || activity?.waiting) { state.generation++; return; }
     const count = turns.length, tail = count ? turns[count - 1] : null, now = Date.now();
     if (id === state.chat && tail === state.tail && count === state.count &&
@@ -42,7 +64,7 @@
     if (mounted.length < MIN) return;
     const generation = ++state.generation, end = mounted.length - KEEP;
     // The latest 12 turns, including streaming/interactive controls, remain native.
-    for (let i = end; i < mounted.length; i++) mounted[i]?.removeAttribute?.(ATTR);
+    for (let i = end; i < mounted.length; i++) unmark(mounted[i]);
     style();
     let index = 0;
     const step = () => {
@@ -52,8 +74,13 @@
       while (index < end && budget++ < 16) {
         const turn = mounted[index++];
         if (!turn?.isConnected || typeof turn.setAttribute !== 'function') continue;
-        // Never alter blocks carrying an explicit outstanding user approval.
-        if (turn.querySelector?.('[data-testid*="approval" i],[data-testid*="permission" i],button[aria-label*="Approve" i],button[aria-label*="授权"]')) continue;
+        // Never alter blocks carrying an explicit outstanding user approval or iframe.
+        if (hasApproval(turn)) {
+          unmark(turn);
+          continue;
+        }
+        const currentAttr = typeof turn.getAttribute === 'function' ? turn.getAttribute(ATTR) : turn.attrs?.get?.(ATTR);
+        if (currentAttr === '1') continue;
         turn.setAttribute(ATTR, '1');
         state.optimized++;
       }

@@ -20,6 +20,7 @@ struct OptimizedRootView: View {
     @StateObject private var liveDebug = OptimizedLiveDebug()
     @StateObject private var proxySettings = OptimizerProxySettings()
     @State private var showingProxySettings = false
+    @State private var thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
     @AppStorage("optimized.pcHistory.enabled.v1") private var pcHistoryEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
@@ -45,6 +46,24 @@ struct OptimizedRootView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
+                Button {
+                    model.goBack()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .frame(width: 36, height: 32)
+                }
+                .disabled(!model.canGoBack)
+                .accessibilityLabel("返回上一页")
+                .accessibilityIdentifier("navigation.back.button")
+                Button {
+                    model.goForward()
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .frame(width: 36, height: 32)
+                }
+                .disabled(!model.canGoForward)
+                .accessibilityLabel("前进下一页")
+                .accessibilityIdentifier("navigation.forward.button")
                 Text("ChatGPT")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -155,6 +174,13 @@ struct OptimizedRootView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    Section("系统热状态 · 原生") {
+                        LabeledContent("当前热状态", value: thermalStateDescription)
+                        Text("基于 iOS 原生 ProcessInfo.thermalState 事件驱动通知；仅表示系统热调节等级（正常/温热/较热/严重过热），不代表芯片实际摄氏度。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
                     Section("实时性能调试（独立于 D1）") {
                         Toggle("允许远程只读性能采样", isOn: $liveDebug.isEnabled)
                         LabeledContent("在线状态", value: liveDebug.state)
@@ -225,7 +251,8 @@ struct OptimizedRootView: View {
         } message: {
             Text("仅点击当前官方加载错误面板的重试按钮一次。不会重放请求或自动刷新整页。")
         }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase) { oldPhase, phase in
+            guard oldPhase != phase else { return }
             owner.setAppActive(phase == .active)
             liveDebug.setForeground(phase == .active)
             if phase == .active {
@@ -242,25 +269,49 @@ struct OptimizedRootView: View {
             liveDebug.resourceGate = resourceGate
             liveDebug.supervisor = supervisor
             liveDebug.setForeground(scenePhase == .active)
+            thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
             supervisor.recordLaunch()
             if supervisor.isCircuitOpen {
                 model.processTerminated = true
             }
             if model.processTerminated || supervisor.isSafeModeActive {
                 resourceGate.disableForSafety()
+                liveDebug.stop()
             }
             telemetry.record(.launch, urgent: true)
         }
         .onChange(of: model.processTerminated) { _, terminated in
-            if terminated { resourceGate.disableForSafety() }
+            if terminated {
+                resourceGate.disableForSafety()
+                liveDebug.stop()
+            }
+        }
+        .onChange(of: supervisor.isSafeModeActive) { _, active in
+            if active { liveDebug.stop() }
         }
         .onReceive(NotificationCenter.default.publisher(
             for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
             telemetry.record(.memoryWarning, urgent: true)
             liveDebug.memoryWarning()
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
+            let current = ProcessInfo.processInfo.thermalState
+            thermalStateDescription = Self.formatThermalState(current)
+            telemetry.recordThermalStateChange(current)
+        }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             telemetry.periodicTick(isActive: scenePhase == .active)
+        }
+    }
+
+    static func formatThermalState(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return "正常 (Nominal)"
+        case .fair: return "温热 (Fair)"
+        case .serious: return "较热 (Serious)"
+        case .critical: return "严重过热 (Critical)"
+        @unknown default: return "未知"
         }
     }
 }

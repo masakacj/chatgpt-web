@@ -10,7 +10,11 @@ final class OptimizedAppModel: ObservableObject {
     @Published var diagnosticsEnabled = false
     @Published var recoveryAttempts = 0
     @Published var targetURL = URL(string: "https://chatgpt.com/")!
+    @Published private(set) var canGoBack = false
+    @Published private(set) var canGoForward = false
 
+    var goBackHandler: (() -> Void)?
+    var goForwardHandler: (() -> Void)?
     weak var supervisor: NativeOptimizationSupervisor?
     var retryHandler: ((String, Int) async -> Bool)?
     private(set) var lastTerminatedGeneration: UUID?
@@ -20,10 +24,30 @@ final class OptimizedAppModel: ObservableObject {
         recoveryAttempts = 0
     }
 
+    func setCanGoBack(_ available: Bool) {
+        canGoBack = available
+    }
+
+    func goBack() {
+        goBackHandler?()
+    }
+
+    func setCanGoForward(_ available: Bool) {
+        canGoForward = available
+    }
+
+    func goForward() {
+        goForwardHandler?()
+    }
+
     /// On WebContent termination: NEVER automatically regenerate WKWebView.
     /// Invalidate and show native safe screen, requiring explicit user confirmation before rebuild.
     /// Repeated same-generation callbacks are idempotent and will not increment failure count.
     func markProcessTerminated(route: String = "other", isSynthetic: Bool = false) {
+        goBackHandler = nil
+        goForwardHandler = nil
+        canGoBack = false
+        canGoForward = false
         status = "网页进程已停止"
         processTerminated = true
         guard isSynthetic || lastTerminatedGeneration != webViewGeneration else {

@@ -20,6 +20,7 @@ final class OptimizedTelemetry: ObservableObject {
         case memoryWarning = "memory_warning"
         case downloadError = "download_error"
         case enabled = "logging_enabled"
+        case thermalChange = "thermal_change"
     }
 
     private struct QueuedEvent: Codable {
@@ -73,6 +74,8 @@ final class OptimizedTelemetry: ObservableObject {
     private var consecutiveErrors = 0
     private var isSending = false
     private var counter = 0
+    private var lastThermalState: ProcessInfo.ThermalState?
+    private var lastLifecycleEvent: Event?
 
     let installId: String
     let sessionId: String
@@ -130,6 +133,13 @@ final class OptimizedTelemetry: ObservableObject {
                 errorCode: Int? = nil, streaming: Bool = false,
                 urgent: Bool = false) {
         guard isEnabled else { return }
+        if (event == .background && lastLifecycleEvent == .background) ||
+           (event == .foreground && lastLifecycleEvent == .foreground) {
+            return
+        }
+        if event == .background || event == .foreground {
+            lastLifecycleEvent = event
+        }
         counter += 1
         let routeKind = Self.safeRoute(route, errorCode: errorCode)
         let item = QueuedEvent(
@@ -149,6 +159,21 @@ final class OptimizedTelemetry: ObservableObject {
         if urgent || queued.count >= Self.batchLimit {
             flush()
         }
+    }
+
+    func recordThermalStateChange(_ state: ProcessInfo.ThermalState) {
+        guard isEnabled else { return }
+        guard lastThermalState != state else { return }
+        lastThermalState = state
+        let stateName: String
+        switch state {
+        case .nominal: stateName = "nominal"
+        case .fair: stateName = "fair"
+        case .serious: stateName = "serious"
+        case .critical: stateName = "critical"
+        @unknown default: stateName = "unknown"
+        }
+        record(.thermalChange, route: "thermal_\(stateName)", urgent: state == .serious || state == .critical)
     }
 
     func periodicTick(isActive: Bool) {
@@ -229,7 +254,8 @@ final class OptimizedTelemetry: ObservableObject {
     static func safeRoute(_ raw: String, errorCode: Int? = nil) -> String {
         let category: String
         switch raw {
-        case "home", "conversation", "project", "other":
+        case "home", "conversation", "project", "other",
+             "thermal_nominal", "thermal_fair", "thermal_serious", "thermal_critical":
             category = raw
         default:
             category = "other"
@@ -239,12 +265,14 @@ final class OptimizedTelemetry: ObservableObject {
     }
 
     var localReport: String {
-        """
+        let thermalDesc = Self.thermalStateString(ProcessInfo.processInfo.thermalState)
+        return """
         ChatGPT Web Optimized · 原生诊断
         版本: \(appVersion)
         iOS: \(UIDevice.current.systemVersion)
         会话: \(sessionId)
         安装标识: \(installId)
+        热状态: \(thermalDesc)
         远程采集: \(isEnabled ? "开启" : "关闭")
         状态: \(state)
         待上传事件: \(pendingCount)
@@ -252,6 +280,16 @@ final class OptimizedTelemetry: ObservableObject {
 
         只收集事件类别、页面类型和数字错误码；不采集对话内容或请求凭证。
         """
+    }
+
+    static func thermalStateString(_ state: ProcessInfo.ThermalState) -> String {
+        switch state {
+        case .nominal: return "正常"
+        case .fair: return "温热"
+        case .serious: return "较热"
+        case .critical: return "严重过热"
+        @unknown default: return "未知"
+        }
     }
 
     private func persist() {
