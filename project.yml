@@ -55,8 +55,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.masakacj.chatgptweb.optimized
         PRODUCT_NAME: ChatGPTWebOptimized
-        MARKETING_VERSION: 0.1.7
-        CURRENT_PROJECT_VERSION: 8
+        MARKETING_VERSION: 0.1.8
+        CURRENT_PROJECT_VERSION: 9
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: ChatGPT Web Optimized
