@@ -30,13 +30,10 @@
     if (typeof node.matches === 'function' && node.matches('iframe')) return true;
     return Boolean(node.querySelector?.(APPROVAL));
   }
-  function restoreApprovals(turns) {
-    const list = document.querySelectorAll?.('[' + ATTR + ']');
-    if (list) {
-      for (const node of list) { if (hasApproval(node)) unmark(node); }
-    }
-    if (turns) {
-      for (const node of turns) { if (hasApproval(node)) unmark(node); }
+  function restoreApprovals() {
+    // Already optimized blocks only; avoid scanning every turn on every CM refresh.
+    for (const node of document.querySelectorAll('[' + ATTR + ']')) {
+      if (hasApproval(node)) unmark(node);
     }
   }
   function style() {
@@ -44,7 +41,9 @@
     const el = document.createElement('style');
     el.id = STYLE;
     // Native WebKit implements this CSS; it does not delete React nodes or stop MCP requests.
-    el.textContent = '[' + ATTR + '="1"]{content-visibility:auto!important;contain-intrinsic-size:auto 650px;}';
+    // CSS :has() unfreezes newly inserted approval/iframe content immediately,
+    // even between the slower native observer scans (supported by iOS 17+).
+    el.textContent = '[' + ATTR + '="1"]:not(:has(' + APPROVAL + ')){content-visibility:auto!important;contain-intrinsic-size:auto 650px;}';
     (document.head || document.documentElement).appendChild(el);
   }
   function refresh(id, turns, activity) {
@@ -52,11 +51,16 @@
     if (!id) { if (state.chat) reset(); return; }
     if (!enabled || document.hidden || !turns) return;
     if (state.chat && id !== state.chat) reset();
-    restoreApprovals(turns);
-    if (activity?.running || activity?.waiting) { state.generation++; return; }
+    if (activity?.running || activity?.waiting) {
+      restoreApprovals();
+      state.generation++;
+      state.checked = 0;
+      return;
+    }
     const count = turns.length, tail = count ? turns[count - 1] : null, now = Date.now();
     if (id === state.chat && tail === state.tail && count === state.count &&
         now - state.checked < 12000) return;
+    restoreApprovals();
     if (count < MIN && state.count >= MIN) reset();
     state.chat = id; state.count = count; state.tail = tail; state.checked = now;
     if (count < MIN) return;
