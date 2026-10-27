@@ -7,10 +7,12 @@ const code = readFileSync(new URL('../../OptimizedResources/Observation/pc-long-
 const ATTR = 'data-optimized-pc-history';
 function fixture(enabled = true, count = 30) {
   const idle = [], styles = [];
+  let now = 1000;
   const turns = Array.from({length:count}, (_,i)=>({
     index:i,isConnected:true, attrs:new Map(),parentElement:{closest:()=>null},
     setAttribute(k,v){this.attrs.set(k,v)},removeAttribute(k){this.attrs.delete(k)},
-    querySelector:()=>null
+    querySelector(){this.approvalScans=(this.approvalScans||0)+1;return null;},
+    querySelectorAll:()=>[]
   }));
   const doc={
     hidden:false, head:{appendChild:x=>styles.push(x)},
@@ -23,11 +25,11 @@ function fixture(enabled = true, count = 30) {
   const world={window:win,top:win,location,document:doc,
     __OPTIMIZED_PC_HISTORY_ENABLED__:enabled,
     requestIdleCallback:fn=>idle.push(fn),
-    setTimeout:fn=>idle.push(fn),Date};
+    setTimeout:fn=>idle.push(fn),Date:{now:()=>now}};
   runInNewContext(code,world);
   const flush=()=>{let i=0;while(idle.length && i++<50)idle.shift()();};
   return {api:world.__CHATGPT_WEB_PC_LONG_CHAT__, turns, flush,
-    flushOne:()=>idle.shift()?.(), doc, styles};
+    flushOne:()=>idle.shift()?.(), advanceTime:ms=>{now+=ms;}, doc, styles};
 }
 test('PC port limits optimization to history, preserving latest twelve turns',()=>{
   const x=fixture(true,30);
@@ -104,6 +106,42 @@ test('late approval in frozen turn restores native painting on idle refresh',()=
   x.turns[5].querySelector=sel=>sel.includes('approval')?{}:null;
   x.api.refresh('c-late-idle',x.turns,{running:false,waiting:false});
   x.flush();
+  // CSS :has excludes newly interactive turns immediately, without O(all-turns) JS work.
+  assert.match(x.styles[0].textContent, /:not\(:has\(/);
+  assert.equal(x.turns[5].attrs.has(ATTR),true);
+  x.advanceTime(12001);
+  x.api.refresh('c-late-idle',x.turns,{running:false,waiting:false});
+  x.flush();
   assert.equal(x.turns[5].attrs.has(ATTR),false);
   assert.equal(x.turns[4].attrs.has(ATTR),true);
+});
+
+test('stable history refresh avoids repeat approval scans between bounded checks',()=>{
+  const x=fixture(true,90);
+  x.api.refresh('c-stable',x.turns,{});
+  x.flush();
+  const before=x.turns.reduce((n,t)=>n+(t.approvalScans||0),0);
+  x.api.refresh('c-stable',x.turns,{});
+  x.flush();
+  assert.equal(x.turns.reduce((n,t)=>n+(t.approvalScans||0),0),before);
+  x.advanceTime(12001);
+  x.api.refresh('c-stable',x.turns,{});
+  x.flush();
+  assert.ok(x.turns.reduce((n,t)=>n+(t.approvalScans||0),0)>before);
+});
+
+test('historical layout optimization leaves native details state unchanged',()=>{
+  const x=fixture(true,31);
+  const details={open:true,isConnected:true,
+    querySelector:sel=>sel===':scope > summary'?{textContent:'MCP tool result'}:null};
+  x.turns[0].querySelectorAll=sel=>sel==='details'?[details]:[];
+  x.api.refresh('c-tools',x.turns,{});
+  x.flush();
+  assert.equal(details.open,true);
+  x.advanceTime(12001);
+  x.api.refresh('c-tools',x.turns,{});
+  x.flush();
+  assert.equal(details.open,true);
+  x.api.destroy();
+  assert.equal(details.open,true);
 });
