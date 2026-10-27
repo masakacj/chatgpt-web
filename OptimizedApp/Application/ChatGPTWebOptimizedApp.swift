@@ -167,9 +167,10 @@ struct OptimizedRootView: View {
                     }
 
                     Section("资源加载策略") {
-                        Toggle("资源过滤实验（下次打开网页生效）", isOn: $resourceGate.isEnabled)
-                        LabeledContent("已验证安全规则", value: String(NativeResourceGate.approvedRuleCount))
-                        Text("当前没有经过实机验证的可阻断资源；此开关不会过滤 ChatGPT 请求，也不代表已提升性能。")
+                        Toggle("第三方统计资源过滤（下次重建网页生效）", isOn: $resourceGate.isEnabled)
+                        LabeledContent("可用规则", value: String(NativeResourceGate.approvedRuleCount))
+                        LabeledContent("本次已安装", value: String(resourceGate.appliedRuleCount))
+                        Text("只屏蔽 ChatGPT 页面中的指定第三方统计请求，不拦截消息、登录、图片、附件、MCP 或授权流程；实际节能幅度仍需真机对照。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
