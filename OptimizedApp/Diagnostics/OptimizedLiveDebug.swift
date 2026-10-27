@@ -111,10 +111,10 @@ final class OptimizedLiveDebug: ObservableObject {
             state = "关闭"
         } else if supervisor?.isSafeModeActive == true {
             state = "安全模式暂停"
-        } else if webView == nil {
-            state = "网页未就绪暂停"
         } else if !foreground {
             state = "后台暂停"
+        } else if webView == nil {
+            state = "网页未就绪暂停"
         } else {
             state = "暂停"
         }
