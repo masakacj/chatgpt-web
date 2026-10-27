@@ -74,7 +74,7 @@ jobs:
           GH_RUN_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          curl --http1.1 --retry 10 --retry-all-errors --retry-delay 3 --max-time 20 -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/mirror-stable-before.json
+          curl --http1.1 --retry 10 --retry-all-errors --retry-delay 3 --max-time 20 -fsS https://ipa.781751.xyz:58443/api/v1/apps/chatgpt-web/latest > dist/mirror-stable-before.json
           curl --fail-with-body --max-time 240 -X POST \
             -H "Authorization: Bearer $GH_RUN_TOKEN" \
             -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
@@ -83,8 +83,8 @@ jobs:
             -H 'X-App-Key: chatgpt-web-optimized' \
             -H 'Content-Type: application/octet-stream' \
             --data-binary @dist/web-optimized-unsigned.ipa \
-            'https://ipa.78175132.xyz/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
-          curl --http1.1 --retry 10 --retry-all-errors --retry-delay 3 --max-time 20 -fsS https://ipa.78175132.xyz/api/v1/apps/chatgpt-web/latest > dist/mirror-stable-after.json
+            'https://ipa.781751.xyz:58443/api/v1/sign?channel=candidate' > dist/candidate-sign-result.json
+          curl --http1.1 --retry 10 --retry-all-errors --retry-delay 3 --max-time 20 -fsS https://ipa.781751.xyz:58443/api/v1/apps/chatgpt-web/latest > dist/mirror-stable-after.json
           python3 - <<'PY'
           import json,os
           from pathlib import Path
