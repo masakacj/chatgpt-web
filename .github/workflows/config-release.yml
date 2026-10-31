@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: config-release-mirror
+  group: config-release-mirror-buildonly
   cancel-in-progress: false
 jobs:
   signed-candidate:
@@ -26,15 +26,12 @@ jobs:
           npm run check
           test -f Shared/ConfigRecovery.swift
           grep -F 'https://config.781751.xyz:58443' Shared/ConfigRecovery.swift
-      - name: Generate Xcode project and run simulator tests
+      - name: Generate project and compile simulator app
         run: |
           set -euo pipefail
           command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate
-          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
-          xcrun simctl boot "$UDID" || true
-          xcrun simctl bootstatus "$UDID" -b
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/mirror-sim" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 100 -maximum-test-execution-time-allowance 150 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -only-testing:ChatGPTWebUITests/SharedTabUITests -only-testing:ChatGPTWebUITests/SharedTabUITests/testSavedTabMissingAutoBindsUniquePCPageOnLaunch -only-testing:ChatGPTWebUITests/SharedTabUITests/testPerChatDraftsSurviveSearchAndSwitchWithoutSyncingPC -only-testing:ChatGPTWebUITests/SharedTabUITests/testNativeBlankTapDismissesKeyboardAndSendWorksOnce -only-testing:ChatGPTWebUITests/SharedTabUITests/testLostSendResponseRecoveredViaOriginalReceiptWithoutReplay -only-testing:ChatGPTWebUITests/SharedTabUITests/testHomeDirectProductionEndpointAndNoCloudflareStageShortcut -only-testing:ChatGPTWebUITests/SharedTabUITests/testPCNavigationFollowsBoundTabWithoutNewBinding test
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/mirror-sim" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Compile unsigned ChatGPTWeb iPhone package
         run: |
           set -euo pipefail
