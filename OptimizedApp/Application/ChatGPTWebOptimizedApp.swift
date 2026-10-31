@@ -128,6 +128,9 @@ struct OptimizedRootView: View {
                 // Do not mutate the shared WKWebsiteDataStore while an old WebView
                 // might still own an in-flight connection. Next app start applies it.
                 showingProxySettings = false
+                if let backup = proxySettings.exportRecoveryConfig() {
+                    Task { await ConfigRecovery.uploadSaved(.optimizer, data: backup) }
+                }
             }
         }
         .sheet(isPresented: $model.diagnosticsEnabled) {

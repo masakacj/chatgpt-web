@@ -17,6 +17,7 @@ targets:
     platform: iOS
     sources:
       - path: App
+      - path: Shared
       - path: Resources
       - path: safari/chatgpt-safari.user.js
         buildPhase: resources
@@ -50,6 +51,7 @@ targets:
     platform: iOS
     sources:
       - path: OptimizedApp
+      - path: Shared
       - path: OptimizedResources
     settings:
       base:

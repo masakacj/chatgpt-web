@@ -56,6 +56,12 @@ struct OptimizerProxyPlan: Codable, Equatable {
     }
 }
 
+private struct OptimizerRecoveryBackup: Codable {
+    let plan: OptimizerProxyPlan
+    let homePassword: String
+    let officePassword: String
+}
+
 enum OptimizerProxyCredential {
     static func load(_ kind: OptimizerProxyMode, pending: Bool = false) -> String? {
         let query: [String: Any] = [
@@ -201,6 +207,40 @@ final class OptimizerProxySettings: ObservableObject {
         }
         error = nil
         return true
+    }
+
+    func exportRecoveryConfig() -> Data? {
+        let current = defaults.data(forKey: Self.key)
+            .flatMap { try? JSONDecoder().decode(OptimizerProxyPlan.self, from: $0) } ?? plan
+        guard current.ready else { return nil }
+        let home = current.home.username.isEmpty ? "" :
+            (OptimizerProxyCredential.load(.home, pending: true)
+                ?? OptimizerProxyCredential.load(.home) ?? "")
+        let office = current.office.username.isEmpty ? "" :
+            (OptimizerProxyCredential.load(.office, pending: true)
+                ?? OptimizerProxyCredential.load(.office) ?? "")
+        for (route, kind) in [(current.home, OptimizerProxyMode.home),
+                              (current.office, OptimizerProxyMode.office)] {
+            let used = kind == current.mode || (current.mode != .direct && current.backupEnabled)
+            if used && !route.username.isEmpty &&
+                (kind == .home ? home : office).isEmpty { return nil }
+        }
+        return try? JSONEncoder().encode(OptimizerRecoveryBackup(
+            plan: current, homePassword: home, officePassword: office))
+    }
+
+    func importRecoveryConfig(_ data: Data) -> Bool {
+        guard let backup = try? JSONDecoder().decode(OptimizerRecoveryBackup.self, from: data),
+              backup.plan.ready else { return false }
+        for (route, kind) in [(backup.plan.home, OptimizerProxyMode.home),
+                              (backup.plan.office, OptimizerProxyMode.office)] {
+            let used = kind == backup.plan.mode ||
+                (backup.plan.mode != .direct && backup.plan.backupEnabled)
+            if used && !route.username.isEmpty &&
+                (kind == .home ? backup.homePassword : backup.officePassword).isEmpty { return false }
+        }
+        return apply(backup.plan, homePassword: backup.homePassword,
+                     officePassword: backup.officePassword)
     }
 
     var canLoadWebView: Bool {
