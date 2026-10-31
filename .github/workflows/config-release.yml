@@ -1,0 +1,123 @@
+name: Personal Config optimizer release 0.1.9 Build 11
+on:
+  push:
+    branches: ['feature/config-bootstrap-optimizer-20261031']
+    paths:
+      - 'project.yml'
+      - '.github/workflows/config-release.yml'
+permissions:
+  contents: read
+concurrency:
+  group: config-release-optimizer
+  cancel-in-progress: false
+jobs:
+  signed-candidate:
+    if: github.repository == 'masakacj/chatgpt-web' && github.ref == 'refs/heads/feature/config-bootstrap-optimizer-20261031'
+    runs-on: macos-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Source and target policy checks
+        run: |
+          set -euo pipefail
+          node --check safari/chatgpt-safari.user.js
+          node scripts/validate-userscript.mjs
+          node scripts/check-target-boundaries.mjs
+          node scripts/check-cm-contract.mjs
+          test -f Shared/ConfigRecovery.swift
+          grep -F 'https://config.781751.xyz:58443' Shared/ConfigRecovery.swift
+      - name: Generate Xcode project and run simulator tests
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null || brew install xcodegen
+          xcodegen generate
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/optimizer-sim" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 100 -maximum-test-execution-time-allowance 150 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO  test
+      - name: Compile unsigned ChatGPTWebOptimized iPhone package
+        run: |
+          set -euo pipefail
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/optimizer-device" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION=0.1.9 CURRENT_PROJECT_VERSION=11 build
+          APP="$RUNNER_TEMP/optimizer-device/Build/Products/Release-iphoneos/ChatGPTWebOptimized.app"
+          test -f "$APP/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = 'com.masakacj.chatgptweb.optimized'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = '0.1.9'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '11'
+          test ! -d "$APP/PlugIns"
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry unsigned.ipa Payload && rm -rf Payload)
+          unzip -tqq dist/unsigned.ipa
+      - name: Sign using current personal iOS certificate (candidate only)
+        env:
+          GH_RUN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --http1.1 --retry 4 --retry-all-errors --retry-delay 3 --connect-timeout 25 --max-time 240 -fsS -X POST \
+            -H "Authorization: Bearer $GH_RUN_TOKEN" \
+            -H "X-GitHub-Repository: $GITHUB_REPOSITORY" \
+            -H "X-GitHub-Run-Id: $GITHUB_RUN_ID" \
+            -H "X-GitHub-Sha: $GITHUB_SHA" \
+            -H "X-App-Key: chatgpt-web-optimized" \
+            -H 'Content-Type: application/octet-stream' \
+            --data-binary @dist/unsigned.ipa \
+            'https://ipa.781751.xyz:58443/api/v1/sign?channel=candidate' > dist/sign-result.json
+          python3 - <<'PY'
+          import json,os
+          x=json.load(open('dist/sign-result.json'))
+          assert x['ok'] and x['channel']=='candidate' and x['promoted'] is False
+          assert x['source_sha']==os.environ['GITHUB_SHA']
+          assert x['bundle_id']=='com.masakacj.chatgptweb.optimized'
+          assert str(x['version'])=='0.1.9' and str(x['build'])=='11'
+          print('Candidate signed:',x['install_page'])
+          PY
+      - name: Verify public signed IPA and manifest
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,subprocess
+          data=json.load(open('dist/sign-result.json'))
+          for key,file in [('ipa_url','dist/signed.ipa'),('manifest_url','dist/signed-manifest.plist')]:
+              subprocess.run(['curl','--http1.1','--retry','5','--retry-all-errors','--retry-delay','2','--connect-timeout','25','--max-time','180','-fsSL',data[key],'-o',file],check=True)
+          PY
+          python3 - <<'PY'
+          import json,hashlib,zipfile,plistlib,subprocess
+          from pathlib import Path
+          r=json.load(open('dist/sign-result.json'))
+          manifest=plistlib.loads(Path('dist/signed-manifest.plist').read_bytes())
+          assert manifest['items'][0]['assets'][0]['url']==r['ipa_url']
+          with zipfile.ZipFile('dist/signed.ipa') as z:
+              assert z.testzip() is None
+              root='Payload/ChatGPTWebOptimized.app/'
+              inf=plistlib.loads(z.read(root+'Info.plist'))
+              assert inf['CFBundleIdentifier']=='com.masakacj.chatgptweb.optimized'
+              assert str(inf['CFBundleShortVersionString'])=='0.1.9'
+              assert str(inf['CFBundleVersion'])=='11'
+              assert root+'embedded.mobileprovision' in z.namelist()
+              assert root+'_CodeSignature/CodeResources' in z.namelist()
+              assert not any('/PlugIns/' in n and n.endswith('.appex/Info.plist') for n in z.namelist())
+              p=subprocess.run(['openssl','smime','-inform','DER','-verify','-noverify'],input=z.read(root+'embedded.mobileprovision'),capture_output=True)
+              assert p.returncode==0, p.stderr[-500:]
+              profile=plistlib.loads(p.stdout)
+              assert profile['TeamIdentifier'][0]=='2C6V8R879J'
+          sha=hashlib.sha256(Path('dist/signed.ipa').read_bytes()).hexdigest()
+          print('SIGNED_ARCHIVE_OK SHA256='+sha+' AppleTeam=2C6V8R879J')
+          with open('dist/verified.json','w') as f:
+              json.dump({'ok':True,'bundle_id':'com.masakacj.chatgptweb.optimized','version':'0.1.9','build':'11','sha256':sha,'source_sha':r['source_sha'],'candidate_id':r['id'],'signing_team':'2C6V8R879J','device_tested':False},f,indent=2)
+          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('Config recovery optimizer 0.1.9 Build 11\n\n'+r['install_page']+'\n\nVerified signed SHA256: '+sha+'\n\nPhysical iPhone installation is not verified.\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: config-optimizer-0.1.9-11-${{ github.sha }}
+          path: |
+            dist/sign-result.json
+            dist/verified.json
+            dist/signed-manifest.plist
+          if-no-files-found: ignore
+          retention-days: 14
