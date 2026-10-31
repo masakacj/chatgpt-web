@@ -3,38 +3,44 @@ import XCTest
 
 @MainActor
 final class ConfigRecoveryTests: XCTestCase {
-    func testRandomRecoveryKeyEncryptDecryptAndScopeIsolation() throws {
-        let first = try XCTUnwrap(ConfigRecovery.generateKey())
-        let second = try XCTUnwrap(ConfigRecovery.generateKey())
-        XCTAssertEqual(first.count, 43)
-        XCTAssertNotEqual(first, second)
-        let original = Data("example local proxy config".utf8)
-        let blob = try ConfigRecovery.encrypt(.optimizer, code: first, data: original)
-        XCTAssertEqual(try ConfigRecovery.decrypt(.optimizer, code: first, blob: blob), original)
-        XCTAssertThrowsError(try ConfigRecovery.decrypt(.mirror, code: first, blob: blob))
-        XCTAssertThrowsError(try ConfigRecovery.decrypt(.optimizer, code: second, blob: blob))
-        XCTAssertThrowsError(try ConfigRecovery.encrypt(.optimizer, code: "password", data: original))
+    func testSingleFixedEndpointAndAppScopedResponse() throws {
+        XCTAssertEqual(ConfigRecovery.endpoint.absoluteString, "https://config.781751.xyz:58443")
+        let plan: [String: Any] = [
+            "mode": "home", "backupEnabled": false, "denyDirect": true,
+            "home": ["host": "home.proxy.example", "port": 443, "username": ""],
+            "office": ["host": "office.proxy.example", "port": 8443, "username": ""]
+        ]
+        let payload: [String: Any] = [
+            "schema": 1, "app": "optimizer",
+            "config": ["plan": plan, "homePassword": "", "officePassword": ""]
+        ]
+        let raw = try JSONSerialization.data(withJSONObject: payload)
+        let config = try ConfigRecovery.parse(raw, scope: .optimizer)
+        XCTAssertThrowsError(try ConfigRecovery.parse(raw, scope: .mirror))
+        let source = "personal-config-test-src-" + UUID().uuidString
+        let dest = "personal-config-test-dst-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: source))
+        let restored = try XCTUnwrap(UserDefaults(suiteName: dest))
+        defer {
+            defaults.removePersistentDomain(forName: source)
+            restored.removePersistentDomain(forName: dest)
+        }
+        let settings = OptimizerProxySettings(defaults: defaults)
+        XCTAssertTrue(settings.importRecoveryConfig(config))
+        XCTAssertTrue(settings.canLoadWebView)
+        XCTAssertEqual(settings.plan.home.host, "home.proxy.example")
+        XCTAssertEqual(settings.plan.office.port, 8443)
+        XCTAssertFalse(settings.plan.backupEnabled)
+        let target = OptimizerProxySettings(defaults: restored)
+        XCTAssertFalse(target.importRecoveryConfig(Data("invalid".utf8)))
+        XCTAssertFalse(target.canLoadWebView)
     }
 
-    func testProxyPlanCanExportAndRestoreWithoutInternetOrKeychainCredential() throws {
-        let sourceSuite = "proxy-recovery-src-" + UUID().uuidString
-        let destSuite = "proxy-recovery-dst-" + UUID().uuidString
-        let sourceDefaults = try XCTUnwrap(UserDefaults(suiteName: sourceSuite))
-        let destDefaults = try XCTUnwrap(UserDefaults(suiteName: destSuite))
-        defer {
-            sourceDefaults.removePersistentDomain(forName: sourceSuite)
-            destDefaults.removePersistentDomain(forName: destSuite)
-        }
-        let source = OptimizerProxySettings(defaults: sourceDefaults)
-        var plan = OptimizerProxyPlan()
-        plan.home = OptimizerProxyEndpoint(host: "proxy.home.example", port: 443, username: "")
-        plan.office = OptimizerProxyEndpoint(host: "proxy.office.example", port: 8443, username: "")
-        XCTAssertTrue(source.apply(plan, homePassword: "", officePassword: ""))
-        let serialized = try XCTUnwrap(source.exportRecoveryConfig())
-
-        let target = OptimizerProxySettings(defaults: destDefaults)
-        XCTAssertTrue(target.importRecoveryConfig(serialized))
-        XCTAssertEqual(target.plan, plan)
-        XCTAssertTrue(target.canLoadWebView)
+    func testRejectsMalformedOrOtherAppConfig() throws {
+        let raw = try JSONSerialization.data(withJSONObject: [
+            "schema": 1, "app": "mirror", "config": ["endpoint": "https://bridge.example"]
+        ])
+        XCTAssertThrowsError(try ConfigRecovery.parse(raw, scope: .optimizer))
+        XCTAssertThrowsError(try ConfigRecovery.parse(Data("invalid".utf8), scope: .optimizer))
     }
 }

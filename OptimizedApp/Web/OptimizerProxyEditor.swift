@@ -57,14 +57,12 @@ struct OptimizerProxyEditor: View {
                         .autocorrectionDisabled()
                     SecureField("代理密码（留空保留已保存密码）", text: $officePassword)
                 }
-                Section("跨证书配置恢复") {
-                    NavigationLink("备份 / 恢复自建代理配置") {
-                        ConfigRecoveryView(
-                            scope: .optimizer,
-                            exportConfig: { settings.exportRecoveryConfig() },
-                            importConfig: { settings.importRecoveryConfig($0) })
+                Section("快速配置") {
+                    NavigationLink("从 config.781751.xyz 恢复代理") {
+                        ConfigRecoveryView(scope: .optimizer,
+                                           importConfig: { settings.importRecoveryConfig($0) })
                     }
-                    Text("换 Team ID 后输入固定恢复密钥即可恢复 Home / Office、账号与代理密码；ChatGPT 需另行登录。")
+                    Text("换 Team ID 后输入固定密码，恢复 Home / Office 的全部代理参数。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("应用") {

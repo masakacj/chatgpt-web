@@ -209,26 +209,6 @@ final class OptimizerProxySettings: ObservableObject {
         return true
     }
 
-    func exportRecoveryConfig() -> Data? {
-        let current = defaults.data(forKey: Self.key)
-            .flatMap { try? JSONDecoder().decode(OptimizerProxyPlan.self, from: $0) } ?? plan
-        guard current.ready else { return nil }
-        let home = current.home.username.isEmpty ? "" :
-            (OptimizerProxyCredential.load(.home, pending: true)
-                ?? OptimizerProxyCredential.load(.home) ?? "")
-        let office = current.office.username.isEmpty ? "" :
-            (OptimizerProxyCredential.load(.office, pending: true)
-                ?? OptimizerProxyCredential.load(.office) ?? "")
-        for (route, kind) in [(current.home, OptimizerProxyMode.home),
-                              (current.office, OptimizerProxyMode.office)] {
-            let used = kind == current.mode || (current.mode != .direct && current.backupEnabled)
-            if used && !route.username.isEmpty &&
-                (kind == .home ? home : office).isEmpty { return nil }
-        }
-        return try? JSONEncoder().encode(OptimizerRecoveryBackup(
-            plan: current, homePassword: home, officePassword: office))
-    }
-
     func importRecoveryConfig(_ data: Data) -> Bool {
         guard let backup = try? JSONDecoder().decode(OptimizerRecoveryBackup.self, from: data),
               backup.plan.ready else { return false }
