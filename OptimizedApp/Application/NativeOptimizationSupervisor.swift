@@ -66,6 +66,10 @@ public final class NativeOptimizationSupervisor: ObservableObject {
         if isCircuitOpen {
             isSafeModeActive = true
             lastFailureReason = "熔断保护已开启：10分钟内发生多次异常退出，已进入安全模式。"
+        } else if hasRepeatedUncleanLaunches() {
+            // Unknown app exits are not evidence of WebContent termination or OOM.
+            isSafeModeActive = true
+            lastFailureReason = "检测到连续未正常结束的应用会话，原因尚未确认；已暂停网页自动加载。"
         }
         persistState()
     }
@@ -170,6 +174,18 @@ public final class NativeOptimizationSupervisor: ObservableObject {
         default:
             return "other"
         }
+    }
+
+    /// Two unclean foreground exits within the window, without an intervening clean background.
+    /// This only changes native landing; it never increments verified WebContent crash counts.
+    private func hasRepeatedUncleanLaunches() -> Bool {
+        let cutoff = Date().addingTimeInterval(-Self.failClosedWindowSeconds)
+        var count = 0
+        for entry in journal.reversed() {
+            if entry.timestamp < cutoff || entry.kind == "background" { break }
+            if entry.kind == "unknown_shutdown" { count += 1 }
+        }
+        return count >= 2
     }
 
     private func appendEntry(_ entry: JournalEntry) {

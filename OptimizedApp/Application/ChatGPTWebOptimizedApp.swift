@@ -12,6 +12,7 @@ struct ChatGPTWebOptimizedApp: App {
 }
 
 struct OptimizedRootView: View {
+    @MainActor private static var didRecordLaunch = false
     @StateObject private var supervisor: NativeOptimizationSupervisor
     @StateObject private var model: OptimizedAppModel
     @StateObject private var owner: ConversationManagerOwner
@@ -30,6 +31,10 @@ struct OptimizedRootView: View {
          owner: ConversationManagerOwner? = nil,
          telemetry: OptimizedTelemetry? = nil) {
         let supervisor = supervisor ?? NativeOptimizationSupervisor()
+        if !Self.didRecordLaunch {
+            supervisor.recordLaunch() // Before constructing any WebView; survives an immediate startup crash.
+            Self.didRecordLaunch = true
+        }
         let model = model ?? OptimizedAppModel()
         let owner = owner ?? ConversationManagerOwner()
         let telemetry = telemetry ?? OptimizedTelemetry()
@@ -271,7 +276,6 @@ struct OptimizedRootView: View {
             liveDebug.supervisor = supervisor
             liveDebug.setForeground(scenePhase == .active)
             thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
-            supervisor.recordLaunch()
             if supervisor.isCircuitOpen {
                 model.processTerminated = true
             }

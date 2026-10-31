@@ -11,15 +11,16 @@ final class NativeResourceGateTests: XCTestCase {
         return value
     }
 
-    func testFirstRunEnablesScopedRulesButSavedOptOutPersists() throws {
+    func testNewRuleRevisionDefaultsOffAndExplicitOptInPersists() throws {
         let settings = defaults()
+        settings.set(true, forKey: "optimized.resourceGate.enabled.v1") // Previous ON is quarantined.
         let gate = NativeResourceGate(defaults: settings)
-        XCTAssertTrue(gate.isEnabled)
+        XCTAssertFalse(gate.isEnabled)
         XCTAssertEqual(gate.appliedRuleCount, 0)
-        gate.isEnabled = false
-        XCTAssertFalse(NativeResourceGate(defaults: settings).isEnabled)
         gate.isEnabled = true
         XCTAssertTrue(NativeResourceGate(defaults: settings).isEnabled)
+        gate.isEnabled = false
+        XCTAssertFalse(NativeResourceGate(defaults: settings).isEnabled)
 
         let data = try XCTUnwrap(NativeResourceGate.approvedRulesJSON.data(using: .utf8))
         let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
@@ -68,6 +69,7 @@ final class NativeResourceGateTests: XCTestCase {
 
     func testApprovedRulesCompileAndInstallInWebKit() async {
         let gate = NativeResourceGate(defaults: defaults())
+        gate.isEnabled = true
         let controller = WKUserContentController()
         let installed = expectation(description: "WebKit content blocker compiled")
         gate.install(to: controller, safeMode: false) { success in
@@ -80,6 +82,7 @@ final class NativeResourceGateTests: XCTestCase {
 
     func testSafeModeAndSavedOptOutNeverInstallRules() {
         let gate = NativeResourceGate(defaults: defaults())
+        gate.isEnabled = true
         var installed: Bool?
         gate.install(to: WKUserContentController(), safeMode: true) { installed = $0 }
         XCTAssertEqual(installed, false)

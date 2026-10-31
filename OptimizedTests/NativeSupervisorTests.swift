@@ -171,6 +171,35 @@ final class NativeSupervisorTests: XCTestCase {
         }
     }
 
+    func testRepeatedUnknownAppExitsUseNativeSafeModeWithoutClaimingWebContentCrash() {
+        let first = NativeOptimizationSupervisor(defaults: testDefaults)
+        first.recordLaunch()
+        let second = NativeOptimizationSupervisor(defaults: testDefaults)
+        second.recordLaunch()
+        XCTAssertFalse(second.isSafeModeActive, "A single force-quit must not force safe mode")
+
+        let third = NativeOptimizationSupervisor(defaults: testDefaults)
+        third.recordLaunch()
+        XCTAssertTrue(third.isSafeModeActive, "Two unclean launches must prevent another automatic WebView creation")
+        XCTAssertFalse(third.isCircuitOpen, "Unknown app exits are not verified WebContent terminations")
+        XCTAssertEqual(third.verifiedTerminationCount, 0)
+        XCTAssertTrue(third.lastFailureReason?.contains("原因尚未确认") == true)
+        third.confirmRebuild()
+        XCTAssertFalse(third.isSafeModeActive, "User may explicitly choose to retry")
+    }
+
+    func testCleanBackgroundBreaksUnknownShutdownSequence() {
+        let first = NativeOptimizationSupervisor(defaults: testDefaults)
+        first.recordLaunch()
+        let second = NativeOptimizationSupervisor(defaults: testDefaults)
+        second.recordLaunch()
+        second.recordBackground()
+        let third = NativeOptimizationSupervisor(defaults: testDefaults)
+        third.recordLaunch()
+        third.recordLaunch()
+        XCTAssertFalse(third.isSafeModeActive, "A clean background breaks the repeated-unclean streak")
+    }
+
     func testUserConfirmedRebuildRestoresHomeRouteAndGeneratesNewWebView() {
         let supervisor = NativeOptimizationSupervisor(defaults: testDefaults)
         let model = OptimizedAppModel()

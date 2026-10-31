@@ -151,7 +151,7 @@ final class NativeResourceGate: ObservableObject {
       }
     ]
     """#
-    private static let enabledKey = "optimized.resourceGate.enabled.v1"
+    private static let enabledKey = "optimized.resourceGate.enabled.v2"
 
     private let defaults: UserDefaults
     @Published var isEnabled: Bool {
@@ -161,8 +161,8 @@ final class NativeResourceGate: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        // First run with real rules defaults to ON; respect a previously saved OFF choice.
-        isEnabled = (defaults.object(forKey: Self.enabledKey) as? Bool) ?? true
+        // New rule revision is opt-in; old v1 ON must not re-enable an unverified crash suspect.
+        isEnabled = defaults.bool(forKey: Self.enabledKey)
     }
 
     func disableForSafety() {
