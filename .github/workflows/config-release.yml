@@ -23,10 +23,7 @@ jobs:
       - name: Source and target policy checks
         run: |
           set -euo pipefail
-          node --check safari/chatgpt-safari.user.js
-          node scripts/validate-userscript.mjs
-          node scripts/check-target-boundaries.mjs
-          node scripts/check-cm-contract.mjs
+          npm run check
           test -f Shared/ConfigRecovery.swift
           grep -F 'https://config.781751.xyz:58443' Shared/ConfigRecovery.swift
       - name: Generate Xcode project and run simulator tests
