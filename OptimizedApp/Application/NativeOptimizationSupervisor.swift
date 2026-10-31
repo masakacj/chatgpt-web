@@ -41,9 +41,20 @@ public final class NativeOptimizationSupervisor: ObservableObject {
     @Published public private(set) var lastFailureReason: String?
 
     public init(defaults: UserDefaults = .standard) {
-        // UI-test injected circuit uses a separate preference domain, never the user's durable journal.
-        let fixture = ProcessInfo.processInfo.arguments.contains("-uitest-circuit-open")
-        self.defaults = (fixture ? UserDefaults(suiteName: "optimized.native.ui-test-circuit.v1") : nil) ?? defaults
+        // XCTest terminates each UI-test app without a background callback.
+        // Fresh-launch fixtures must not poison the production crash journal or
+        // misclassify intentional XCTest terminations as repeated app crashes.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("-uitest-circuit-open") {
+            self.defaults = UserDefaults(suiteName: "optimized.native.ui-test-circuit.v1") ?? defaults
+        } else if arguments.contains("-uitest-proxy-direct") || arguments.contains("-uitest-fresh-launch") {
+            let suiteName = "optimized.native.ui-test-fresh.v1"
+            let suite = UserDefaults(suiteName: suiteName)
+            suite?.removePersistentDomain(forName: suiteName)
+            self.defaults = suite ?? defaults
+        } else {
+            self.defaults = defaults
+        }
         loadPersistedState()
     }
 

@@ -3,6 +3,7 @@ import XCTest
 final class ChatGPTWebOptimizedUITests: XCTestCase {
     func testBackButtonIsAvailableAndDisabledWithoutHistory() {
         let app = XCUIApplication()
+        app.launchArguments = ["-uitest-fresh-launch"]
         app.launch()
         let back = app.buttons["navigation.back.button"]
         let forward = app.buttons["navigation.forward.button"]
@@ -14,6 +15,7 @@ final class ChatGPTWebOptimizedUITests: XCTestCase {
 
     func testProxyDefaultsFailClosedWithoutConfiguredEndpoints() {
         let app = XCUIApplication()
+        app.launchArguments = ["-uitest-fresh-launch"]
         app.launch()
         XCTAssertTrue(app.buttons["proxy.configure.button"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.webViews["optimized.webview"].exists,
