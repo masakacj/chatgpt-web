@@ -62,6 +62,7 @@ struct OptimizerProxyEditor: View {
                         ConfigRecoveryView(scope: .optimizer,
                                            importConfig: { settings.importRecoveryConfig($0) })
                     }
+                    .disabled(!canReload)
                     Text("换 Team ID 后输入固定密码，恢复 Home / Office 的全部代理参数。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }

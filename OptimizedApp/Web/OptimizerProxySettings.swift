@@ -211,6 +211,7 @@ final class OptimizerProxySettings: ObservableObject {
 
     func importRecoveryConfig(_ data: Data) -> Bool {
         guard let backup = try? JSONDecoder().decode(OptimizerRecoveryBackup.self, from: data),
+              backup.plan.mode != .direct, backup.plan.denyDirect,
               backup.plan.ready else { return false }
         for (route, kind) in [(backup.plan.home, OptimizerProxyMode.home),
                               (backup.plan.office, OptimizerProxyMode.office)] {

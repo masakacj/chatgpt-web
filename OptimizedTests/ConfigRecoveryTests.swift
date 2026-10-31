@@ -33,6 +33,15 @@ final class ConfigRecoveryTests: XCTestCase {
         XCTAssertFalse(settings.plan.backupEnabled)
         let target = OptimizerProxySettings(defaults: restored)
         XCTAssertFalse(target.importRecoveryConfig(Data("invalid".utf8)))
+        let explicitDirect: [String: Any] = [
+            "plan": [
+                "mode": "direct", "backupEnabled": false, "denyDirect": true,
+                "home": ["host": "", "port": 0, "username": ""],
+                "office": ["host": "", "port": 0, "username": ""]
+            ],
+            "homePassword": "", "officePassword": ""
+        ]
+        XCTAssertFalse(target.importRecoveryConfig(try JSONSerialization.data(withJSONObject: explicitDirect)))
         XCTAssertFalse(target.canLoadWebView)
     }
 
