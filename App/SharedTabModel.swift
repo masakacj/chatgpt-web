@@ -476,12 +476,6 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard pairingKey.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw STError(code: "invalid_pairing") }
         return STConnection(origin: try PCCompanionPolicy.origin(endpoint), key: pairingKey)
     }
-    func exportRecoveryConfig() -> Data? {
-        guard !fixture, let c = try? config(), STKeychain.load() == c.key else { return nil }
-        return try? JSONEncoder().encode(STRecoveryConfig(endpoint: c.origin.absoluteString,
-                                                           pairingKey: c.key))
-    }
-
     func importRecoveryConfig(_ data: Data) -> Bool {
         guard !fixture, !busy, !online,
               let config = try? JSONDecoder().decode(STRecoveryConfig.self, from: data),
@@ -543,9 +537,6 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             if !fixture {
                 try STKeychain.save(c.key)
                 UserDefaults.standard.set(c.origin.absoluteString, forKey: "PCCompanion.endpoint")
-                if let backup = exportRecoveryConfig() {
-                    Task { await ConfigRecovery.uploadSaved(.mirror, data: backup) }
-                }
             }
             status = tabs.isEmpty ? "PC 没有可绑定的 ChatGPT 页面" : "选择要与手机共用的 PC 标签页"
         } catch { self.error = error.localizedDescription }

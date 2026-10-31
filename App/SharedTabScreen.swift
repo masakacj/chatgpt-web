@@ -795,14 +795,12 @@ struct SharedTabScreen: View {
                     Button("读取 PC 标签页") { Task { await model.loadTabs() } }.disabled(model.busy).accessibilityIdentifier("shared.connect")
                     Text("手机与选中的 PC 标签页双向切换对话。输入草稿只在手机保存，点击发送才提交。").font(.caption)
                 }
-                Section("跨证书恢复") {
-                    NavigationLink("备份 / 恢复 PC 配对配置") {
-                        ConfigRecoveryView(
-                            scope: .mirror,
-                            exportConfig: { model.exportRecoveryConfig() },
-                            importConfig: { model.importRecoveryConfig($0) })
+                Section("快速配置") {
+                    NavigationLink("从 config.781751.xyz 恢复配对") {
+                        ConfigRecoveryView(scope: .mirror,
+                                           importConfig: { model.importRecoveryConfig($0) })
                     }
-                    Text("只备份 PC 服务地址及配对密钥；不迁移网页登录、草稿或正在发送的操作。")
+                    Text("输入固定密码恢复 Bridge 地址和配对密钥，不影响 ChatGPT 登录。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let error = model.error { Section { Text(error).foregroundStyle(.red).font(.caption) } }
