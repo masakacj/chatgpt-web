@@ -50,6 +50,7 @@ targets:
     platform: iOS
     sources:
       - path: OptimizedApp
+      - path: Shared
       - path: OptimizedResources
     settings:
       base:

@@ -57,6 +57,14 @@ struct OptimizerProxyEditor: View {
                         .autocorrectionDisabled()
                     SecureField("代理密码（留空保留已保存密码）", text: $officePassword)
                 }
+                Section("快速配置") {
+                    NavigationLink("从 config.781751.xyz 恢复代理") {
+                        ConfigRecoveryView(scope: .optimizer,
+                                           importConfig: { settings.importRecoveryConfig($0) })
+                    }
+                    Text("换 Team ID 后输入固定密码，恢复 Home / Office 的全部代理参数。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("应用") {
                     Text(draft.description)
                         .font(.subheadline)
