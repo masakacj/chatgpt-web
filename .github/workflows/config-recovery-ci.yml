@@ -1,0 +1,22 @@
+name: Config Recovery Mirror CI
+on:
+  push:
+    branches: ['feature/config-recovery-mirror-20261031']
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run check
+      - name: Build unsigned iOS Mirror (no IPA publish)
+        run: |
+          set -euo pipefail
+          command -v xcodegen || brew install xcodegen
+          xcodegen generate
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/mirror" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build

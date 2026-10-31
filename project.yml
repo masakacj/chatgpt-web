@@ -17,6 +17,7 @@ targets:
     platform: iOS
     sources:
       - path: App
+      - path: Shared
       - path: Resources
       - path: safari/chatgpt-safari.user.js
         buildPhase: resources

@@ -210,6 +210,11 @@ struct STError: LocalizedError {
         return text[code] ?? (status == 401 || status == 403 ? "PC 连接未获授权，请检查配对。" : "操作未完成（\(code)），草稿已保留。")
     }
 }
+private struct STRecoveryConfig: Codable {
+    let endpoint: String
+    let pairingKey: String
+}
+
 private enum STKeychain {
     static let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "ChatGPTWeb.PCCompanion.v1", kSecAttrAccount as String: "pairing"]
     static func load() -> String {
@@ -471,6 +476,27 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
         guard pairingKey.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw STError(code: "invalid_pairing") }
         return STConnection(origin: try PCCompanionPolicy.origin(endpoint), key: pairingKey)
     }
+    func exportRecoveryConfig() -> Data? {
+        guard !fixture, let c = try? config(), STKeychain.load() == c.key else { return nil }
+        return try? JSONEncoder().encode(STRecoveryConfig(endpoint: c.origin.absoluteString,
+                                                           pairingKey: c.key))
+    }
+
+    func importRecoveryConfig(_ data: Data) -> Bool {
+        guard !fixture, !busy, !online,
+              let config = try? JSONDecoder().decode(STRecoveryConfig.self, from: data),
+              config.pairingKey.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              let origin = try? PCCompanionPolicy.origin(config.endpoint) else { return false }
+        do { try STKeychain.save(config.pairingKey) }
+        catch { return false }
+        endpoint = origin.absoluteString
+        pairingKey = config.pairingKey
+        UserDefaults.standard.set(endpoint, forKey: "PCCompanion.endpoint")
+        tabs = []
+        needsSettings = true
+        return true
+    }
+
     private func ownerKey(_ s: STSnapshot, _ c: STConnection) -> String { c.identity + "|" + (s.conversationId.isEmpty ? "new:" + (s.projectId ?? "") : s.conversationId) }
     @discardableResult private func save() -> Bool {
         if fixture { return true }
@@ -514,7 +540,13 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
             capabilities = Set(health.capabilities ?? [])
             guard health.capabilities?.contains("shared-tab-v1") == true else { throw STError(code: "shared_bridge_required") }
             let value: STTabs = try await request("/v1/tabs?shared=1", using: c); tabs = value.tabs
-            if !fixture { try STKeychain.save(c.key); UserDefaults.standard.set(c.origin.absoluteString, forKey: "PCCompanion.endpoint") }
+            if !fixture {
+                try STKeychain.save(c.key)
+                UserDefaults.standard.set(c.origin.absoluteString, forKey: "PCCompanion.endpoint")
+                if let backup = exportRecoveryConfig() {
+                    Task { await ConfigRecovery.uploadSaved(.mirror, data: backup) }
+                }
+            }
             status = tabs.isEmpty ? "PC 没有可绑定的 ChatGPT 页面" : "选择要与手机共用的 PC 标签页"
         } catch { self.error = error.localizedDescription }
     }

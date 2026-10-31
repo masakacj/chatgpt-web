@@ -795,6 +795,16 @@ struct SharedTabScreen: View {
                     Button("读取 PC 标签页") { Task { await model.loadTabs() } }.disabled(model.busy).accessibilityIdentifier("shared.connect")
                     Text("手机与选中的 PC 标签页双向切换对话。输入草稿只在手机保存，点击发送才提交。").font(.caption)
                 }
+                Section("跨证书恢复") {
+                    NavigationLink("备份 / 恢复 PC 配对配置") {
+                        ConfigRecoveryView(
+                            scope: .mirror,
+                            exportConfig: { model.exportRecoveryConfig() },
+                            importConfig: { model.importRecoveryConfig($0) })
+                    }
+                    Text("只备份 PC 服务地址及配对密钥；不迁移网页登录、草稿或正在发送的操作。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if let error = model.error { Section { Text(error).foregroundStyle(.red).font(.caption) } }
                 Section("选择共用的 ChatGPT 标签页") {
                     ForEach(model.tabs) { tab in
