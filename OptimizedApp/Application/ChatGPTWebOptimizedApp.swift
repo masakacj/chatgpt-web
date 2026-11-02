@@ -23,6 +23,7 @@ struct OptimizedRootView: View {
     @State private var showingProxySettings = false
     @State private var thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
     @AppStorage("optimized.pcHistory.enabled.v1") private var pcHistoryEnabled = true
+    @AppStorage("optimized.mcpOutput.enabled.v1") private var mcpOutputEnabled = false
     @Environment(\.scenePhase) private var scenePhase
 
     @MainActor
@@ -123,6 +124,7 @@ struct OptimizedRootView: View {
                                  supervisor: supervisor, resourceGate: resourceGate,
                                  liveDebug: liveDebug,
                                  pcHistoryEnabled: pcHistoryEnabled,
+                                 mcpOutputEnabled: mcpOutputEnabled,
                                  proxySettings: proxySettings)
                     .id(model.webViewGeneration)
             }
@@ -157,6 +159,12 @@ struct OptimizedRootView: View {
                     Section("PC Chrome 长对话优化") {
                         Toggle("历史内容布局减负（下次重建网页生效）", isOn: $pcHistoryEnabled)
                         Text("与 PC 扩展保持相同的低干预方向：长对话至少 24 个消息块才启用，只对较早历史应用 WebKit 布局减负；最新 12 条消息及正在运行、等待授权的内容保持原样。不裁剪 DOM 或拦截 MCP。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+
+                    Section("MCP 工具输出减负") {
+                        Toggle("MCP 工具输出减负（下次新建网页生效）", isOn: $mcpOutputEnabled)
+                        Text("优先对工具调用产生的大量输出应用显示减负；用户消息、普通助手文本、最终回答和交互授权控件完整保留。下次新建网页生效，保存的登录和代理设置不变。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
 

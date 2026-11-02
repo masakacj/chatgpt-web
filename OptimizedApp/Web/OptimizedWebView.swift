@@ -10,6 +10,7 @@ struct OptimizedWebView: UIViewRepresentable {
     let resourceGate: NativeResourceGate
     let liveDebug: OptimizedLiveDebug
     let pcHistoryEnabled: Bool
+    let mcpOutputEnabled: Bool
     let proxySettings: OptimizerProxySettings
 
     init(model: OptimizedAppModel,
@@ -19,6 +20,7 @@ struct OptimizedWebView: UIViewRepresentable {
          resourceGate: NativeResourceGate,
          liveDebug: OptimizedLiveDebug,
          pcHistoryEnabled: Bool,
+         mcpOutputEnabled: Bool = false,
          proxySettings: OptimizerProxySettings) {
         self.model = model
         self.owner = owner
@@ -27,6 +29,7 @@ struct OptimizedWebView: UIViewRepresentable {
         self.resourceGate = resourceGate
         self.liveDebug = liveDebug
         self.pcHistoryEnabled = pcHistoryEnabled
+        self.mcpOutputEnabled = mcpOutputEnabled
         self.proxySettings = proxySettings
     }
 
@@ -37,9 +40,11 @@ struct OptimizedWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let handler = context.coordinator.handler
+        let isSafeMode = supervisor?.isSafeModeActive == true
         let (configuration, proxyReady) = WebConfigurationFactory.make(
             owner: owner, handler: handler,
-            pcHistoryEnabled: pcHistoryEnabled && supervisor?.isSafeModeActive != true,
+            pcHistoryEnabled: pcHistoryEnabled && !isSafeMode,
+            mcpOutputEnabled: mcpOutputEnabled && !isSafeMode,
             proxySettings: proxySettings)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.accessibilityIdentifier = "optimized.webview"
