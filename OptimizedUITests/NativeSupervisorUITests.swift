@@ -11,12 +11,12 @@ final class NativeSupervisorUITests: XCTestCase {
 
     private func findSimulatedTerminationButton() -> XCUIElement {
         let button = app.buttons["diagnostics.simulate.termination"]
-        // The medium-height diagnostics sheet uses a lazily mounted List.
+        // Diagnostics is a lazy List; additional settings can place this action off-screen.
         let list = app.collectionViews.firstMatch
-        for _ in 0..<3 where !button.exists {
+        for _ in 0..<12 where !button.isHittable {
             if list.exists { list.swipeUp() } else { app.swipeUp() }
         }
-        XCTAssertTrue(button.waitForExistence(timeout: 5), "Simulation button must be reachable in diagnostics")
+        XCTAssertTrue(button.isHittable, "Simulation button must be reachable in diagnostics")
         return button
     }
 
