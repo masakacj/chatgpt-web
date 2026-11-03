@@ -333,6 +333,29 @@ final class SharedTabUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("中止请求：0"))
         XCTAssertTrue(app.buttons["shared.receipt"].exists)
     }
+    func testMobileChatSwitchRecoversStaleBridgeCacheWithoutReconnect() throws {
+        let app = launch("--shared-fixture-stale-navigation-cache")
+        composer(app).tap(); composer(app).typeText("A local draft must survive")
+        searchB(app)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("导航：1"),
+                      "The user action must navigate PC exactly once")
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("切换恢复读取：1"),
+                      "Use the same session's read-only live refresh, not the stale cache")
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertFalse(String(describing: composer(app).value).contains("A local draft must survive"),
+                       "Switching to B must preserve but not display A's separate draft")
+    }
+    func testLostNavigationReplyDoesNotClickAgainOrRequireReconnect() throws {
+        let app = launch("--shared-fixture-navigation-response-lost")
+        searchB(app)
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("导航：1"),
+                      "A lost response must not dispatch a second navigation command")
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("切换恢复读取：1"),
+                      "Lost command response must not rely on stale cached GET")
+        XCTAssertTrue(app.staticTexts["shared.fixture.counters"].label.contains("发送请求：0"))
+        XCTAssertTrue(app.staticTexts["原生历史答案 B"].exists,
+                      "A positive read-only bound-tab snapshot must recover the target chat")
+    }
     func testPCNavigationFollowsBoundTabWithoutNewBinding() throws {
         let app = launch("--shared-fixture-pc-switch")
         XCTAssertTrue(app.staticTexts["原生历史答案 B"].waitForExistence(timeout: 15))

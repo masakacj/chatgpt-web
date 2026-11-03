@@ -20,6 +20,8 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var draftWrites = 0
     private static var actions = 0
     private static var reads = 0
+    private static var staleNavigationEnvelope: [String: Any]?
+    private static var navigationReconciliations = 0
     private static var healthReads = 0
     private static var reportOldSessionClosed = false
     private static var newChats = 0
@@ -38,11 +40,11 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
 
     static var counters: String {
         lock.lock(); defer { lock.unlock() }
-        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 模型选择：\(modelSelects) · 旧回执结算：\(lateSettlements) · 双回执自动轮询：\(receiptReadsByID.values.filter { $0 >= 5 }.count)"
+        return "发送请求：\(sends) · 中止请求：\(stops) · 草稿同步：\(draftWrites) · 导航：\(actions) · 交互：\(interactionClicks) · 模型选择：\(modelSelects) · 旧回执结算：\(lateSettlements) · 双回执自动轮询：\(receiptReadsByID.values.filter { $0 >= 5 }.count) · 切换恢复读取：\(navigationReconciliations)"
     }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; lateSettlements = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; deferredSendConfirmation = nil; receipts = [:]; receiptReadsByID = [:]; reportOldSessionClosed = false
+        current = a; projectID = nil; document = "fixture-document-A"; revision = 0; stalePCLoading = true; sends = 0; stops = 0; draftWrites = 0; actions = 0; reads = 0; staleNavigationEnvelope = nil; navigationReconciliations = 0; healthReads = 0; newChats = 0; interactionClicks = 0; modelSelects = 0; lateSettlements = 0; modelName = "GPT-6"; effortName = "High"; effortObserved = true; sentText = nil; deferredSendConfirmation = nil; receipts = [:]; receiptReadsByID = [:]; reportOldSessionClosed = false
     }
     static func simulateOldSessionClosed() {
         lock.lock(); defer { lock.unlock() }
@@ -398,10 +400,21 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
                 return (200, ["status": "option_clicked", "selectionObserved": true, "model": resModel, "options": []])
             }
             if action == "search" { return (200, library(search: true)) }
+            if action == "open" && (args.contains("--shared-fixture-stale-navigation-cache") ||
+                                    args.contains("--shared-fixture-navigation-response-lost")) {
+                // PC has switched, but the Bridge GET still serves the old view
+                // until an explicit read-only refresh of the SAME bound tab.
+                staleNavigationEnvelope = envelope()
+            }
             actions += 1; revision += 1; sentText = nil
             if action == "open" { current = input["targetConversationId"] as? String ?? b; projectID = nil }
             if action == "new" { current = ""; projectID = input["projectId"] as? String }
             document = "fixture-document-\(revision)"
+            if action == "open" && args.contains("--shared-fixture-navigation-response-lost") {
+                // Browser navigated, but the action HTTP response was lost.
+                // The phone must only READ the tab to confirm, not click twice.
+                return (504, ["error": "pc_result_unknown"])
+            }
             return (200, ["ok": true, "snapshot": snapshot()])
         }
         if path.hasSuffix("/uploads") { return (200, ["status": "handed_to_pc", "name": input["name"] ?? "test.png"]) }
@@ -486,6 +499,15 @@ final class SharedTabFixtureProtocol: URLProtocol, @unchecked Sendable {
         if path.contains("/sessions/") {
             if req.httpMethod == "DELETE" { return (200, ["ok": true]) }
             reads += 1
+            if (args.contains("--shared-fixture-stale-navigation-cache") ||
+                args.contains("--shared-fixture-navigation-response-lost")), let stale = staleNavigationEnvelope {
+                if req.url?.query?.contains("refresh=1") == true {
+                    navigationReconciliations += 1
+                    staleNavigationEnvelope = nil
+                } else {
+                    return (200, stale)
+                }
+            }
             if args.contains("--shared-fixture-delayed-native-send-confirm") &&
                req.url?.query?.contains("refresh=1") == true,
                let command = deferredSendConfirmation {

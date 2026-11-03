@@ -1,9 +1,12 @@
-name: Personal Config mirror release 0.7.18 Build 21
+name: Mirror 0.7.19 Build 22 chat-switch candidate
 on:
   push:
     branches: ['feature/config-recovery-mirror-20261031']
     paths:
       - 'project.yml'
+      - 'App/SharedTabModel.swift'
+      - 'App/SharedTabFixtureProtocol.swift'
+      - 'UITests/SharedTabUITests.swift'
       - '.github/workflows/config-release.yml'
 permissions:
   contents: read
@@ -26,21 +29,24 @@ jobs:
           npm run check
           test -f Shared/ConfigRecovery.swift
           grep -F 'https://config.781751.xyz:58443' Shared/ConfigRecovery.swift
-      - name: Generate project and compile simulator app
+      - name: Build and test native shared-tab switch recovery in Simulator
         run: |
           set -euo pipefail
           command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/mirror-sim" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath "$RUNNER_TEMP/mirror-sim" -parallel-testing-enabled NO -test-timeouts-enabled YES -default-test-execution-time-allowance 90 -maximum-test-execution-time-allowance 120 -only-testing:ChatGPTWebUITests/SharedTabUITests/testMobileChatSwitchRecoversStaleBridgeCacheWithoutReconnect -only-testing:ChatGPTWebUITests/SharedTabUITests/testLostNavigationReplyDoesNotClickAgainOrRequireReconnect -only-testing:ChatGPTWebUITests/SharedTabUITests/testPerChatDraftsSurviveSearchAndSwitchWithoutSyncingPC -only-testing:ChatGPTWebUITests/SharedTabUITests/testPCNavigationFollowsBoundTabWithoutNewBinding CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
       - name: Compile unsigned ChatGPTWeb iPhone package
         run: |
           set -euo pipefail
-          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/mirror-device" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION=0.7.18 CURRENT_PROJECT_VERSION=21 build
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWeb -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/mirror-device" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION=0.7.19 CURRENT_PROJECT_VERSION=22 build
           APP="$RUNNER_TEMP/mirror-device/Build/Products/Release-iphoneos/ChatGPTWeb.app"
           test -f "$APP/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")" = 'com.masakacj.chatgptweb'
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = '0.7.18'
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '21'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = '0.7.19'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")" = '22'
           test -f "$APP/PlugIns/ChatGPTScriptAction.appex/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/PlugIns/ChatGPTScriptAction.appex/Info.plist")" = 'com.masakacj.chatgptweb.scriptaction'
           mkdir -p dist/Payload
@@ -67,7 +73,7 @@ jobs:
           assert x['ok'] and x['channel']=='candidate' and x['promoted'] is False
           assert x['source_sha']==os.environ['GITHUB_SHA']
           assert x['bundle_id']=='com.masakacj.chatgptweb'
-          assert str(x['version'])=='0.7.18' and str(x['build'])=='21'
+          assert str(x['version'])=='0.7.19' and str(x['build'])=='22'
           print('Candidate signed:',x['install_page'])
           PY
       - name: Verify public signed IPA and manifest
@@ -90,8 +96,8 @@ jobs:
               root='Payload/ChatGPTWeb.app/'
               inf=plistlib.loads(z.read(root+'Info.plist'))
               assert inf['CFBundleIdentifier']=='com.masakacj.chatgptweb'
-              assert str(inf['CFBundleShortVersionString'])=='0.7.18'
-              assert str(inf['CFBundleVersion'])=='21'
+              assert str(inf['CFBundleShortVersionString'])=='0.7.19'
+              assert str(inf['CFBundleVersion'])=='22'
               assert root+'embedded.mobileprovision' in z.namelist()
               assert root+'_CodeSignature/CodeResources' in z.namelist()
               ext=root+'PlugIns/ChatGPTScriptAction.appex/'
@@ -104,14 +110,14 @@ jobs:
           sha=hashlib.sha256(Path('dist/signed.ipa').read_bytes()).hexdigest()
           print('SIGNED_ARCHIVE_OK SHA256='+sha+' AppleTeam=2C6V8R879J')
           with open('dist/verified.json','w') as f:
-              json.dump({'ok':True,'bundle_id':'com.masakacj.chatgptweb','version':'0.7.18','build':'21','sha256':sha,'source_sha':r['source_sha'],'candidate_id':r['id'],'signing_team':'2C6V8R879J','device_tested':False},f,indent=2)
+              json.dump({'ok':True,'bundle_id':'com.masakacj.chatgptweb','version':'0.7.19','build':'22','sha256':sha,'source_sha':r['source_sha'],'candidate_id':r['id'],'signing_team':'2C6V8R879J','device_tested':False},f,indent=2)
           with open(__import__('os').environ['GITHUB_STEP_SUMMARY'],'a') as f:
-              f.write('Config recovery mirror 0.7.18 Build 21\n\n'+r['install_page']+'\n\nVerified signed SHA256: '+sha+'\n\nPhysical iPhone installation is not verified.\n')
+              f.write('Mirror chat-switch recovery 0.7.19 Build 22\n\n'+r['install_page']+'\n\nVerified signed SHA256: '+sha+'\n\nPhysical iPhone installation is not verified.\n')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: config-mirror-0.7.18-21-${{ github.sha }}
+          name: mirror-chat-switch-0.7.19-22-${{ github.sha }}
           path: |
             dist/sign-result.json
             dist/verified.json

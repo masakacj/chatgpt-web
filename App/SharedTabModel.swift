@@ -987,7 +987,20 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
     }
     func newChat(project: STProject? = nil) async { await navigate("new", fields: project.map { ["projectId": $0.id] } ?? [:]) }
     private func navigate(_ action: String, fields: [String: Any]) async {
-        guard online, !busy, !libraryLoading, let c = connection, let id = sessionID, let snap = snapshot else { return }
+        guard online, !busy, !libraryLoading, let c = connection, let id = sessionID else { return }
+        let initialEpoch = epoch
+        if loading || snapshot == nil {
+            status = "PC 正在切换对话 · 正在读取最新页面"
+            await reconcileLoading()
+        }
+        // The initial busy guard predates an await. A second tap may enter while
+        // read-only loading reconciliation is suspended: recheck before POST.
+        guard epoch == initialEpoch, sessionID == id, connection?.identity == c.identity,
+              !busy, !libraryLoading else { return }
+        guard online, !loading, let snap = snapshot else {
+            status = "PC 页面尚未就绪 · 请稍后重试切换"
+            return
+        }
         busy = true; defer { busy = false }; error = nil; save(); let generation = epoch
         do {
             var body: [String: Any] = ["action": action, "commandId": UUID().uuidString, "documentId": snap.documentId]; body.merge(fields) { _, value in value }
@@ -1006,12 +1019,38 @@ private final class STNoRedirect: NSObject, URLSessionTaskDelegate {
                     acknowledgeRead(for: targetId, activityAt: matchingChat?.activityAt, status: fresh.status)
                 }
             }
-            try await refresh(using: c)
-            if action == "open", let targetId = fields["targetConversationId"] as? String, snapshot?.conversationId == targetId {
-                let matchingChat = chats.first { $0.id == targetId } ?? recentActive.first { $0.id == targetId }
-                acknowledgeRead(for: targetId, activityAt: matchingChat?.activityAt, status: snapshot?.status)
+            await reconcileNavigation(action: action, fields: fields, previousDocument: snap.documentId, using: c, generation: generation)
+        } catch {
+            self.error = error.localizedDescription
+            // An unknown PC navigation result must never click a second time.
+            // Read only the existing bound tab to discover whether it already switched.
+            await reconcileNavigation(action: action, fields: fields, previousDocument: snap.documentId, using: c, generation: generation)
+        }
+    }
+    private func reconcileNavigation(action: String, fields: [String: Any], previousDocument: String,
+                                     using c: STConnection, generation: Int) async {
+        let target = fields["targetConversationId"] as? String
+        guard let id = sessionID else { return }
+        for delay in [UInt64(0), 400_000_000, 900_000_000, 1_500_000_000] {
+            if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
+            guard !Task.isCancelled, foreground, generation == epoch, sessionID == id,
+                  connection?.identity == c.identity else { return }
+            // Never use the potentially stale cached GET following a PC click.
+            // This only refreshes the SAME paired tab; it cannot navigate or send.
+            do { try await refresh(using: c, fromPC: true) }
+            catch { continue }  // A failed read cannot confirm a navigation.
+            if action == "open", let target, snapshot?.conversationId == target {
+                let chat = chats.first { $0.id == target } ?? recentActive.first { $0.id == target }
+                acknowledgeRead(for: target, activityAt: chat?.activityAt, status: snapshot?.status)
+                error = nil
+                return
             }
-        } catch { self.error = error.localizedDescription; try? await refresh(using: c) }
+            if action == "new" && snapshot?.conversationId.isEmpty == true &&
+               snapshot?.documentId != previousDocument { error = nil; return }
+        }
+        if generation == epoch && sessionID == id {
+            status = "PC 切换尚未确认 · 可重新选择对话"
+        }
     }
     func acknowledgeRead(for conversationId: String, activityAt: Double? = nil, status: String? = nil, watermark: String? = nil) {
         guard !conversationId.isEmpty else { return }
