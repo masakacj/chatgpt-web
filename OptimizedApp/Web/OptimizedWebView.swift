@@ -220,10 +220,15 @@ struct OptimizedWebView: UIViewRepresentable {
             let route = routeCategory(for: webView)
             telemetry.record(.contentTerminated, route: route, urgent: true)
             liveDebug.processTerminated()
+            // Evaluate before invalidating the old CM document. Unknown/draft/
+            // running/approval states remain in native safe mode.
+            let readOnlyRecoveryAllowed =
+                model.isBackgrounded && owner.canRestoreReadOnlyAfterBackgroundLoss
             owner.invalidateDocument(processTerminated: true)
             handler.webView = nil
             model.retryHandler = nil
-            model.markProcessTerminated(route: route, isSynthetic: false)
+            model.markProcessTerminated(route: route, isSynthetic: false,
+                                        backgroundReadOnlyEligible: readOnlyRecoveryAllowed)
             if let sup = supervisor ?? model.supervisor, sup.isCircuitOpen {
                 telemetry.record(.recoveryPaused, route: route, urgent: true)
             }

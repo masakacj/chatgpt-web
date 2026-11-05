@@ -57,6 +57,72 @@ final class NativeSupervisorTests: XCTestCase {
                        "WebView generation must NOT change automatically on termination; must await explicit user confirmation")
     }
 
+    func testSafeReadOnlyRecoveryRequiresObservedNoDraftNoActiveTask() {
+        XCTAssertTrue(ConversationManagerOwner.readOnlyRecoveryIsSafe(
+            task: .completed, hasDraft: false, running: false, waiting: false))
+        XCTAssertTrue(ConversationManagerOwner.readOnlyRecoveryIsSafe(
+            task: .unknown, hasDraft: false, running: false, waiting: false))
+        for status in [CMTaskStatus.running, .waiting] {
+            XCTAssertFalse(ConversationManagerOwner.readOnlyRecoveryIsSafe(
+                task: status, hasDraft: false, running: false, waiting: false))
+        }
+        XCTAssertFalse(ConversationManagerOwner.readOnlyRecoveryIsSafe(
+            task: .completed, hasDraft: true, running: false, waiting: false))
+        XCTAssertFalse(ConversationManagerOwner.readOnlyRecoveryIsSafe(
+            task: .completed, hasDraft: nil, running: false, waiting: false))
+        XCTAssertFalse(ConversationManagerOwner.readOnlyRecoveryIsSafe(
+            task: .completed, hasDraft: false, running: true, waiting: false))
+        XCTAssertFalse(ConversationManagerOwner.readOnlyRecoveryIsSafe(
+            task: .completed, hasDraft: false, running: false, waiting: true))
+    }
+
+    func testBackgroundReadOnlyRecoveryCreatesOnlyOneNewHomeWebView() {
+        let supervisor = NativeOptimizationSupervisor(defaults: testDefaults)
+        let model = OptimizedAppModel()
+        model.supervisor = supervisor
+        supervisor.recordLaunch()
+        let original = model.webViewGeneration
+        model.markProcessTerminated(route: "project", backgroundReadOnlyEligible: true)
+        XCTAssertTrue(model.pendingBackgroundReadOnlyRecovery)
+        XCTAssertTrue(model.processTerminated)
+        XCTAssertTrue(supervisor.isSafeModeActive)
+        XCTAssertEqual(supervisor.verifiedTerminationCount, 1)
+
+        XCTAssertTrue(model.restoreHomeAfterBackgroundLoss())
+        XCTAssertFalse(model.pendingBackgroundReadOnlyRecovery)
+        XCTAssertFalse(model.processTerminated)
+        XCTAssertFalse(supervisor.isSafeModeActive)
+        XCTAssertFalse(supervisor.isCircuitOpen)
+        XCTAssertEqual(supervisor.verifiedTerminationCount, 1)
+        XCTAssertNotEqual(original, model.webViewGeneration)
+        XCTAssertEqual(model.targetURL.absoluteString, "https://chatgpt.com/")
+        XCTAssertEqual(supervisor.journal.last?.kind, "background_auto_recovery")
+        XCTAssertFalse(model.restoreHomeAfterBackgroundLoss(), "Never replay recovery twice")
+    }
+
+    func testSyntheticForegroundAndCircuitDoNotAutoRecover() {
+        let supervisor = NativeOptimizationSupervisor(defaults: testDefaults)
+        let model = OptimizedAppModel()
+        model.supervisor = supervisor
+        model.markProcessTerminated(route: "home", isSynthetic: true,
+                                    backgroundReadOnlyEligible: true)
+        XCTAssertFalse(model.pendingBackgroundReadOnlyRecovery)
+        XCTAssertFalse(model.restoreHomeAfterBackgroundLoss())
+        model.rebuildAfterConfirmation()
+
+        model.markProcessTerminated(route: "project", backgroundReadOnlyEligible: false)
+        XCTAssertFalse(model.pendingBackgroundReadOnlyRecovery)
+        model.rebuildAfterConfirmation()
+
+        supervisor.recordWebContentTermination(route: "project")
+        supervisor.recordWebContentTermination(route: "project")
+        XCTAssertTrue(supervisor.isCircuitOpen)
+        model.markProcessTerminated(route: "project", backgroundReadOnlyEligible: true)
+        XCTAssertFalse(model.pendingBackgroundReadOnlyRecovery)
+        XCTAssertFalse(model.restoreHomeAfterBackgroundLoss())
+        XCTAssertTrue(model.processTerminated)
+    }
+
     func testCircuitBreakerOpensAfterTwoTerminationsInTenMinutes() {
         let supervisor = NativeOptimizationSupervisor(defaults: testDefaults)
         supervisor.recordLaunch()

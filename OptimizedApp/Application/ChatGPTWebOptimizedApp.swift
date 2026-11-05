@@ -272,8 +272,15 @@ struct OptimizedRootView: View {
             owner.setAppActive(phase == .active)
             liveDebug.setForeground(phase == .active)
             if phase == .active {
+                model.isBackgrounded = false
                 supervisor.recordForeground()
                 telemetry.record(.foreground)
+                // A verified, safe, background-only WebContent loss may restore
+                // the ChatGPT homepage exactly once, without replaying requests.
+                if hasEnteredBackground, proxySettings.canLoadWebView,
+                   model.restoreHomeAfterBackgroundLoss() {
+                    telemetry.record(.automaticRecovery, urgent: true)
+                }
                 if hasEnteredBackground {
                     let resumeEvent: OptimizedTelemetry.Event
                     if model.processTerminated || supervisor.isSafeModeActive {
@@ -288,6 +295,7 @@ struct OptimizedRootView: View {
                 }
                 telemetry.flush()
             } else if phase == .background {
+                model.isBackgrounded = true
                 hasEnteredBackground = true
                 supervisor.recordBackground()
                 telemetry.record(.background, urgent: true)
