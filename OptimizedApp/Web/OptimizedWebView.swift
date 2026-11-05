@@ -48,6 +48,8 @@ struct OptimizedWebView: UIViewRepresentable {
             proxySettings: proxySettings)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.accessibilityIdentifier = "optimized.webview"
+        model.attachedWebView = webView
+        telemetry.record(.webViewCreated)
         handler.webView = webView
         context.coordinator.webView = webView
         context.coordinator.observeBackHistory(of: webView)
@@ -99,6 +101,10 @@ struct OptimizedWebView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        if coordinator.model.attachedWebView === webView {
+            coordinator.model.attachedWebView = nil
+            coordinator.telemetry.record(.webViewDisposed)
+        }
         coordinator.stopObservingBackHistory()
         coordinator.liveDebug.detach(webView)
         coordinator.owner.invalidateDocument()

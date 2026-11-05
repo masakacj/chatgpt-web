@@ -1,9 +1,12 @@
 import Foundation
 import SwiftUI
+import WebKit
 
 @MainActor
 final class OptimizedAppModel: ObservableObject {
     @Published var webViewGeneration = UUID()
+    // Weak only: retain no additional WebContent memory while tracking reuse.
+    weak var attachedWebView: WKWebView?
     @Published var processTerminated = false
     @Published var downloadedFile: URL?
     @Published var status = "正在打开 ChatGPT"
