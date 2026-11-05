@@ -228,12 +228,9 @@
       clearActive();
       cancelFollowUps();
     } else {
-      // Yield the first foreground frame before a long-conversation DOM inspection.
-      later(() => {
-        if (document.hidden) return;
-        if (conversationId() !== current) route();
-        else { bind(); emit(); }
-      }, 80);
+      const id = conversationId();
+      if (id !== current) route();
+      else { bind(); emit(); }
     }
   };
   const onPopState = () => route();
