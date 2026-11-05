@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import UIKit
+import WebKit
 
 @main
 struct ChatGPTWebOptimizedApp: App {
@@ -21,6 +22,7 @@ struct OptimizedRootView: View {
     @StateObject private var liveDebug = OptimizedLiveDebug()
     @StateObject private var proxySettings = OptimizerProxySettings()
     @State private var showingProxySettings = false
+    @State private var hasEnteredBackground = false
     @State private var thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
     @AppStorage("optimized.pcHistory.enabled.v1") private var pcHistoryEnabled = true
     @AppStorage("optimized.mcpOutput.enabled.v1") private var mcpOutputEnabled = false
@@ -272,8 +274,21 @@ struct OptimizedRootView: View {
             if phase == .active {
                 supervisor.recordForeground()
                 telemetry.record(.foreground)
+                if hasEnteredBackground {
+                    let resumeEvent: OptimizedTelemetry.Event
+                    if model.processTerminated || supervisor.isSafeModeActive {
+                        resumeEvent = .resumeSafeMode
+                    } else if let webView = model.attachedWebView {
+                        resumeEvent = webView.isLoading ? .resumeLoading : .resumeReused
+                    } else {
+                        resumeEvent = .resumeNoView
+                    }
+                    telemetry.record(resumeEvent)
+                    hasEnteredBackground = false
+                }
                 telemetry.flush()
             } else if phase == .background {
+                hasEnteredBackground = true
                 supervisor.recordBackground()
                 telemetry.record(.background, urgent: true)
             }

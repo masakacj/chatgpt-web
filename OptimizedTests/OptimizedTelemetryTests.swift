@@ -33,6 +33,15 @@ final class OptimizedTelemetryTests: XCTestCase {
         XCTAssertTrue(recorder.installId.hasPrefix("ios_"))
     }
 
+    func testBackgroundResumeDiagnosticsCarryNoChatIdentity() {
+        XCTAssertEqual(OptimizedTelemetry.Event.webViewCreated.rawValue, "view_created")
+        XCTAssertEqual(OptimizedTelemetry.Event.webViewDisposed.rawValue, "view_disposed")
+        XCTAssertEqual(OptimizedTelemetry.Event.resumeReused.rawValue, "resume_reused")
+        XCTAssertEqual(OptimizedTelemetry.Event.resumeLoading.rawValue, "resume_loading")
+        XCTAssertEqual(OptimizedTelemetry.Event.resumeNoView.rawValue, "resume_no_view")
+        XCTAssertEqual(OptimizedTelemetry.Event.resumeSafeMode.rawValue, "resume_safe_mode")
+    }
+
     func testLocalReportContainsNoWebpageContent() {
         let suite = "optimized-telemetry-tests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {
