@@ -110,13 +110,14 @@
       });
       nativeStatus = failed ? 'error' : 'stopped';
     }
+    const hasAnswer = answerReady(turn);
     return {
       conversationId: current, turnKey: key, currentTurn, nativeStatus,
-      answerReady: answerReady(turn), visible: document.visibilityState === 'visible',
+      answerReady: hasAnswer, visible: document.visibilityState === 'visible',
       selected: document.visibilityState === 'visible' && current === conversationId(),
       newTurn,
       activeGenerationControl: stopVisible,
-      hasDraft, running, waiting, hasAnswer: answerReady(turn),
+      hasDraft, running, waiting, hasAnswer,
       loadError: Boolean(error), canRetry: Boolean(error?.button),
       recoveryCanceled: recoveryCanceled || submitUntil > Date.now()
     };
@@ -227,9 +228,12 @@
       clearActive();
       cancelFollowUps();
     } else {
-      const id = conversationId();
-      if (id !== current) route();
-      else { bind(); emit(); }
+      // Yield the first foreground frame before a long-conversation DOM inspection.
+      later(() => {
+        if (document.hidden) return;
+        if (conversationId() !== current) route();
+        else { bind(); emit(); }
+      }, 80);
     }
   };
   const onPopState = () => route();

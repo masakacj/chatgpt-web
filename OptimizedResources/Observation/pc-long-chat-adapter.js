@@ -167,7 +167,9 @@
 
   function applyMcpRelief(turns, activity) {
     if (!isMcpEnabled()) {
-      clearMcpRelief();
+      // OFF is the default: avoid a full ChatGPT DOM walk on every status update.
+      if (markedMcpNodes.size || candidateMcpNodes.size || scannedTurns.size ||
+          document.getElementById(MCP_STYLE)) clearMcpRelief();
       return;
     }
     for (const node of markedMcpNodes) {
@@ -248,7 +250,9 @@
     // 2. PC Chrome long-chat history optimization: gated on running/waiting and 24-turn minimum
     if (!isHistoryEnabled()) return;
     if (activity?.running || activity?.waiting) {
-      restoreApprovals();
+      // CSS :has() restores newly mounted approvals during streaming.
+      // Inspect marked history only when an explicit approval is awaited.
+      if (activity?.waiting) restoreApprovals();
       state.generation++;
       state.checked = 0;
       return;

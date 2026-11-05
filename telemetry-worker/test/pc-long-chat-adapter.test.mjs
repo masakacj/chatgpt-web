@@ -740,3 +740,32 @@ test('R43-002: late idle error/status/header protected from hiding by CSS :has e
   assert.equal(output.attrs.has(MCP_ATTR), false, 'JS refresh subsequently cleans up attribute');
   assert.equal(x.api.audit().mcpRelieved, 0);
 });
+
+test('MCP disabled avoids all-document cleanup scans on repeated status updates', () => {
+  const x = fixture(true, 90, false);
+  const original = x.doc.querySelectorAll.bind(x.doc);
+  let wideScans = 0;
+  x.doc.querySelectorAll = selector => {
+    if (selector === '[' + MCP_ATTR + ']') wideScans++;
+    return original(selector);
+  };
+  x.api.refresh('c-warm', x.turns, {});
+  x.flush();
+  for (let i = 0; i < 5; i++) {
+    x.advanceTime(12001);
+    x.api.refresh('c-warm', x.turns, {running: true});
+  }
+  assert.equal(wideScans, 0, 'disabled MCP relief must not scan the entire DOM');
+});
+
+test('running updates skip historical approval walks while waiting restores controls', () => {
+  const x = fixture(true, 40, false);
+  x.api.refresh('c-running', x.turns, {});
+  x.flush();
+  const before = x.turns.reduce((n, t) => n + (t.approvalScans || 0), 0);
+  for (let i = 0; i < 4; i++) x.api.refresh('c-running', x.turns, {running: true});
+  assert.equal(x.turns.reduce((n, t) => n + (t.approvalScans || 0), 0), before);
+  x.turns[3].querySelector = selector => selector.includes('approval') ? {} : null;
+  x.api.refresh('c-running', x.turns, {waiting: true});
+  assert.equal(x.turns[3].attrs.has(ATTR), false, 'pending approval remains accessible');
+});
