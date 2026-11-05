@@ -23,6 +23,22 @@ final class ConversationManagerOwner: ObservableObject {
     private var currentDocument: String?
     private var currentSequence = 0
     private var appActive = true
+    // An accepted native observation is the only source of draft/task safety.
+    private var lastRecoverySignals: (hasDraft: Bool, running: Bool, waiting: Bool)?
+
+    var canRestoreReadOnlyAfterBackgroundLoss: Bool {
+        guard currentDocument != nil, let signals = lastRecoverySignals else { return false }
+        return Self.readOnlyRecoveryIsSafe(task: projection.task,
+                                           hasDraft: signals.hasDraft,
+                                           running: signals.running,
+                                           waiting: signals.waiting)
+    }
+
+    static func readOnlyRecoveryIsSafe(task: CMTaskStatus,
+                                       hasDraft: Bool?, running: Bool?, waiting: Bool?) -> Bool {
+        hasDraft == false && running == false && waiting == false &&
+        task != .running && task != .waiting
+    }
 
     init() {
         Task { ownerGeneration = await store.ownerGeneration() }
@@ -37,6 +53,7 @@ final class ConversationManagerOwner: ObservableObject {
         currentDocument = nil
         currentSequence = 0
         recoveryCandidate = nil
+        lastRecoverySignals = nil
         if processTerminated { audit.processTerminations += 1 }
     }
 
@@ -51,6 +68,7 @@ final class ConversationManagerOwner: ObservableObject {
             currentDocument = document
             currentSequence = 0
             recoveryCandidate = nil
+            lastRecoverySignals = nil
             return ["ok": true, "cmProtocol": CMContract.protocolVersion, "cmVersion": CMContract.version,
                     "ownerGeneration": ownerGeneration]
         }
@@ -134,6 +152,12 @@ final class ConversationManagerOwner: ObservableObject {
         }
         audit.acceptedEvents += 1
         projection = CMReducer.project(state)
+        // Missing fields are intentionally treated as unsafe, not as no draft.
+        lastRecoverySignals = (
+            hasDraft: value["hasDraft"] as? Bool ?? true,
+            running: value["running"] as? Bool ?? true,
+            waiting: value["waiting"] as? Bool ?? true
+        )
 
         let candidate = CMRecoveryCandidate(
             conversationId: id, documentId: document, sequence: sequence, observedAt: now,

@@ -125,6 +125,18 @@ public final class NativeOptimizationSupervisor: ObservableObject {
 
     // MARK: - User-confirmed Actions
 
+    /// Background-only, read-only restoration. Unlike manual recovery, this
+    /// never resets a previously opened circuit breaker.
+    @discardableResult
+    public func confirmBackgroundReadOnlyRecovery() -> Bool {
+        guard isSafeModeActive, !isCircuitOpen else { return false }
+        appendEntry(JournalEntry(kind: "background_auto_recovery", route: "home"))
+        isSafeModeActive = false
+        lastFailureReason = nil
+        persistState()
+        return true
+    }
+
     public func confirmRebuild() {
         appendEntry(JournalEntry(timestamp: Date(), kind: "user_rebuild", route: "home", isVerified: false))
         isSafeModeActive = false
