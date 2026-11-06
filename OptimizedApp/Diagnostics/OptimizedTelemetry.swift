@@ -107,6 +107,10 @@ final class OptimizedTelemetry: ObservableObject {
     @Published private(set) var lastSuccess: Date?
     @Published private(set) var lastEvent = "—"
 
+    static func isAutomatedUITestLaunch(_ arguments: [String]) -> Bool {
+        arguments.contains { $0.hasPrefix("-uitest-") }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let existing = defaults.string(forKey: Self.installKey),
@@ -123,7 +127,7 @@ final class OptimizedTelemetry: ObservableObject {
         appVersion = String("\(version)+\(build)".prefix(24))
         // UI-test apps repeatedly launch/terminate on macOS CI. Their events
         // are fixtures, not physical-iPhone diagnostics; never upload them.
-        let isUITest = ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("-uitest-") }
+        let isUITest = Self.isAutomatedUITestLaunch(ProcessInfo.processInfo.arguments)
         isEnabled = !isUITest && ((defaults.object(forKey: Self.enabledKey) as? Bool) ?? true)
         if let data = defaults.data(forKey: Self.pendingKey),
            let recovered = try? JSONDecoder().decode([QueuedEvent].self, from: data) {

@@ -42,6 +42,18 @@ final class OptimizedTelemetryTests: XCTestCase {
         XCTAssertEqual(OptimizedTelemetry.Event.resumeSafeMode.rawValue, "resume_safe_mode")
     }
 
+    func testUITestTelemetryIsExcludedWithoutDisablingRealDeviceDiagnostics() {
+        XCTAssertTrue(OptimizedTelemetry.isAutomatedUITestLaunch(["app", "-uitest-proxy-direct"]))
+        XCTAssertTrue(OptimizedTelemetry.isAutomatedUITestLaunch(["-uitest-circuit-open"]))
+        XCTAssertTrue(OptimizedTelemetry.isAutomatedUITestLaunch(["-uitest-fresh-launch"]))
+        XCTAssertFalse(OptimizedTelemetry.isAutomatedUITestLaunch(["app"]))
+        XCTAssertFalse(OptimizedTelemetry.isAutomatedUITestLaunch(["-real-user"]))
+
+        XCTAssertEqual(OptimizedTelemetry.Event.javascriptProbeEarly.rawValue, "js_probe_early")
+        XCTAssertEqual(OptimizedTelemetry.Event.javascriptProbeSettled.rawValue, "js_probe_settled")
+        XCTAssertEqual(OptimizedTelemetry.safeRoute("conversation", errorCode: 9999), "conversation_e9999")
+    }
+
     func testLocalReportContainsNoWebpageContent() {
         let suite = "optimized-telemetry-tests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else {

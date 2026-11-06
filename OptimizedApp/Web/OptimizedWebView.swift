@@ -137,6 +137,7 @@ struct OptimizedWebView: UIViewRepresentable {
         private var forwardHistoryObservation: NSKeyValueObservation?
         private var currentURLObservation: NSKeyValueObservation?
         private var hasTerminated = false
+        private var navigationSequence = 0
 
         init(model: OptimizedAppModel,
              owner: ConversationManagerOwner,
@@ -183,6 +184,7 @@ struct OptimizedWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            navigationSequence += 1
             syncNavigationState(for: webView)
             owner.invalidateDocument()
             model.status = "正在加载"
@@ -195,6 +197,39 @@ struct OptimizedWebView: UIViewRepresentable {
             model.markReady()
             telemetry.record(.navigationFinish, route: routeCategory(for: webView))
             liveDebug.navigationFinish()
+            measureJavaScriptResponsivenessAfterNavigation(webView)
+        }
+
+        /// Two tiny one-shot JS round-trip timings: distinguish a finished
+        /// WebKit navigation from a busy ChatGPT main thread after React mounts.
+        /// No DOM queries, URLs, chat contents, periodic polling or extra network.
+        private func measureJavaScriptResponsivenessAfterNavigation(_ view: WKWebView) {
+            guard view.url?.host == "chatgpt.com" else { return }
+            let sequence = navigationSequence
+            let sourceRoute = routeCategory(for: view)
+            Task { [weak self, weak view] in
+                for (index, delay) in [1.0, 4.0].enumerated() {
+                    try? await Task.sleep(for: .seconds(delay))
+                    guard let self, let view, self.webView === view,
+                          !self.hasTerminated, !self.model.processTerminated,
+                          self.navigationSequence == sequence,
+                          UIApplication.shared.applicationState == .active,
+                          self.routeCategory(for: view) == sourceRoute else { return }
+                    let started = CFAbsoluteTimeGetCurrent()
+                    do {
+                        _ = try await view.callAsyncJavaScript(
+                            "return 1;", arguments: [:], in: nil,
+                            contentWorld: WebConfigurationFactory.observationWorld)
+                    } catch { return }
+                    guard self.webView === view, !self.hasTerminated,
+                          self.navigationSequence == sequence else { return }
+                    let elapsedMs = Int(min(9_999, max(0,
+                        (CFAbsoluteTimeGetCurrent() - started) * 1_000)))
+                    self.telemetry.record(
+                        index == 0 ? .javascriptProbeEarly : .javascriptProbeSettled,
+                        route: sourceRoute, errorCode: elapsedMs)
+                }
+            }
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
