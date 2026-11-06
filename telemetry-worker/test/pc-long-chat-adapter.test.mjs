@@ -72,7 +72,7 @@ function createMockElement(tag, attrs = {}, textContent = '', children = []) {
   return el;
 }
 
-function fixture(enabled = true, count = 30, mcpEnabled = false) {
+function fixture(enabled = true, count = 30, mcpEnabled = false, coldStartClock = false) {
   const idle = [], styles = [];
   let now = 1000;
   const turns = Array.from({length:count}, (_,i)=>{
@@ -167,6 +167,7 @@ function fixture(enabled = true, count = 30, mcpEnabled = false) {
     setTimeout: fn => idle.push(fn),
     Date: { now: () => now }
   };
+  if (coldStartClock) world.performance = {now: () => now};
   runInNewContext(code, world);
   const flush = () => { let i = 0; while (idle.length && i++ < 50) idle.shift()(); };
   return {
@@ -768,4 +769,35 @@ test('running updates skip historical approval walks while waiting restores cont
   x.turns[3].querySelector = selector => selector.includes('approval') ? {} : null;
   x.api.refresh('c-running', x.turns, {waiting: true});
   assert.equal(x.turns[3].attrs.has(ATTR), false, 'pending approval remains accessible');
+});
+
+test('cold-start grace delays historic layout but not MCP while ChatGPT hydrates sidebar', () => {
+  const x = fixture(true, 30, true, true);
+  const output = createMockElement('div', {'data-testid':'tool-output'}, 'X'.repeat(1600));
+  x.turns[28].children.push(output);
+  output.parent = x.turns[28];
+  x.api.refresh('c-startup', x.turns, {running:false, waiting:false});
+  x.flush();
+  assert.equal(output.attrs.get(MCP_ATTR), '1', 'MCP output relief is immediate');
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length, 0,
+    'history relayout must defer during initial ChatGPT hydration');
+  x.advanceTime(5001);
+  x.api.refresh('c-startup', x.turns, {running:false, waiting:false});
+  x.flush();
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length, 18);
+  for (const node of x.turns.slice(-12)) assert.equal(node.attrs.has(ATTR), false);
+});
+
+test('startup grace never blocks running/waiting statuses', () => {
+  const x = fixture(true, 30, false, true);
+  x.api.refresh('c-stream', x.turns, {running:true, waiting:false});
+  x.flush();
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length, 0);
+  x.api.refresh('c-stream', x.turns, {running:false, waiting:true});
+  x.flush();
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length, 0);
+  x.advanceTime(5200);
+  x.api.refresh('c-stream', x.turns, {running:false, waiting:false});
+  x.flush();
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length, 18);
 });

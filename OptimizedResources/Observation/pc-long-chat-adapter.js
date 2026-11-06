@@ -7,6 +7,11 @@
   const isMcpEnabled = () => globalThis.__OPTIMIZED_MCP_OUTPUT_RELIEF_ENABLED__ === true;
   const KEEP = 12;
   const MIN = 24;
+  // Give ChatGPT's sidebar priority over bounded historical layout work on cold start.
+  // CM observations and interactive approvals remain immediate.
+  const COLD_START_GRACE_MS = 5000;
+  const coldStartClock = typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now() : null;
   const TURN = '[data-turn-key],[data-testid^="conversation-turn-"]';
   const ATTR = 'data-optimized-pc-history';
   const STYLE = 'optimized-pc-history-style';
@@ -257,6 +262,8 @@
       state.checked = 0;
       return;
     }
+    // MCP output relief above remains active; delay only expensive history relayout.
+    if (coldStartClock !== null && performance.now() - coldStartClock < COLD_START_GRACE_MS) return;
     const count = turns.length, tail = count ? turns[count - 1] : null, now = Date.now();
     if (id === state.chat && tail === state.tail && count === state.count &&
         now - state.checked < 12000) return;
