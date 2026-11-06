@@ -8,6 +8,34 @@ final class OptimizerProxySettingsTests: XCTestCase {
         OptimizerProxyEndpoint(host: host, port: port, username: "")
     }
 
+    func testVisualOptimizerAdapterIsNotInjectedWhenBothOptionalFlagsAreOff() {
+        let name = "optimizer-visual-script-test-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = OptimizerProxySettings(defaults: defaults)
+        let owner = ConversationManagerOwner()
+        let handler = WeakOptimizedObservationHandler(owner: owner)
+
+        let (minimal, proxyReady) = WebConfigurationFactory.make(
+            owner: owner, handler: handler, pcHistoryEnabled: false,
+            mcpOutputEnabled: false, proxySettings: settings)
+        XCTAssertFalse(proxyReady, "Empty test proxy remains fail-closed")
+        let minimalSources = minimal.userContentController.userScripts.map(\.source)
+        XCTAssertEqual(minimalSources.count, 1, "CM observer must stay injected")
+        XCTAssertTrue(minimalSources[0].contains("optimizedConversation"))
+        XCTAssertFalse(minimalSources[0].contains("globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ ="))
+
+        let (mcpOnly, _) = WebConfigurationFactory.make(
+            owner: owner, handler: handler, pcHistoryEnabled: false,
+            mcpOutputEnabled: true, proxySettings: settings)
+        let mcpSources = mcpOnly.userContentController.userScripts.map(\.source)
+        XCTAssertEqual(mcpSources.count, 2)
+        XCTAssertTrue(mcpSources.contains {
+            $0.contains("globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ = false;") &&
+            $0.contains("globalThis.__OPTIMIZED_MCP_OUTPUT_RELIEF_ENABLED__ = true;")
+        })
+    }
+
     func testDefaultHomeBackupAndNeverDirectWithoutEndpoints() {
         let name = "optimizer-proxy-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
