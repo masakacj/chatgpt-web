@@ -181,6 +181,21 @@ struct OptimizedRootView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
 
+                    Section("框架资源缓存（只读）") {
+                        LabeledContent("WebKit 磁盘缓存", value: "已启用")
+                        Text("遵循 ChatGPT 自身的缓存响应头，不修改登录、动态接口或资源版本。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("检查当前页面 JS/CSS 缓存") {
+                            Task { await model.inspectFrameworkResourceCache() }
+                        }
+                        .disabled(model.frameworkCacheChecking || model.processTerminated ||
+                                  model.attachedWebView == nil)
+                        Text(model.frameworkCacheChecking ? "正在检测…" : model.frameworkCacheReport)
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Text("仅统计资源数量和大小；疑似缓存仅是同源 Resource Timing 的参考值，跨域 CDN 不可据此判断命中率。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+
                     Section("资源加载策略") {
                         Toggle("第三方统计资源过滤（下次重建网页生效）", isOn: $resourceGate.isEnabled)
                         LabeledContent("可用规则", value: String(NativeResourceGate.approvedRuleCount))

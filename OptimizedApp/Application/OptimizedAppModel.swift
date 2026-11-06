@@ -13,6 +13,8 @@ final class OptimizedAppModel: ObservableObject {
     @Published var downloadedFile: URL?
     @Published var status = "正在打开 ChatGPT"
     @Published var diagnosticsEnabled = false
+    @Published private(set) var frameworkCacheReport = "未检测"
+    @Published private(set) var frameworkCacheChecking = false
     @Published var recoveryAttempts = 0
     @Published var targetURL = URL(string: "https://chatgpt.com/")!
     @Published private(set) var canGoBack = false
@@ -99,6 +101,62 @@ final class OptimizedAppModel: ObservableObject {
         targetURL = URL(string: "https://chatgpt.com/")!
         webViewGeneration = UUID()
         lastTerminatedGeneration = nil
+    }
+
+
+    /// Read-only resource-timing sample. It never fetches/replaces a resource,
+    /// reads a URL's content, or changes the site's origin/cache headers.
+    func inspectFrameworkResourceCache() async {
+        guard !frameworkCacheChecking else { return }
+        guard !processTerminated, let webView = attachedWebView else {
+            frameworkCacheReport = "网页未就绪"
+            return
+        }
+        guard !webView.isLoading else {
+            frameworkCacheReport = "网页仍在加载，请稍后检查"
+            return
+        }
+        frameworkCacheChecking = true
+        defer { frameworkCacheChecking = false }
+
+        let javascript = """
+        const entries = performance.getEntriesByType('resource');
+        let total = 0, sameOriginMeasured = 0, suspectedHits = 0, opaque = 0, crossOrigin = 0;
+        let transferredKiB = 0;
+        for (let i = 0; i < entries.length && i < 800; i++) {
+            const resource = entries[i];
+            if (resource.initiatorType !== 'script' && resource.initiatorType !== 'link' &&
+                resource.initiatorType !== 'css') continue;
+            total++;
+            let local = false;
+            try { local = new URL(resource.name, location.href).origin === location.origin; }
+            catch (_) {}
+            if (!local) { crossOrigin++; continue; }
+            if (resource.encodedBodySize > 0) {
+                sameOriginMeasured++;
+                if (resource.transferSize === 0) suspectedHits++;
+                transferredKiB += Math.ceil(resource.transferSize / 1024);
+            } else {
+                opaque++;
+            }
+        }
+        return {total, sameOriginMeasured, suspectedHits, opaque, crossOrigin, transferredKiB};
+        """
+        do {
+            guard let result = try await webView.callAsyncJavaScript(
+                javascript, arguments: [:], in: nil,
+                contentWorld: WebConfigurationFactory.observationWorld) as? [String: Any],
+                attachedWebView === webView, !processTerminated else {
+                frameworkCacheReport = "页面已切换，请重新检查"
+                return
+            }
+            func count(_ name: String) -> Int {
+                max(0, min(10_000, (result[name] as? NSNumber)?.intValue ?? 0))
+            }
+            frameworkCacheReport = "JS/CSS：\(count("total")) 项；同源可测 \(count("sameOriginMeasured")) 项，疑似缓存复用 \(count("suspectedHits")) 项；跨域 \(count("crossOrigin")) 项无法判断"
+        } catch {
+            frameworkCacheReport = "读取失败：页面可能正在重建"
+        }
     }
 
     func retry(document: String, sequence: Int) async -> Bool {

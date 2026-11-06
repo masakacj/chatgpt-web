@@ -30,6 +30,16 @@ final class OptimizedNavigationTests: XCTestCase {
         XCTAssertEqual(forwardCalls, 1, "Dead WebView cannot receive forward action")
     }
 
+    func testCacheCheckWithoutWebViewDoesNotNavigateOrCreateWebView() async {
+        let model = OptimizedAppModel()
+        let originalGeneration = model.webViewGeneration
+        await model.inspectFrameworkResourceCache()
+        XCTAssertEqual(model.frameworkCacheReport, "网页未就绪")
+        XCTAssertFalse(model.frameworkCacheChecking)
+        XCTAssertEqual(model.webViewGeneration, originalGeneration)
+        XCTAssertFalse(model.processTerminated)
+    }
+
     func testBackStateReflectsAvailabilityWithoutReloading() {
         let model = OptimizedAppModel()
         let initialGeneration = model.webViewGeneration
