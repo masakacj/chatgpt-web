@@ -42,7 +42,10 @@ enum WebConfigurationFactory {
                      proxySettings: OptimizerProxySettings) -> (WKWebViewConfiguration, Bool) {
         let controller = WKUserContentController()
         controller.addScriptMessageHandler(handler, contentWorld: observationWorld, name: handlerName)
-        if let url = Bundle.main.url(forResource: "pc-long-chat-adapter", withExtension: "js"),
+        // When both optional visual optimizers are OFF, do not parse/inject the
+        // adapter at all; the independent CM observer below stays fully active.
+        if (pcHistoryEnabled || mcpOutputEnabled),
+           let url = Bundle.main.url(forResource: "pc-long-chat-adapter", withExtension: "js"),
            let source = try? String(contentsOf: url, encoding: .utf8) {
             let prefix = """
             globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ = \(pcHistoryEnabled);

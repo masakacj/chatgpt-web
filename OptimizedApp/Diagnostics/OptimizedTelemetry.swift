@@ -13,6 +13,8 @@ final class OptimizedTelemetry: ObservableObject {
         case navigationStart = "nav_start"
         case navigationFinish = "nav_finish"
         case navigationError = "nav_error"
+        case javascriptProbeEarly = "js_probe_early"
+        case javascriptProbeSettled = "js_probe_settled"
         case contentTerminated = "web_terminated"
         case automaticRecovery = "auto_recovery"
         case recoveryPaused = "recovery_paused"
@@ -119,7 +121,10 @@ final class OptimizedTelemetry: ObservableObject {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
         appVersion = String("\(version)+\(build)".prefix(24))
-        isEnabled = (defaults.object(forKey: Self.enabledKey) as? Bool) ?? true
+        // UI-test apps repeatedly launch/terminate on macOS CI. Their events
+        // are fixtures, not physical-iPhone diagnostics; never upload them.
+        let isUITest = ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("-uitest-") }
+        isEnabled = !isUITest && ((defaults.object(forKey: Self.enabledKey) as? Bool) ?? true)
         if let data = defaults.data(forKey: Self.pendingKey),
            let recovered = try? JSONDecoder().decode([QueuedEvent].self, from: data) {
             queued = Array(recovered.suffix(Self.queueLimit))

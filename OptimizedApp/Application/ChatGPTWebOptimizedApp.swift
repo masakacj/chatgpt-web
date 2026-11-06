@@ -24,7 +24,9 @@ struct OptimizedRootView: View {
     @State private var showingProxySettings = false
     @State private var hasEnteredBackground = false
     @State private var thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
-    @AppStorage("optimized.pcHistory.enabled.v1") private var pcHistoryEnabled = true
+    // iOS WebKit has known content-visibility:auto scroll/reveal regressions.
+    // Quarantine the old v1 default-on flag; let users opt into the experimental v2 path.
+    @AppStorage("optimized.pcHistory.enabled.v2") private var pcHistoryEnabled = false
     @AppStorage("optimized.mcpOutput.enabled.v1") private var mcpOutputEnabled = false
     @Environment(\.scenePhase) private var scenePhase
 
@@ -159,8 +161,8 @@ struct OptimizedRootView: View {
                     }
 
                     Section("PC Chrome 长对话优化") {
-                        Toggle("历史内容布局减负（下次重建网页生效）", isOn: $pcHistoryEnabled)
-                        Text("与 PC 扩展保持相同的低干预方向：长对话至少 24 个消息块才启用，只对较早历史应用 WebKit 布局减负；最新 12 条消息及正在运行、等待授权的内容保持原样。不裁剪 DOM 或拦截 MCP。")
+                        Toggle("历史内容布局减负（实验性，默认关闭）", isOn: $pcHistoryEnabled)
+                        Text("iOS WebKit 的 content-visibility:auto 存在滚动卡顿和显示异常风险，因此默认关闭。需要对照测试时可手动开启；下次重新创建网页生效。PC Chrome 的扩展设置不受影响。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
 
