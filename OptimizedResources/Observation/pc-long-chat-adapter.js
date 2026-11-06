@@ -278,11 +278,22 @@
     for (let i = end; i < mounted.length; i++) unmark(mounted[i]);
     style();
     let index = 0;
-    const step = () => {
+    const schedule = () => {
+      // iOS Safari often lacks requestIdleCallback. A forced 24ms/16-turn
+      // timeout used to compete with React sidebar layout on the main thread.
+      if (typeof requestIdleCallback === 'function') requestIdleCallback(step);
+      else setTimeout(step, 160);
+    };
+    const step = deadline => {
       if (state.disposed || generation !== state.generation ||
           state.chat !== id || document.hidden) return;
+      if (deadline?.timeRemaining && deadline.timeRemaining() < 4) {
+        schedule();
+        return;
+      }
       let budget = 0;
-      while (index < end && budget++ < 16) {
+      while (index < end && budget++ < 4) {
+        if (deadline?.timeRemaining && deadline.timeRemaining() < 2) break;
         const turn = mounted[index++];
         if (!turn?.isConnected || typeof turn.setAttribute !== 'function') continue;
         // Never alter blocks carrying an explicit outstanding user approval or iframe.
@@ -295,13 +306,9 @@
         turn.setAttribute(ATTR, '1');
         state.optimized++;
       }
-      if (index < end) {
-        if (typeof requestIdleCallback === 'function') requestIdleCallback(step, {timeout: 220});
-        else setTimeout(step, 24);
-      }
+      if (index < end) schedule();
     };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(step, {timeout: 220});
-    else setTimeout(step, 24);
+    schedule();
   }
 
   function destroy() {

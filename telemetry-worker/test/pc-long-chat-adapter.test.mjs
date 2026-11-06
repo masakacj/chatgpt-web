@@ -175,7 +175,7 @@ function fixture(enabled = true, count = 30, mcpEnabled = false, coldStartClock 
     world,
     turns,
     flush,
-    flushOne: () => idle.shift()?.(),
+    flushOne: deadline => idle.shift()?.(deadline),
     advanceTime: ms => { now += ms; },
     doc,
     styles,
@@ -187,7 +187,7 @@ test('PC port limits optimization to history, preserving latest twelve turns',()
   x.api.refresh('c-123',x.turns,{running:false,waiting:false});
   assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,0); // first batch waits for idle
   x.flushOne();
-  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,16);
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,4);
   x.flush();
   assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,18);
   for(const node of x.turns.slice(-12))assert.equal(node.attrs.has(ATTR),false);
@@ -211,7 +211,7 @@ test('route switch cleans old node attributes and cancels retired idle chunks',(
   const x=fixture(true,70);
   x.api.refresh('c-first',x.turns,{});
   x.flushOne();
-  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,16);
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,4);
   const next=fixture(true,30).turns;
   x.api.refresh('c-second',next,{});
   x.flush();
@@ -222,7 +222,7 @@ test('leaving conversation clears previously optimized attributes and cancels qu
   const x=fixture(true,75);
   x.api.refresh('c-conversation',x.turns,{});
   x.flushOne();
-  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,16);
+  assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length,4);
   x.api.refresh(null,null,{});
   x.flush();
   assert.equal(x.turns.some(t=>t.attrs.has(ATTR)),false);
@@ -800,4 +800,15 @@ test('startup grace never blocks running/waiting statuses', () => {
   x.api.refresh('c-stream', x.turns, {running:false, waiting:false});
   x.flush();
   assert.equal(x.turns.filter(t=>t.attrs.has(ATTR)).length, 18);
+});
+
+test('optional history scheduler yields rather than forcing work on a busy idle deadline', () => {
+  const x = fixture(true, 30);
+  x.api.refresh('c-busy', x.turns, {});
+  x.flushOne({timeRemaining: () => 0});
+  assert.equal(x.turns.filter(t => t.attrs.has(ATTR)).length, 0);
+  x.flushOne({timeRemaining: () => 50});
+  assert.equal(x.turns.filter(t => t.attrs.has(ATTR)).length, 4);
+  x.flush();
+  assert.equal(x.turns.filter(t => t.attrs.has(ATTR)).length, 18);
 });
