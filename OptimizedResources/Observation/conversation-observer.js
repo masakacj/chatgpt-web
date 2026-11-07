@@ -156,6 +156,9 @@
     }
   };
   const bind = () => {
+    // Home and project index are not conversations: do not watch their React
+    // shell while the native sidebar is being initialized.
+    if (!current || document.hidden) return;
     const { root, turn, stateNode } = latest();
     const list = turn?.parentElement || root;
     if (!list || (observer && observedList === list && observedState === stateNode)) return;
@@ -177,7 +180,10 @@
   };
   const route = (force = false) => {
     const id = conversationId();
-    if (!force && id === current) { bind(); emit(); return; }
+    if (!force && id === current) {
+      if (id) { bind(); emit(); }
+      return;
+    }
     if (id !== current) {
       clearActive();
       cancelFollowUps();
@@ -187,6 +193,8 @@
       recoveryCanceled = false; submitUntil = 0;
       observer?.disconnect(); observedList = null; observedState = null;
     }
+    // Keep click/history listeners, but no DOM scans or timer chain on home.
+    if (!id) return;
     const serial = routeSerial;
     for (const ms of [0, 450, 1600, 4500, 10000, 20000, 45000, 65000]) {
       later(() => serial === routeSerial && !destroyed && !document.hidden && (bind(), emit()), ms);
@@ -230,7 +238,7 @@
     } else {
       const id = conversationId();
       if (id !== current) route();
-      else { bind(); emit(); }
+      else if (id) { bind(); emit(); }
     }
   };
   const onPopState = () => route();
