@@ -32,6 +32,7 @@ final class OptimizedAppModel: ObservableObject {
     }
 
     func setCanGoBack(_ available: Bool) {
+        guard canGoBack != available else { return }
         canGoBack = available
     }
 
@@ -40,6 +41,7 @@ final class OptimizedAppModel: ObservableObject {
     }
 
     func setCanGoForward(_ available: Bool) {
+        guard canGoForward != available else { return }
         canGoForward = available
     }
 
