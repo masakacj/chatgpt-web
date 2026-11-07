@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 @testable import ChatGPTWebOptimized
 
 @MainActor
@@ -38,6 +39,28 @@ final class OptimizedNavigationTests: XCTestCase {
         XCTAssertFalse(model.frameworkCacheChecking)
         XCTAssertEqual(model.webViewGeneration, originalGeneration)
         XCTAssertFalse(model.processTerminated)
+    }
+
+    func testRepeatedNavigationKVOValuesDoNotPublishUnchangedSwiftUIState() {
+        let model = OptimizedAppModel()
+        var backUpdates: [Bool] = []
+        var forwardUpdates: [Bool] = []
+        let a = model.$canGoBack.dropFirst().sink { backUpdates.append($0) }
+        let b = model.$canGoForward.dropFirst().sink { forwardUpdates.append($0) }
+        defer { a.cancel(); b.cancel() }
+
+        for _ in 0..<15 {
+            model.setCanGoBack(false)
+            model.setCanGoForward(false)
+        }
+        XCTAssertTrue(backUpdates.isEmpty)
+        XCTAssertTrue(forwardUpdates.isEmpty)
+        model.setCanGoBack(true)
+        model.setCanGoForward(true)
+        model.setCanGoBack(true)
+        model.setCanGoForward(true)
+        XCTAssertEqual(backUpdates, [true])
+        XCTAssertEqual(forwardUpdates, [true])
     }
 
     func testBackStateReflectsAvailabilityWithoutReloading() {
