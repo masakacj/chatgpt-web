@@ -721,3 +721,37 @@ test('H1 short/long chat switching: adapter resets attributes when shrinking bel
   while (idle.length) idle.shift()();
   assert.equal(turns.some(t => t.attrs.has(ATTR)), false, 'Short chat shrinks below 24 turns, all attributes reset');
 });
+
+test('homepage startup leaves sidebar hydration free of CM DOM scans', async () => {
+  const env = createEnvironment('https://chatgpt.com/');
+  const originalQuery = env.doc.querySelector;
+  let queryCount = 0;
+  env.doc.querySelector = selector => {
+    queryCount++;
+    return originalQuery(selector);
+  };
+  runInNewContext(observerCode, env.context);
+  await env.advanceTimersByTime(40);
+
+  assert.equal(env.events.length, 1, 'Boot handshake remains active');
+  assert.equal(env.events[0].type, 'boot');
+  assert.equal(queryCount, 0, 'No CM main-root scans on home');
+  assert.equal(env.timers.size, 0, 'No recurring CM timers on home');
+
+  env.triggerDocEvent('visibilitychange');
+  await env.advanceTimersByTime(40);
+  assert.equal(queryCount, 0, 'Returning to an index does not rescan the sidebar');
+
+  env.win.location.href = 'https://chatgpt.com/c/123456789012';
+  env.triggerDocEvent('visibilitychange');
+  await env.advanceTimersByTime(40);
+  assert.ok(queryCount > 0, 'Conversation navigation restores CM observations');
+  assert.ok(env.events.some(e => e.type === 'observe'), 'Conversation status remains observable');
+
+  env.win.location.href = 'https://chatgpt.com/';
+  env.triggerDocEvent('visibilitychange');
+  await env.advanceTimersByTime(40);
+  const before = queryCount;
+  await env.advanceTimersByTime(3000);
+  assert.equal(queryCount, before, 'Retired conversation timers do not scan home');
+});
