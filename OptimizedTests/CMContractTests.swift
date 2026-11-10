@@ -72,6 +72,18 @@ final class CMContractTests: XCTestCase {
         XCTAssertTrue(source.contains("optimizedConversation"))
     }
 
+    func testSidebarTouchStyleIsScopedToWebViewPresentationNotCMObserver() throws {
+        let factoryURL = sourceRoot().appendingPathComponent("OptimizedApp/Web/WebConfigurationFactory.swift")
+        let factory = try String(contentsOf: factoryURL, encoding: .utf8)
+        XCTAssertTrue(factory.contains("optimized-sidebar-touch-scroll"))
+        XCTAssertTrue(factory.contains("touch-action:pan-y!important"))
+        XCTAssertTrue(factory.contains("-webkit-overflow-scrolling:touch!important"))
+        XCTAssertTrue(factory.contains("overscroll-behavior-y:contain!important"))
+        XCTAssertTrue(factory.contains("forMainFrameOnly: true"))
+        XCTAssertTrue(factory.contains("location.origin !== 'https://chatgpt.com'"))
+        XCTAssertFalse(factory.contains("addEventListener('touchmove'"))
+    }
+
     private func sourceRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

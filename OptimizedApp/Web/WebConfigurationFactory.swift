@@ -42,6 +42,21 @@ enum WebConfigurationFactory {
                      proxySettings: OptimizerProxySettings) -> (WKWebViewConfiguration, Bool) {
         let controller = WKUserContentController()
         controller.addScriptMessageHandler(handler, contentWorld: observationWorld, name: handlerName)
+        // Scroll styling belongs to the WebView presentation layer. Keep
+        // ConversationManager's observer strictly read-only (CMContractTests).
+        // The rule is scoped to ChatGPT sidebar overflow containers only.
+        let sidebarTouchSource = """
+        (() => {
+          if (window !== window.top || location.origin !== 'https://chatgpt.com') return;
+          const style = document.createElement('style');
+          style.id = 'optimized-sidebar-touch-scroll';
+          style.textContent = ':is(aside,nav,[data-testid="sidebar"]) :is([class*="overflow-y-auto"],[class*="overflow-y-scroll"],[class*="overflow-auto"]),:is(aside,nav,[data-testid="sidebar"])[class*="overflow-y-auto"]{touch-action:pan-y!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain!important}';
+          (document.head || document.documentElement).appendChild(style);
+        })();
+        """
+        controller.addUserScript(WKUserScript(source: sidebarTouchSource,
+                                             injectionTime: .atDocumentEnd,
+                                             forMainFrameOnly: true, in: observationWorld))
         // When both optional visual optimizers are OFF, do not parse/inject the
         // adapter at all; the independent CM observer below stays fully active.
         if (pcHistoryEnabled || mcpOutputEnabled),
