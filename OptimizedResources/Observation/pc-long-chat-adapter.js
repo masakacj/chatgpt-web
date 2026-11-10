@@ -19,6 +19,10 @@
 
   const MCP_ATTR = 'data-optimized-mcp-output';
   const MCP_STYLE = 'optimized-mcp-output-style';
+  const EXPLICIT_MCP = '[data-testid*="mcp-result" i],[data-testid*="mcp-output" i],[data-testid*="mcp-tool-result" i],[data-testid*="mcp-tool-output" i],[data-testid*="mcp_result" i],[data-testid*="mcp_output" i]';
+  const TOOL_CALL = '[data-testid*="tool-call" i],[data-testid*="mcp-call" i]';
+  const THOUGHT = '[data-testid*="reasoning" i],[data-testid*="thought" i],[class*="group/activity-header"]';
+  const NATIVE_VIRTUALIZER = '[data-virtualized-turn-content],[class*="virtualized-turn" i]';
   const MCP_OUTPUT_SELECTOR = [
     '[data-testid*="tool-result" i]',
     '[data-testid*="tool-output" i]',
@@ -35,7 +39,7 @@
   const PRESERVE = INTERACTIVE + ',' + STATUS_HEADER + ',[data-testid*="error" i],[role="alert"]';
 
   const state = {chat: null, count: 0, tail: null, checked: 0, generation: 0,
-    optimized: 0, mcpRelieved: 0, disposed: false};
+    optimized: 0, mcpRelieved: 0, nativeVirtualized: false, disposed: false};
   const markedMcpNodes = new Set();
   const candidateMcpNodes = new Set();
   const scannedTurns = new Set();
@@ -47,12 +51,17 @@
     if (typeof node.matches === 'function') {
       if (node.matches(PRESERVE)) return true;
       if (node.matches(TURN) || (typeof node.hasAttribute === 'function' ? node.hasAttribute('data-turn-key') : Boolean(node.attrs?.has?.('data-turn-key')))) return true;
-      if (node.matches('[data-testid*="reasoning" i],[data-testid*="thought" i]')) return true;
+      if (node.matches(THOUGHT)) return true;
     }
     if (typeof node.closest === 'function') {
       if (node.closest('[data-conversation-role="user"],[data-message-author-role="user"]')) return true;
       if (node.closest(PRESERVE)) return true;
-      if (node.closest('[data-testid*="reasoning" i],[data-testid*="thought" i],[class*="group/activity-header"]')) return true;
+      const explicit = node.matches?.(EXPLICIT_MCP);
+      if (node.parentElement?.closest?.('.markdown,[class*="MarkdownRoot"]') ||
+          node.closest('[data-testid*="final-answer" i]')) return true;
+      if (node.closest('[class*="DilResponseRoot"],[data-dil-message-id]') &&
+          !explicit && !node.parentElement?.closest?.(TOOL_CALL)) return true;
+      if (node.closest(THOUGHT) && !explicit) return true;
       if (node.closest('[data-testid*="conversation-error" i],[data-testid*="error-boundary" i]')) return true;
     }
     let cur = node;
@@ -71,12 +80,25 @@
 
   function isLargeOutput(node) {
     if (!node) return false;
-    const textLen = (node.textContent || '').length;
-    if (textLen >= 1024) return true;
-    const count = typeof node.getElementsByTagName === 'function' ?
-      node.getElementsByTagName('*').length :
-      (typeof node.querySelectorAll === 'function' ? node.querySelectorAll('*').length : 0);
-    return count > 100;
+    const stack = [node];
+    let textLen = 0, elements = 0, visited = 0;
+    while (stack.length) {
+      const part = stack.pop();
+      if (++visited > 256) return true;
+      if (part.nodeType === 3) textLen += part.length ?? part.data?.length ?? 0;
+      else {
+        if (part !== node && ++elements > 100) return true;
+        const children = part.childNodes || part.children || [];
+        if (children.length > 256) return true;
+        if (children.length) {
+          for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+          // DOM test fixtures may store text directly alongside children.
+          if (!part.childNodes) textLen += part.textContent?.length || 0;
+        } else textLen += part.textContent?.length || 0;
+      }
+      if (textLen >= 1024) return true;
+    }
+    return false;
   }
 
   function mcpStyle() {
@@ -178,13 +200,13 @@
       return;
     }
     for (const node of markedMcpNodes) {
-      if (hasMcpInteractive(node)) {
+      if (node.isConnected === false || hasMcpInteractive(node)) {
         try { node.removeAttribute?.(MCP_ATTR); } catch (_) {}
         markedMcpNodes.delete(node);
       }
     }
     for (const node of candidateMcpNodes) {
-      if (!node || node.isConnected === false) continue;
+      if (!node || node.isConnected === false) {candidateMcpNodes.delete(node);continue;}
       if (markedMcpNodes.has(node)) continue;
       if (hasMcpInteractive(node) || !isLargeOutput(node)) continue;
       if (typeof node.setAttribute === 'function') {
@@ -209,6 +231,7 @@
     resetHistory();
     clearMcpRelief();
     state.chat = null;
+    state.nativeVirtualized = false;
   }
 
   function unmark(node) {
@@ -267,6 +290,15 @@
     const count = turns.length, tail = count ? turns[count - 1] : null, now = Date.now();
     if (id === state.chat && tail === state.tail && count === state.count &&
         now - state.checked < 12000) return;
+    const native = Boolean(turns[0]?.hasAttribute?.('data-turn-key') &&
+      !turns[0]?.getAttribute?.('data-testid')?.startsWith('conversation-turn-')) ||
+      Boolean(turns[0]?.querySelector?.(NATIVE_VIRTUALIZER));
+    state.nativeVirtualized = native;
+    if (native) {
+      if (state.optimized) resetHistory();
+      state.count = count; state.tail = tail; state.checked = now;
+      return;
+    }
     restoreApprovals();
     if (count < MIN && state.count >= MIN) resetHistory();
     state.chat = id; state.count = count; state.tail = tail; state.checked = now;
@@ -326,6 +358,8 @@
       mounted: state.count,
       optimized: state.optimized,
       mcpRelieved: markedMcpNodes.size,
+      mcpCandidates: candidateMcpNodes.size,
+      nativeVirtualized: state.nativeVirtualized,
       generation: state.generation
     })
   };

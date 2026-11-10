@@ -20,30 +20,21 @@ function createMockElement(tag, attrs = {}, textContent = '', children = []) {
     setAttribute(k, v) { this.attrs.set(k, String(v)); },
     removeAttribute(k) { this.attrs.delete(k); },
     matches(sel) {
-      if (sel.includes('button') && this.tagName === 'BUTTON') return true;
-      if (sel.includes('iframe') && this.tagName === 'IFRAME') return true;
-      if (sel.includes('summary') && this.tagName === 'SUMMARY') return true;
-      if (sel.includes('header') && this.tagName === 'HEADER') return true;
-      if (sel.includes('textarea') && this.tagName === 'TEXTAREA') return true;
-      if (sel.includes('select') && this.tagName === 'SELECT') return true;
-      if (sel.includes('a[href]') && this.tagName === 'A' && this.attrs.has('href')) return true;
-      const testid = this.attrs.get('data-testid') || '';
-      if (sel.includes('tool-result') && /tool-result/i.test(testid)) return true;
-      if (sel.includes('tool-output') && /tool-output/i.test(testid)) return true;
-      if (sel.includes('tool-response') && /tool-response/i.test(testid)) return true;
-      if (sel.includes('mcp-result') && /mcp-result/i.test(testid)) return true;
-      if (sel.includes('mcp-output') && /mcp-output/i.test(testid)) return true;
-      if (sel.includes('approval') && /approval/i.test(testid)) return true;
-      if (sel.includes('permission') && /permission/i.test(testid)) return true;
-      if (sel.includes('mcp-app') && /mcp-app/i.test(testid)) return true;
-      if (sel.includes('reasoning') && /reasoning/i.test(testid)) return true;
-      if (sel.includes('thought') && /thought/i.test(testid)) return true;
-      if (sel.includes('error') && /error/i.test(testid)) return true;
-      const role = this.attrs.get('role') || '';
-      if (sel.includes('dialog') && role === 'dialog') return true;
-      if (sel.includes('alert') && role === 'alert') return true;
-      if (sel.includes('status') && role === 'status') return true;
-      return false;
+      return sel.split(',').some(rule => {
+        const item = rule.trim();
+        const tag = item.match(/^([a-z]+)(?:\[|$)/i)?.[1];
+        if (tag && this.tagName.toLowerCase() !== tag.toLowerCase()) return false;
+        if (item === 'a[href]') return this.tagName === 'A' && this.attrs.has('href');
+        if (item === '.markdown') return (this.attrs.get('class') || '').split(/\s+/).includes('markdown');
+        if (/^[a-z]+$/i.test(item)) return this.tagName.toLowerCase() === item.toLowerCase();
+        const attr = item.match(/\[([\w-]+)(\*|\^)?="([^"]+)"(?: i)?\]/);
+        if (!attr) return false;
+        const value = this.attrs.get(attr[1]);
+        if (typeof value !== 'string') return false;
+        if (!attr[2]) return value === attr[3];
+        if (attr[2] === '^') return value.toLowerCase().startsWith(attr[3].toLowerCase());
+        return value.toLowerCase().includes(attr[3].toLowerCase());
+      });
     },
     closest(sel) {
       if (this.matches(sel)) return this;
@@ -68,6 +59,7 @@ function createMockElement(tag, attrs = {}, textContent = '', children = []) {
   };
   for (const child of children) {
     child.parent = el;
+    child.parentElement = el;
   }
   return el;
 }
@@ -740,6 +732,69 @@ test('R43-002: late idle error/status/header protected from hiding by CSS :has e
   x.api.refresh('c-idle-error', x.turns, {running: false, waiting: false});
   assert.equal(output.attrs.has(MCP_ATTR), false, 'JS refresh subsequently cleans up attribute');
   assert.equal(x.api.audit().mcpRelieved, 0);
+});
+
+test('0.2.6: explicit MCP in DIL/thinking renders lighter without hiding final answer or approvals', () => {
+  const x = fixture(false, 5, true);
+  const body = createMockElement('div', {'data-testid':'mcp-tool-output'}, 'X'.repeat(4000));
+  const thinking = createMockElement('div', {'data-testid':'thinking-panel'}, 'Thinking', [body]);
+  const generic = createMockElement('div', {'data-testid':'tool-result'}, 'G'.repeat(4000));
+  const call = createMockElement('div', {'data-testid':'tool-call'}, 'Tool finished', [generic]);
+  const normal = createMockElement('div', {'data-testid':'tool-result'}, 'N'.repeat(4000));
+  const final = createMockElement('div', {'data-testid':'mcp-tool-output'}, 'F'.repeat(4000));
+  const finalBox = createMockElement('div', {'data-testid':'final-answer'}, '', [final]);
+  const markdown = createMockElement('div', {'data-testid':'mcp-output'}, 'M'.repeat(4000));
+  const markdownBox = createMockElement('div', {'class':'markdown'}, '', [markdown]);
+  const approval = createMockElement('div', {'data-testid':'mcp-output'}, 'P'.repeat(4000), [
+    createMockElement('button', {'data-testid':'permission-allow'}, 'Authorize')
+  ]);
+  const dil = createMockElement('div', {'class':'DilResponseRoot'}, '',
+    [thinking, call, normal, finalBox, markdownBox, approval]);
+  x.turns[4].children.push(dil);
+  dil.parent = x.turns[4]; dil.parentElement = x.turns[4];
+
+  x.api.refresh('dil-mcp', x.turns, {running:true});
+  assert.equal(body.attrs.get(MCP_ATTR),'1', 'explicit MCP in thinking is eligible');
+  assert.equal(generic.attrs.get(MCP_ATTR),'1', 'tool-call-owned generic result is eligible');
+  for (const [label,protectedNode] of Object.entries({thinking,normal,final,markdown,approval})) {
+    assert.equal(protectedNode.attrs.has(MCP_ATTR),false,label+' must remain visible');
+  }
+  assert.equal(x.api.audit().mcpRelieved,2);
+  assert.equal(x.api.audit().mcpCandidates,6);
+
+  const alert=createMockElement('div',{'role':'alert'},'Permission denied');
+  body.children.push(alert); alert.parent=body; alert.parentElement=body;
+  x.api.refresh('dil-mcp',x.turns,{waiting:true});
+  assert.equal(body.attrs.has(MCP_ATTR),false,'late alert immediately becomes visible on next observation');
+  assert.equal(x.api.audit().mcpRelieved,1);
+  x.world.__OPTIMIZED_MCP_OUTPUT_RELIEF_ENABLED__=false;
+  x.api.refresh('dil-mcp',x.turns,{});
+  assert.equal(generic.attrs.has(MCP_ATTR),false);
+  assert.equal(x.api.audit().mcpCandidates,0);
+});
+
+test('0.2.6: modern native virtualization disables only history layout, not MCP relief', () => {
+  const x=fixture(true,40,true);
+  for (const turn of x.turns) turn.attrs.delete('data-testid');
+  const mcp=createMockElement('div',{'data-testid':'mcp-tool-output'},'Z'.repeat(2400));
+  x.turns[39].children.push(mcp);mcp.parent=x.turns[39];
+  x.api.refresh('modern',x.turns,{running:false,waiting:false});
+  x.flush();
+  assert.equal(x.api.audit().nativeVirtualized,true);
+  assert.equal(x.turns.filter(n=>n.attrs.has(ATTR)).length,0);
+  assert.equal(mcp.attrs.get(MCP_ATTR),'1','MCP remains independent of history');
+  assert.equal(x.api.audit().mcpRelieved,1);
+});
+
+test('0.2.6: streamed megabyte tool text never flattens parent textContent', () => {
+  const x=fixture(false,5,true);
+  const tool=createMockElement('div',{'data-testid':'mcp-tool-output'},'');
+  const huge={nodeType:3,length:6_000_000};
+  tool.childNodes=[huge];
+  Object.defineProperty(tool,'textContent',{get(){throw Error('flattened large output');}});
+  x.turns[3].children.push(tool);tool.parent=x.turns[3];
+  x.api.refresh('huge-mcp',x.turns,{running:true});
+  assert.equal(tool.attrs.get(MCP_ATTR),'1');
 });
 
 test('MCP disabled avoids all-document cleanup scans on repeated status updates', () => {
