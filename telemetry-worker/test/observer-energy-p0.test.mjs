@@ -122,7 +122,15 @@ function createEnvironment(initialHref = 'https://chatgpt.com/c/123456789012') {
   const transcript = new MockHTMLElement('div', { class: 'transcriptContent' });
   main.appendChild(transcript);
 
+  const styles = new Map();
   const doc = {
+    head: { appendChild: el => { styles.set(el.id, el); return el; } },
+    documentElement: { appendChild: el => { styles.set(el.id, el); return el; } },
+    createElement: tag => {
+      const el = new MockHTMLElement(tag);
+      el.remove = () => { styles.delete(el.id); };
+      return el;
+    },
     visibilityState: 'visible',
     hidden: false,
     querySelector: sel => {
@@ -131,7 +139,7 @@ function createEnvironment(initialHref = 'https://chatgpt.com/c/123456789012') {
       return main.querySelector(sel);
     },
     querySelectorAll: sel => main.querySelectorAll(sel),
-    getElementById: () => null,
+    getElementById: id => styles.get(id) || null,
     addEventListener: (type, fn) => {
       if (!docListeners.has(type)) docListeners.set(type, new Set());
       docListeners.get(type).add(fn);
@@ -235,6 +243,7 @@ function createEnvironment(initialHref = 'https://chatgpt.com/c/123456789012') {
     main,
     transcript,
     events,
+    styles,
     timers,
     advanceTimersByTime,
     triggerDocEvent: (type, target) => {
@@ -243,6 +252,23 @@ function createEnvironment(initialHref = 'https://chatgpt.com/c/123456789012') {
     MockHTMLElement
   };
 }
+
+test('iOS sidebar: scoped vertical touch scrolling is installed and reversible', () => {
+  const env = createEnvironment();
+  runInNewContext(observerCode, env.context);
+  const style = env.styles.get('optimized-sidebar-touch-scroll');
+  assert.ok(style, 'new WebKit sidebar style must be injected without enabling MCP/history');
+  assert.match(style.textContent, /:is\(aside,nav,\[data-testid="sidebar"\]\)/);
+  assert.match(style.textContent, /touch-action:pan-y!important/);
+  assert.match(style.textContent, /-webkit-overflow-scrolling:touch!important/);
+  assert.match(style.textContent, /overscroll-behavior-y:contain!important/);
+  assert.doesNotMatch(style.textContent, /(?:^|[, ])(?:html|body|main)(?:[, ]|\{|$)/,
+    'must not change the ChatGPT page/root scrolling');
+  assert.doesNotMatch(observerCode, /addEventListener\(['"]touch(?:move|start)/,
+    'no global touch interception permitted');
+  env.context.__CHATGPT_WEB_OPTIMIZED_OBSERVER__.destroy();
+  assert.equal(env.styles.has('optimized-sidebar-touch-scroll'), false);
+});
 
 test('H1 avalanche: 10+ consecutive complete/no-answer events schedule at most 3 bounded follow-up callbacks', async () => {
   const env = createEnvironment('https://chatgpt.com/c/123456789012');

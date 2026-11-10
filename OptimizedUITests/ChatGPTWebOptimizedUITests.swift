@@ -29,4 +29,19 @@ final class ChatGPTWebOptimizedUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.webViews["optimized.webview"].waitForExistence(timeout: 15))
     }
+
+    func testNestedSidebarScrollAcceptsVerticalSwipeWithoutNetwork() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-proxy-direct", "-uitest-sidebar-scroll"]
+        app.launch()
+        let webView = app.webViews["optimized.webview"]
+        XCTAssertTrue(webView.waitForExistence(timeout: 15))
+        let bottom = webView.staticTexts["SIDEBAR_END"]
+        XCTAssertTrue(bottom.waitForExistence(timeout: 15))
+        XCTAssertFalse(bottom.isHittable, "bottom row must start outside the viewport")
+        for _ in 0..<8 where !bottom.isHittable {
+            webView.swipeUp()
+        }
+        XCTAssertTrue(bottom.isHittable, "nested HTML sidebar must respond to vertical touch scrolling")
+    }
 }

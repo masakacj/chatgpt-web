@@ -66,7 +66,10 @@ struct OptimizedWebView: UIViewRepresentable {
             guard let webView, webView.canGoForward else { return }
             webView.goForward()
         }
-        webView.scrollView.keyboardDismissMode = .interactive
+        // Do not let interactive keyboard dragging compete with WebKit's nested sidebar scroll.
+        webView.scrollView.keyboardDismissMode = .none
+        // SwiftUI already supplies the safe area; a second inset offsets fixed-drawer touch geometry.
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isInspectable = model.diagnosticsEnabled
         model.retryHandler = { [weak webView] document, sequence in
             guard let webView else { return false }
@@ -87,6 +90,23 @@ struct OptimizedWebView: UIViewRepresentable {
             model.status = "代理未就绪：为防止直连，网页没有发起任何请求"
             return webView
         }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uitest-sidebar-scroll") {
+            // Offline WKWebView nested-drawer touch fixture; never compiled into Release.
+            let rows = (0..<18).map { "<div style='height:88px'>SIDEBAR_ITEM_\($0)</div>" }.joined()
+            let html = """
+            <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>html,body{height:100%;margin:0;overflow:hidden}
+            aside{position:fixed;inset:0 10% 0 0;background:white;overflow:hidden}
+            .overflow-y-auto{height:100%;overflow-y:auto;touch-action:none}
+            </style></head><body><aside data-testid="sidebar">
+            <div id="sidebar-scroll" class="overflow-y-auto">\(rows)
+            <div id="sidebar-end">SIDEBAR_END</div></div></aside></body></html>
+            """
+            webView.loadHTMLString(html, baseURL: URL(string: "https://chatgpt.com"))
+            return webView
+        }
+        #endif
         WebConfigurationFactory.installResourceGate(resourceGate, in: configuration,
                                                      safeMode: supervisor?.isSafeModeActive == true) { _ in
             // Do not navigate a retired web view if the user entered native safe mode.

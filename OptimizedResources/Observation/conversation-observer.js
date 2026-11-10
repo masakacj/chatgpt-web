@@ -3,6 +3,12 @@
   if (window !== window.top || location.origin !== 'https://chatgpt.com' ||
       !window.webkit?.messageHandlers?.optimizedConversation) return;
   const VERSION = '0.1.0';
+  // Preserve native vertical gestures in scrollable ChatGPT sidebar drawers.
+  // Do not change document overflow or install touch-event interceptors.
+  const sidebarStyle = document.createElement('style');
+  sidebarStyle.id = 'optimized-sidebar-touch-scroll';
+  sidebarStyle.textContent = ':is(aside,nav,[data-testid="sidebar"]) :is([class*="overflow-y-auto"],[class*="overflow-y-scroll"],[class*="overflow-auto"]),:is(aside,nav,[data-testid="sidebar"])[class*="overflow-y-auto"]{touch-action:pan-y!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain!important}';
+  (document.head || document.documentElement).appendChild(sidebarStyle);
   const api = window.webkit.messageHandlers.optimizedConversation;
   const documentId = 'wk-' + (crypto.randomUUID?.() || Math.random().toString(36).slice(2));
   const timers = new Set();
@@ -251,6 +257,7 @@
     timers.forEach(clearTimeout);
     timers.clear();
     globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.destroy();
+    sidebarStyle.remove();
     document.removeEventListener('click', clicked, true);
     document.removeEventListener('submit', submit, true);
     document.removeEventListener('input', input, true);
