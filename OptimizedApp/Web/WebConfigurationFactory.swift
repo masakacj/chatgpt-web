@@ -54,9 +54,8 @@ enum WebConfigurationFactory {
           (document.head || document.documentElement).appendChild(style);
         })();
         """
-        controller.addUserScript(WKUserScript(source: sidebarTouchSource,
-                                             injectionTime: .atDocumentEnd,
-                                             forMainFrameOnly: true, in: observationWorld))
+        // Prepend to the existing CM user script, preserving the original
+        // one-script baseline when both optional optimizers are disabled.
         // When both optional visual optimizers are OFF, do not parse/inject the
         // adapter at all; the independent CM observer below stays fully active.
         if (pcHistoryEnabled || mcpOutputEnabled),
@@ -72,7 +71,8 @@ enum WebConfigurationFactory {
         }
         if let url = Bundle.main.url(forResource: "conversation-observer", withExtension: "js"),
            let source = try? String(contentsOf: url, encoding: .utf8) {
-            controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentEnd,
+            controller.addUserScript(WKUserScript(source: sidebarTouchSource + "\n" + source,
+                                                  injectionTime: .atDocumentEnd,
                                                   forMainFrameOnly: true, in: observationWorld))
         }
         let configuration = WKWebViewConfiguration()

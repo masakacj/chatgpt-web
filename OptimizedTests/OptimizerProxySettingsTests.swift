@@ -23,6 +23,8 @@ final class OptimizerProxySettingsTests: XCTestCase {
         let minimalSources = minimal.userContentController.userScripts.map(\.source)
         XCTAssertEqual(minimalSources.count, 1, "CM observer must stay injected")
         XCTAssertTrue(minimalSources[0].contains("optimizedConversation"))
+        XCTAssertTrue(minimalSources[0].contains("optimized-sidebar-touch-scroll"),
+                      "Sidebar scrolling must share the CM user script, not add another script")
         XCTAssertFalse(minimalSources[0].contains("globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ ="))
 
         let (mcpOnly, _) = WebConfigurationFactory.make(
