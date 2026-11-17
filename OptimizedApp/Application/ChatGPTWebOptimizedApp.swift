@@ -111,7 +111,7 @@ struct OptimizedRootView: View {
                 VStack(spacing: 16) {
                     Image(systemName: "network")
                         .font(.system(size: 38))
-                    Text("请配置 Home / Office 代理")
+                    Text("请配置 OfficeServer / Office 代理")
                         .font(.headline)
                     Text("已启用禁止自动直连。没有已配置的代理时不会加载 ChatGPT。")
                         .font(.footnote)
