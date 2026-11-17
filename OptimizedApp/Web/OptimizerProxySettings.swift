@@ -37,8 +37,8 @@ struct OptimizerProxyPlan: Codable, Equatable {
     var selected: [OptimizerProxyEndpoint] {
         switch mode {
         case .direct: return []
-        case .officeServer: return backupEnabled ? [home, office] : [home]
-        case .office: return backupEnabled ? [office, home] : [office]
+        case .officeServer: return backupEnabled ? [officeServer, office] : [officeServer]
+        case .office: return backupEnabled ? [office, officeServer] : [office]
         }
     }
 
