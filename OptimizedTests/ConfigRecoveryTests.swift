@@ -61,6 +61,32 @@ final class ConfigRecoveryTests: XCTestCase {
         XCTAssertFalse(target.canLoadWebView)
     }
 
+    func testOfficeServerV2RecoveryDoesNotOverwriteLegacyAppScope() throws {
+        let source: [String: Any] = [
+            "schema": 1, "app": "optimizer-v2",
+            "config": [
+                "plan": [
+                    "mode": "officeServer", "backupEnabled": true, "denyDirect": true,
+                    "officeServer": ["host": "gostos.781751.xyz", "port": 18445, "username": ""],
+                    "office": ["host": "gosto.781751.xyz", "port": 18444, "username": ""]
+                ],
+                "officeServerPassword": "", "officePassword": ""
+            ]
+        ]
+        let json = try JSONSerialization.data(withJSONObject: source)
+        XCTAssertThrowsError(try ConfigRecovery.parse(json, scope: .optimizer))
+        XCTAssertThrowsError(try ConfigRecovery.parse(json, scope: .mirror))
+        let payload = try ConfigRecovery.parse(json, scope: .optimizerV2)
+        let name = "optimizer-v2-recovery-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let proxy = OptimizerProxySettings(defaults: defaults)
+        XCTAssertTrue(proxy.importRecoveryConfig(payload))
+        XCTAssertEqual(proxy.plan.mode, .officeServer)
+        XCTAssertEqual(proxy.plan.selected.map(\.port), [18445, 18444])
+        XCTAssertFalse(proxy.plan.selected.map(\.host).contains("home.proxy.example"))
+    }
+
     func testRejectsMalformedOrOtherAppConfig() throws {
         let raw = try JSONSerialization.data(withJSONObject: [
             "schema": 1, "app": "mirror", "config": ["endpoint": "https://bridge.example"]
