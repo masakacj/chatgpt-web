@@ -4,6 +4,7 @@ import SwiftUI
 // Shared by self-signed iOS apps. No credentials are compiled into the IPA.
 enum ConfigRecoveryScope: String {
     case optimizer
+    case optimizerV2 = "optimizer-v2"
     case mirror
 }
 
