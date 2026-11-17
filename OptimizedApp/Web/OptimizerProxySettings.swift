@@ -291,8 +291,8 @@ final class OptimizerProxySettings: ObservableObject {
             return true
         }
         let routes: [(OptimizerProxyEndpoint, OptimizerProxyMode)]
-        let useHomeFirst = plan.mode == .officeServer
-        if useHomeFirst {
+        let serverFirst = plan.mode == .officeServer
+        if serverFirst {
             routes = plan.backupEnabled ? [(plan.officeServer, .officeServer), (plan.office, .office)] :
                 [(plan.officeServer, .officeServer)]
         } else {
