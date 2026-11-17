@@ -6,7 +6,7 @@ import WebKit
 
 /// WKWebsiteDataStore-only proxy routing. Never touches system VPN, URLSession or Mirror.
 enum OptimizerProxyMode: String, Codable, CaseIterable {
-    case home, office, direct
+    case officeServer, office, direct
 }
 
 struct OptimizerProxyEndpoint: Codable, Equatable {
@@ -28,8 +28,8 @@ struct OptimizerProxyEndpoint: Codable, Equatable {
 }
 
 struct OptimizerProxyPlan: Codable, Equatable {
-    var mode: OptimizerProxyMode = .home
-    var home = OptimizerProxyEndpoint()
+    var mode: OptimizerProxyMode = .officeServer
+    var officeServer = OptimizerProxyEndpoint(host: "gostos.781751.xyz", port: 18445, username: "optimizer-os")
     var office = OptimizerProxyEndpoint()
     var backupEnabled = true
     var denyDirect = true
@@ -37,7 +37,7 @@ struct OptimizerProxyPlan: Codable, Equatable {
     var selected: [OptimizerProxyEndpoint] {
         switch mode {
         case .direct: return []
-        case .home: return backupEnabled ? [home, office] : [home]
+        case .officeServer: return backupEnabled ? [home, office] : [home]
         case .office: return backupEnabled ? [office, home] : [office]
         }
     }
@@ -50,15 +50,39 @@ struct OptimizerProxyPlan: Codable, Equatable {
     var description: String {
         switch mode {
         case .direct: return "手动直连（不经过代理）"
-        case .home: return backupEnabled ? "Home → Office（禁止直连）" : "Home（禁止直连）"
-        case .office: return backupEnabled ? "Office → Home（禁止直连）" : "Office（禁止直连）"
+        case .officeServer: return backupEnabled ? "OfficeServer → Office（禁止直连）" : "OfficeServer（禁止直连）"
+        case .office: return backupEnabled ? "Office → OfficeServer（禁止直连）" : "Office（禁止直连）"
         }
     }
 }
 
+
+private struct OptimizerLegacyProxyPlan: Codable {
+    let mode: String
+    let home: OptimizerProxyEndpoint
+    let office: OptimizerProxyEndpoint
+    let backupEnabled: Bool
+    let denyDirect: Bool
+
+    func migrate() -> OptimizerProxyPlan {
+        var next = OptimizerProxyPlan()
+        next.office = office
+        next.backupEnabled = backupEnabled && office.valid
+        next.mode = mode == "direct" ? .direct : .officeServer
+        next.denyDirect = true
+        return next
+    }
+}
+
+private struct OptimizerLegacyRecoveryBackup: Codable {
+    let plan: OptimizerLegacyProxyPlan
+    let homePassword: String
+    let officePassword: String
+}
+
 private struct OptimizerRecoveryBackup: Codable {
     let plan: OptimizerProxyPlan
-    let homePassword: String
+    let officeServerPassword: String
     let officePassword: String
 }
 
@@ -98,7 +122,7 @@ enum OptimizerProxyCredential {
 
     /// Called only during native startup, before constructing any WKWebView.
     static func commitPending() -> Bool {
-        for kind in [OptimizerProxyMode.home, .office] {
+        for kind in [OptimizerProxyMode.officeServer, .office] {
             guard let staged = load(kind, pending: true), !staged.isEmpty else { continue }
             guard save(staged, kind: kind) else { return false }
             let query: [String: Any] = [
@@ -116,7 +140,8 @@ enum OptimizerProxyCredential {
 /// never automatically by replaying ChatGPT requests.
 @MainActor
 final class OptimizerProxySettings: ObservableObject {
-    private static let key = "optimized.proxy.plan.v1"
+    private static let key = "optimized.proxy.plan.v2"
+    private static let legacyKey = "optimized.proxy.plan.v1"
     private static let pendingCredentialsKey = "optimized.proxy.pending.credentials.v1"
     // @MainActor process-wide guard: WindowGroup can create multiple scenes.
     // Do not promote staged credentials or reconfigure the shared default
@@ -149,9 +174,18 @@ final class OptimizerProxySettings: ObservableObject {
             }
             if production { Self.didAttemptStartupPromotion = true }
         }
-        let stored = defaults.data(forKey: Self.key)
-            .flatMap { try? JSONDecoder().decode(OptimizerProxyPlan.self, from: $0) }
-            ?? OptimizerProxyPlan()
+        let stored: OptimizerProxyPlan
+        if let current = defaults.data(forKey: Self.key)
+            .flatMap({ try? JSONDecoder().decode(OptimizerProxyPlan.self, from: $0) }) {
+            stored = current
+        } else if let legacy = defaults.data(forKey: Self.legacyKey)
+            .flatMap({ try? JSONDecoder().decode(OptimizerLegacyProxyPlan.self, from: $0) }) {
+            stored = legacy.migrate()
+            // Preserve v1 for rollback, but never migrate its Home endpoint/password.
+            if let data = try? JSONEncoder().encode(stored) { defaults.set(data, forKey: Self.key) }
+        } else {
+            stored = OptimizerProxyPlan()
+        }
         plan = production ? (Self.processPlan ?? stored) : stored
         // An explicitly tagged simulator fixture keeps old native UI tests isolated
         // from production's fail-closed proxy bootstrap.
@@ -161,25 +195,25 @@ final class OptimizerProxySettings: ObservableObject {
         if production && Self.processPlan == nil { Self.processPlan = plan }
     }
 
-    func apply(_ candidate: OptimizerProxyPlan, homePassword: String,
+    func apply(_ candidate: OptimizerProxyPlan, officeServerPassword: String,
                officePassword: String) -> Bool {
         guard candidate.ready else {
-            error = "Home 和 Office 必须填写有效的代理主机及端口；不会自动改为直连。"
+            error = "OfficeServer 和 Office 必须填写有效的代理主机及端口；不会自动改为直连。"
             return false
         }
         // Never overwrite active credentials in a process whose WebKit store
         // has already been configured. Staged Keychain entries are promoted
         // only on the next app startup, before any WKWebView is constructed.
         let pending = routeLockedForProcess
-        guard OptimizerProxyCredential.save(homePassword, kind: .home, pending: pending),
+        guard OptimizerProxyCredential.save(officeServerPassword, kind: .officeServer, pending: pending),
               OptimizerProxyCredential.save(officePassword, kind: .office, pending: pending) else {
             error = "代理密码未能写入 Keychain。"
             return false
         }
         if candidate.mode != .direct {
             let profiles: [(OptimizerProxyEndpoint, OptimizerProxyMode)] =
-                candidate.mode == .home ? [(candidate.home, .home), (candidate.office, .office)] :
-                                          [(candidate.office, .office), (candidate.home, .home)]
+                candidate.mode == .officeServer ? [(candidate.officeServer, .officeServer), (candidate.office, .office)] :
+                                          [(candidate.office, .office), (candidate.officeServer, .officeServer)]
             for (index, item) in profiles.enumerated() where index == 0 || candidate.backupEnabled {
                 if !item.0.username.isEmpty &&
                     (OptimizerProxyCredential.load(item.1, pending: pending)?.isEmpty != false) &&
@@ -194,7 +228,7 @@ final class OptimizerProxySettings: ObservableObject {
             return false
         }
         defaults.set(data, forKey: Self.key)
-        if pending && (!homePassword.isEmpty || !officePassword.isEmpty) {
+        if pending && (!officeServerPassword.isEmpty || !officePassword.isEmpty) {
             defaults.set(true, forKey: Self.pendingCredentialsKey)
         }
         if routeLockedForProcess {
@@ -210,24 +244,34 @@ final class OptimizerProxySettings: ObservableObject {
     }
 
     func importRecoveryConfig(_ data: Data) -> Bool {
-        guard let backup = try? JSONDecoder().decode(OptimizerRecoveryBackup.self, from: data),
-              backup.plan.mode != .direct, backup.plan.denyDirect,
-              backup.plan.ready else { return false }
-        for (route, kind) in [(backup.plan.home, OptimizerProxyMode.home),
-                              (backup.plan.office, OptimizerProxyMode.office)] {
-            let used = kind == backup.plan.mode ||
-                (backup.plan.mode != .direct && backup.plan.backupEnabled)
-            if used && !route.username.isEmpty &&
-                (kind == .home ? backup.homePassword : backup.officePassword).isEmpty { return false }
+        let plan: OptimizerProxyPlan
+        let serverPassword: String
+        let officePassword: String
+        if let current = try? JSONDecoder().decode(OptimizerRecoveryBackup.self, from: data) {
+            plan = current.plan
+            serverPassword = current.officeServerPassword
+            officePassword = current.officePassword
+        } else if let legacy = try? JSONDecoder().decode(OptimizerLegacyRecoveryBackup.self, from: data) {
+            plan = legacy.plan.migrate()
+            serverPassword = "" // Old Home secret must never become OfficeServer auth.
+            officePassword = legacy.officePassword
+        } else { return false }
+        guard plan.mode != .direct, plan.denyDirect, plan.ready else { return false }
+        for (route, kind) in [(plan.officeServer, OptimizerProxyMode.officeServer),
+                              (plan.office, OptimizerProxyMode.office)] {
+            let used = kind == plan.mode || plan.backupEnabled
+            let password = kind == .officeServer ? serverPassword : officePassword
+            if used && !route.username.isEmpty && password.isEmpty &&
+               OptimizerProxyCredential.load(kind) == nil { return false }
         }
-        return apply(backup.plan, homePassword: backup.homePassword,
-                     officePassword: backup.officePassword)
+        return apply(plan, officeServerPassword: serverPassword,
+                     officePassword: officePassword)
     }
 
     var canLoadWebView: Bool {
         guard plan.ready else { return false }
         if plan.mode == .direct { return true }
-        for (route, kind) in [(plan.home, OptimizerProxyMode.home),
+        for (route, kind) in [(plan.officeServer, OptimizerProxyMode.officeServer),
                               (plan.office, OptimizerProxyMode.office)] {
             let needed = (kind == plan.mode) || plan.backupEnabled
             if needed && !route.username.isEmpty &&
@@ -247,12 +291,12 @@ final class OptimizerProxySettings: ObservableObject {
             return true
         }
         let routes: [(OptimizerProxyEndpoint, OptimizerProxyMode)]
-        let useHomeFirst = plan.mode == .home
+        let useHomeFirst = plan.mode == .officeServer
         if useHomeFirst {
-            routes = plan.backupEnabled ? [(plan.home, .home), (plan.office, .office)] :
-                [(plan.home, .home)]
+            routes = plan.backupEnabled ? [(plan.officeServer, .officeServer), (plan.office, .office)] :
+                [(plan.officeServer, .officeServer)]
         } else {
-            routes = plan.backupEnabled ? [(plan.office, .office), (plan.home, .home)] :
+            routes = plan.backupEnabled ? [(plan.office, .office), (plan.officeServer, .officeServer)] :
                 [(plan.office, .office)]
         }
         var configs: [ProxyConfiguration] = []
