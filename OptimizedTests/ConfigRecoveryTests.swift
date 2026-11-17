@@ -26,9 +26,25 @@ final class ConfigRecoveryTests: XCTestCase {
             restored.removePersistentDomain(forName: dest)
         }
         let settings = OptimizerProxySettings(defaults: defaults)
-        XCTAssertTrue(settings.importRecoveryConfig(config))
+        XCTAssertFalse(settings.importRecoveryConfig(config),
+                       "Legacy Home config must not load without separate OfficeServer credentials")
+        XCTAssertEqual(settings.plan.officeServer.host, "gostos.781751.xyz")
+        XCTAssertFalse(settings.canLoadWebView)
+
+        // New OfficeServer-only recovery never carries a Home endpoint.
+        let v2 = try JSONSerialization.data(withJSONObject: [
+            "plan": [
+                "mode": "officeServer", "backupEnabled": false, "denyDirect": true,
+                "officeServer": ["host": "gostos.781751.xyz", "port": 18445,
+                                 "username": ""],
+                "office": ["host": "office.proxy.example", "port": 8443,
+                           "username": ""]
+            ],
+            "officeServerPassword": "", "officePassword": ""
+        ])
+        XCTAssertTrue(settings.importRecoveryConfig(v2))
         XCTAssertTrue(settings.canLoadWebView)
-        XCTAssertEqual(settings.plan.home.host, "home.proxy.example")
+        XCTAssertEqual(settings.plan.officeServer.host, "gostos.781751.xyz")
         XCTAssertEqual(settings.plan.office.port, 8443)
         XCTAssertFalse(settings.plan.backupEnabled)
         let target = OptimizerProxySettings(defaults: restored)
