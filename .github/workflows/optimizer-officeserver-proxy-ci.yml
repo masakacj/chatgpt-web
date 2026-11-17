@@ -1,0 +1,33 @@
+name: Optimizer OfficeServer GOST Migration Validation
+on:
+  push:
+    branches: [feature/optimizer-officeserver-gost-20261117]
+    paths:
+      - 'OptimizedApp/**'
+      - 'OptimizedTests/**'
+      - 'OptimizedResources/**'
+      - 'project.yml'
+      - '.github/workflows/optimizer-officeserver-proxy-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xcodegen
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Compile and test Optimizer only
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c 'import json,sys;print(next(d["udid"] for group in json.load(sys.stdin)["devices"].values() for d in group if d.get("isAvailable") and d["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Debug -sdk iphonesimulator -destination "id=$UDID" -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+      - name: Verify Release compilation without signing or deployment
+        run: |
+          xcodebuild -project ChatGPTWeb.xcodeproj -scheme ChatGPTWebOptimized -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
