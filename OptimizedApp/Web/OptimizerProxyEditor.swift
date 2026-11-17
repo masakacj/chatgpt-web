@@ -63,7 +63,7 @@ struct OptimizerProxyEditor: View {
                                            importConfig: { settings.importRecoveryConfig($0) })
                     }
                     .disabled(!canReload)
-                    Text("支持新格式 OfficeServer / Office 配置；旧 Home 备份仅迁移 Office，绝不会恢复 Home 出口。")
+                    Text("新版配置仅使用 OfficeServer 和 Office。旧 Home 记录仅用于回滚，不会加入代理路由。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("应用") {
