@@ -4,7 +4,7 @@ import WebKit
 
 @MainActor
 final class OptimizerProxySettingsTests: XCTestCase {
-    private func endpoint(_ host: String = "home.proxy.example", port: Int = 443) -> OptimizerProxyEndpoint {
+    private func endpoint(_ host: String = "server.proxy.example", port: Int = 443) -> OptimizerProxyEndpoint {
         OptimizerProxyEndpoint(host: host, port: port, username: "")
     }
 
@@ -38,12 +38,12 @@ final class OptimizerProxySettingsTests: XCTestCase {
         })
     }
 
-    func testDefaultHomeBackupAndNeverDirectWithoutEndpoints() {
+    func testDefaultOfficeServerBackupAndNeverDirectWithoutEndpoints() {
         let name = "optimizer-proxy-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         let settings = OptimizerProxySettings(defaults: defaults)
-        XCTAssertEqual(settings.plan.mode, .home)
+        XCTAssertEqual(settings.plan.mode, .officeServer)
         XCTAssertTrue(settings.plan.backupEnabled)
         XCTAssertTrue(settings.plan.denyDirect)
         XCTAssertFalse(settings.plan.ready)
@@ -54,7 +54,7 @@ final class OptimizerProxySettingsTests: XCTestCase {
 
     func testProxyOrderAndNoAutodirect() {
         var p = OptimizerProxyPlan()
-        p.home = endpoint()
+        p.officeServer = endpoint()
         p.office = endpoint("office.proxy.example", port: 8443)
         XCTAssertTrue(p.ready)
         XCTAssertEqual(p.selected.map(\.host), ["home.proxy.example", "office.proxy.example"])
@@ -64,6 +64,32 @@ final class OptimizerProxySettingsTests: XCTestCase {
         XCTAssertEqual(p.selected.count, 0)
         // Direct requires explicit mode selection, never automatic failover.
         XCTAssertTrue(p.ready)
+    }
+
+
+    func testLegacyHomePlanIsMigratedWithoutEverUsingHomeExit() throws {
+        let name = "optimizer-legacy-migration-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let legacy: [String: Any] = [
+            "mode": "home",
+            "home": ["host": "old-home.invalid", "port": 18443, "username": "old-home"],
+            "office": ["host": "gosto.781751.xyz", "port": 18444, "username": "office-user"],
+            "backupEnabled": true, "denyDirect": true
+        ]
+        defaults.set(try JSONSerialization.data(withJSONObject: legacy),
+                     forKey: "optimized.proxy.plan.v1")
+        let migrated = OptimizerProxySettings(defaults: defaults)
+        XCTAssertEqual(migrated.plan.mode, .officeServer)
+        XCTAssertEqual(migrated.plan.officeServer.host, "gostos.781751.xyz")
+        XCTAssertEqual(migrated.plan.officeServer.port, 18445)
+        XCTAssertEqual(migrated.plan.office.host, "gosto.781751.xyz")
+        XCTAssertFalse(migrated.plan.selected.map(\.host).contains("old-home.invalid"))
+        XCTAssertNotNil(defaults.data(forKey: "optimized.proxy.plan.v1"),
+                        "Legacy settings must be retained for rollback")
+        XCTAssertNotNil(defaults.data(forKey: "optimized.proxy.plan.v2"))
+        XCTAssertFalse(migrated.canLoadWebView,
+                       "New OfficeServer credentials must be explicitly provisioned")
     }
 
     func testMalformedEndpointsAreRejected() {
@@ -85,13 +111,13 @@ final class OptimizerProxySettingsTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let settings = OptimizerProxySettings(defaults: defaults)
         var plan = settings.plan
-        plan.home = endpoint()
+        plan.officeServer = endpoint()
         plan.office = endpoint("office.proxy.example", port: 8443)
-        XCTAssertTrue(settings.apply(plan, homePassword: "", officePassword: ""))
+        XCTAssertTrue(settings.apply(plan, officeServerPassword: "", officePassword: ""))
         let restored = OptimizerProxySettings(defaults: defaults)
         XCTAssertEqual(restored.plan, plan)
         XCTAssertTrue(restored.canLoadWebView)
-        let serialized = String(decoding: defaults.data(forKey: "optimized.proxy.plan.v1")!, as: UTF8.self)
+        let serialized = String(decoding: defaults.data(forKey: "optimized.proxy.plan.v2")!, as: UTF8.self)
         XCTAssertFalse(serialized.contains("password"))
         XCTAssertFalse(serialized.contains("token"))
     }
@@ -102,15 +128,15 @@ final class OptimizerProxySettingsTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let settings = OptimizerProxySettings(defaults: defaults)
         var first = settings.plan
-        first.home = endpoint()
+        first.officeServer = endpoint()
         first.office = endpoint("office.proxy.example", port: 8443)
-        XCTAssertTrue(settings.apply(first, homePassword: "", officePassword: ""))
+        XCTAssertTrue(settings.apply(first, officeServerPassword: "", officePassword: ""))
         let store = WKWebsiteDataStore.nonPersistent()
         XCTAssertTrue(settings.configure(store))
         let oldCount = store.proxyConfigurations.count
         var new = first
         new.mode = .direct
-        XCTAssertTrue(settings.apply(new, homePassword: "", officePassword: ""))
+        XCTAssertTrue(settings.apply(new, officeServerPassword: "", officePassword: ""))
         XCTAssertTrue(settings.pendingRestart)
         XCTAssertEqual(settings.plan, first, "Current process remains on original proxy")
         XCTAssertTrue(settings.configure(store))
@@ -126,9 +152,9 @@ final class OptimizerProxySettingsTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let settings = OptimizerProxySettings(defaults: defaults)
         var plan = settings.plan
-        plan.home = endpoint()
+        plan.officeServer = endpoint()
         plan.office = endpoint("office.proxy.example", port: 8443)
-        XCTAssertTrue(settings.apply(plan, homePassword: "", officePassword: ""))
+        XCTAssertTrue(settings.apply(plan, officeServerPassword: "", officePassword: ""))
         let store = WKWebsiteDataStore.nonPersistent()
         XCTAssertTrue(settings.configure(store))
         XCTAssertEqual(store.proxyConfigurations.count, 2)
