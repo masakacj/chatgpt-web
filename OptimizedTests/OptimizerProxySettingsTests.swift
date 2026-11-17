@@ -57,9 +57,9 @@ final class OptimizerProxySettingsTests: XCTestCase {
         p.officeServer = endpoint()
         p.office = endpoint("office.proxy.example", port: 8443)
         XCTAssertTrue(p.ready)
-        XCTAssertEqual(p.selected.map(\.host), ["home.proxy.example", "office.proxy.example"])
+        XCTAssertEqual(p.selected.map(\.host), ["server.proxy.example", "office.proxy.example"])
         p.mode = .office
-        XCTAssertEqual(p.selected.map(\.host), ["office.proxy.example", "home.proxy.example"])
+        XCTAssertEqual(p.selected.map(\.host), ["office.proxy.example", "server.proxy.example"])
         p.mode = .direct
         XCTAssertEqual(p.selected.count, 0)
         // Direct requires explicit mode selection, never automatic failover.
