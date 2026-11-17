@@ -59,7 +59,7 @@ struct OptimizerProxyEditor: View {
                 }
                 Section("快速配置") {
                     NavigationLink("从 config.781751.xyz 恢复代理") {
-                        ConfigRecoveryView(scope: .optimizer,
+                        ConfigRecoveryView(scope: .optimizerV2,
                                            importConfig: { settings.importRecoveryConfig($0) })
                     }
                     .disabled(!canReload)
