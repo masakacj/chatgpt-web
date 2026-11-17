@@ -9,7 +9,7 @@ struct OptimizerProxyEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft = OptimizerProxyPlan()
-    @State private var homePassword = ""
+    @State private var officeServerPassword = ""
     @State private var officePassword = ""
     @State private var showApplyConfirmation = false
 
@@ -18,7 +18,7 @@ struct OptimizerProxyEditor: View {
             Form {
                 Section("仅 Optimizer 生效") {
                     Picker("当前代理", selection: $draft.mode) {
-                        Text("Home 家宽").tag(OptimizerProxyMode.home)
+                        Text("OfficeServer GOST（默认）").tag(OptimizerProxyMode.officeServer)
                         Text("Office GOST").tag(OptimizerProxyMode.office)
                         Text("手动直连").tag(OptimizerProxyMode.direct)
                     }
@@ -33,16 +33,16 @@ struct OptimizerProxyEditor: View {
                     Text("代理故障时绝不静默改用手机直连。手动直连须明确选择；不自动重放任何聊天、上传或工具请求。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Section("Home 家宽 · HTTPS CONNECT") {
-                    TextField("代理域名或 IP", text: $draft.home.host)
+                Section("OfficeServer · HTTPS CONNECT（默认）") {
+                    TextField("代理域名或 IP", text: $draft.officeServer.host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("端口", value: $draft.home.port, format: .number)
+                    TextField("端口", value: $draft.officeServer.port, format: .number)
                         .keyboardType(.numberPad)
-                    TextField("用户名（可选）", text: $draft.home.username)
+                    TextField("用户名（可选）", text: $draft.officeServer.username)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    SecureField("代理密码（留空保留已保存密码）", text: $homePassword)
+                    SecureField("代理密码（留空保留已保存密码）", text: $officeServerPassword)
                     Text("必须是有受信任 TLS 证书的 CONNECT 入口。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
@@ -63,7 +63,7 @@ struct OptimizerProxyEditor: View {
                                            importConfig: { settings.importRecoveryConfig($0) })
                     }
                     .disabled(!canReload)
-                    Text("换 Team ID 后输入固定密码，恢复 Home / Office 的全部代理参数。")
+                    Text("支持新格式 OfficeServer / Office 配置；旧 Home 备份仅迁移 Office，绝不会恢复 Home 出口。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("应用") {
@@ -100,7 +100,7 @@ struct OptimizerProxyEditor: View {
                                 isPresented: $showApplyConfirmation,
                                 titleVisibility: .visible) {
                 Button("保存（不重发消息）") {
-                    if settings.apply(draft, homePassword: homePassword,
+                    if settings.apply(draft, officeServerPassword: officeServerPassword,
                                       officePassword: officePassword) {
                         onApplied()
                     }
