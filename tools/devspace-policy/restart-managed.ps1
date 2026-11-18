@@ -105,8 +105,17 @@ if ($Action -eq 'worker') {
     $restored = $false
     try {
       $backup = Join-Path $DataDir 'server.js.before'
-      if ((Test-Path -LiteralPath $backup) -and (Test-Path -LiteralPath $Target) -and
+      $manifestPath = Join-Path $DataDir 'manifest.json'
+      if ((Test-Path -LiteralPath $backup) -and (Test-Path -LiteralPath $manifestPath) -and
+          (Test-Path -LiteralPath $Target) -and
           (Get-FileHash -LiteralPath $Target -Algorithm SHA256).Hash.ToLowerInvariant() -eq $PatchedSha.ToLowerInvariant()) {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $backupHash = (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($manifest.target -ne $Target -or
+            $manifest.afterSha256.ToLowerInvariant() -ne $PatchedSha.ToLowerInvariant() -or
+            $manifest.beforeSha256.ToLowerInvariant() -ne $backupHash) {
+          throw 'Manifest or backup SHA-256 mismatch; rollback refused'
+        }
         Stop-ScheduledTask -TaskName $ManagedTask -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         $owner = PortOwner $Port
