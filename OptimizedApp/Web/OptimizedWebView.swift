@@ -93,15 +93,19 @@ struct OptimizedWebView: UIViewRepresentable {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-uitest-sidebar-scroll") {
             // Offline WKWebView nested-drawer touch fixture; never compiled into Release.
-            let rows = (0..<18).map { "<div style='height:88px'>SIDEBAR_ITEM_\($0)</div>" }.joined()
+            let rootScroll = ProcessInfo.processInfo.arguments.contains("-uitest-sidebar-root-scroll")
+            let rows = (0..<18).map {
+                "<a href='#row-\($0)' style='display:block;height:88px;touch-action:none'><span style='touch-action:none'>SIDEBAR_ITEM_\($0)</span></a>"
+            }.joined()
+            let items = rows + "<div id='sidebar-end'>SIDEBAR_END</div>"
+            let content = rootScroll ? items : "<div id='sidebar-scroll' class='overflow-y-auto'>\(items)</div>"
             let html = """
             <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
             <style>html,body{height:100%;margin:0;overflow:hidden}
-            aside{position:fixed;inset:0 10% 0 0;background:white;overflow:hidden}
+            aside{position:fixed;inset:0 10% 0 0;background:white;overflow:\(rootScroll ? "auto" : "hidden")}
             .overflow-y-auto{height:100%;overflow-y:auto;touch-action:none}
-            </style></head><body><aside data-testid="sidebar">
-            <div id="sidebar-scroll" class="overflow-y-auto">\(rows)
-            <div id="sidebar-end">SIDEBAR_END</div></div></aside></body></html>
+            </style></head><body><aside data-testid="sidebar" class="\(rootScroll ? "overflow-y-auto" : "")">
+            \(content)</aside></body></html>
             """
             webView.loadHTMLString(html, baseURL: URL(string: "https://chatgpt.com"))
             return webView

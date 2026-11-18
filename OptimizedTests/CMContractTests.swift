@@ -77,6 +77,8 @@ final class CMContractTests: XCTestCase {
         let factory = try String(contentsOf: factoryURL, encoding: .utf8)
         XCTAssertTrue(factory.contains("optimized-sidebar-touch-scroll"))
         XCTAssertTrue(factory.contains("touch-action:pan-y!important"))
+        XCTAssertTrue(factory.contains("':is(' + scroll + ') *{touch-action:pan-y!important}'"),
+                      "Sidebar row touch-action:none must not swallow vertical swipes")
         XCTAssertTrue(factory.contains("-webkit-overflow-scrolling:touch!important"))
         XCTAssertTrue(factory.contains("overscroll-behavior-y:contain!important"))
         XCTAssertTrue(factory.contains("forMainFrameOnly: true"))

@@ -31,8 +31,17 @@ final class ChatGPTWebOptimizedUITests: XCTestCase {
     }
 
     func testNestedSidebarScrollAcceptsVerticalSwipeWithoutNetwork() {
+        verifySidebarSwipe(rootScroll: false)
+    }
+
+    func testSidebarRootScrollAcceptsVerticalSwipeWithoutNetwork() {
+        verifySidebarSwipe(rootScroll: true)
+    }
+
+    private func verifySidebarSwipe(rootScroll: Bool) {
         let app = XCUIApplication()
         app.launchArguments = ["-uitest-proxy-direct", "-uitest-sidebar-scroll"]
+        if rootScroll { app.launchArguments.append("-uitest-sidebar-root-scroll") }
         app.launch()
         let webView = app.webViews["optimized.webview"]
         XCTAssertTrue(webView.waitForExistence(timeout: 15))

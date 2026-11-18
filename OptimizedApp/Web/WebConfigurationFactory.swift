@@ -50,7 +50,9 @@ enum WebConfigurationFactory {
           if (window !== window.top || location.origin !== 'https://chatgpt.com') return;
           const style = document.createElement('style');
           style.id = 'optimized-sidebar-touch-scroll';
-          style.textContent = ':is(aside,nav,[data-testid="sidebar"]) :is([class*="overflow-y-auto"],[class*="overflow-y-scroll"],[class*="overflow-auto"]),:is(aside,nav,[data-testid="sidebar"])[class*="overflow-y-auto"]{touch-action:pan-y!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain!important}';
+          const scroll = ':is(aside,nav,[data-testid="sidebar"]) :is([class*="overflow-y-auto"],[class*="overflow-y-scroll"],[class*="overflow-auto"]),:is(aside,nav,[data-testid="sidebar"])[class*="overflow-y-auto"]';
+          style.textContent = scroll + '{touch-action:pan-y!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain!important}' +
+            ':is(' + scroll + ') *{touch-action:pan-y!important}';
           (document.head || document.documentElement).appendChild(style);
         })();
         """
