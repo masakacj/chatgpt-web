@@ -18,8 +18,8 @@ struct OptimizerProxyEditor: View {
             Form {
                 Section("仅 Optimizer 生效") {
                     Picker("当前代理", selection: $draft.mode) {
-                        Text("Home 家宽").tag(OptimizerProxyMode.home)
-                        Text("Office GOST").tag(OptimizerProxyMode.office)
+                        Text("OfficeServer GOST").tag(OptimizerProxyMode.office)
+                        Text("Home OpenClash（选择代理）").tag(OptimizerProxyMode.home)
                         Text("手动直连").tag(OptimizerProxyMode.direct)
                     }
                     Toggle("备用代理线路", isOn: $draft.backupEnabled)
@@ -33,20 +33,7 @@ struct OptimizerProxyEditor: View {
                     Text("代理故障时绝不静默改用手机直连。手动直连须明确选择；不自动重放任何聊天、上传或工具请求。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Section("Home 家宽 · HTTPS CONNECT") {
-                    TextField("代理域名或 IP", text: $draft.home.host)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("端口", value: $draft.home.port, format: .number)
-                        .keyboardType(.numberPad)
-                    TextField("用户名（可选）", text: $draft.home.username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField("代理密码（留空保留已保存密码）", text: $homePassword)
-                    Text("必须是有受信任 TLS 证书的 CONNECT 入口。")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                Section("Office · HTTPS CONNECT（备用）") {
+                Section("OfficeServer GOST · HTTPS CONNECT（默认）") {
                     TextField("代理域名或 IP", text: $draft.office.host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -57,13 +44,26 @@ struct OptimizerProxyEditor: View {
                         .autocorrectionDisabled()
                     SecureField("代理密码（留空保留已保存密码）", text: $officePassword)
                 }
+                Section("Home OpenClash · 选择代理（备用）") {
+                    TextField("代理域名或 IP", text: $draft.home.host)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("端口", value: $draft.home.port, format: .number)
+                        .keyboardType(.numberPad)
+                    TextField("用户名（可选）", text: $draft.home.username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("代理密码（留空保留已保存密码）", text: $homePassword)
+                    Text("通过 Home GOST 接入 OpenClash 的「选择代理」组；必须是受信任 TLS 证书的 CONNECT 入口。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("快速配置") {
                     NavigationLink("从 config.781751.xyz 恢复代理") {
                         ConfigRecoveryView(scope: .optimizer,
                                            importConfig: { settings.importRecoveryConfig($0) })
                     }
                     .disabled(!canReload)
-                    Text("换 Team ID 后输入固定密码，恢复 Home / Office 的全部代理参数。")
+                    Text("换 Team ID 后输入固定密码，恢复 OfficeServer / Home 的全部代理参数。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("应用") {

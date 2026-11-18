@@ -28,7 +28,7 @@ struct OptimizerProxyEndpoint: Codable, Equatable {
 }
 
 struct OptimizerProxyPlan: Codable, Equatable {
-    var mode: OptimizerProxyMode = .home
+    var mode: OptimizerProxyMode = .office
     var home = OptimizerProxyEndpoint()
     var office = OptimizerProxyEndpoint()
     var backupEnabled = true

@@ -38,12 +38,12 @@ final class OptimizerProxySettingsTests: XCTestCase {
         })
     }
 
-    func testDefaultHomeBackupAndNeverDirectWithoutEndpoints() {
+    func testDefaultOfficeBackupAndNeverDirectWithoutEndpoints() {
         let name = "optimizer-proxy-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         let settings = OptimizerProxySettings(defaults: defaults)
-        XCTAssertEqual(settings.plan.mode, .home)
+        XCTAssertEqual(settings.plan.mode, .office)
         XCTAssertTrue(settings.plan.backupEnabled)
         XCTAssertTrue(settings.plan.denyDirect)
         XCTAssertFalse(settings.plan.ready)
@@ -57,9 +57,9 @@ final class OptimizerProxySettingsTests: XCTestCase {
         p.home = endpoint()
         p.office = endpoint("office.proxy.example", port: 8443)
         XCTAssertTrue(p.ready)
-        XCTAssertEqual(p.selected.map(\.host), ["home.proxy.example", "office.proxy.example"])
-        p.mode = .office
         XCTAssertEqual(p.selected.map(\.host), ["office.proxy.example", "home.proxy.example"])
+        p.mode = .home
+        XCTAssertEqual(p.selected.map(\.host), ["home.proxy.example", "office.proxy.example"])
         p.mode = .direct
         XCTAssertEqual(p.selected.count, 0)
         // Direct requires explicit mode selection, never automatic failover.
