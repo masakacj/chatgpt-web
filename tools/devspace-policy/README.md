@@ -1,51 +1,59 @@
-# DevSpace MCP Tool Policy Multi-Host (R2 — Windows 1.0.7/ Linux 1.0.8)
+# DevSpace MCP Tool Policy — R3 多机一键安装与重启
 
-修复第一次部署遇到的“expected exactly one serverInstructions intro; got 2”预检失败，并更新最小化/完整模式的 Bash 说明。旧安装器不需要回滚，因为预检未修改源码。
+适用 `@waishnav/devspace` 1.0.7 / 1.0.8，已在以下节点实测：
 
-# DevSpace MCP 工具说明多机一键补丁（2026-11-18）
+| MCP 节点 | 系统 | 服务管理器 | 策略应用 |
+| --- | --- | --- | --- |
+| mcpoffice | Windows | DevSpace Managed 计划任务 | R2 已安装；R3 可重启 |
+| mcphome | Windows | DevSpace Managed 计划任务 | R3 安装 + 自动重启已通过 |
+| mcpdebian | Debian/Linux | systemd devspace.service | R2 安装 + R3 重复执行自动重启已通过 |
+| mcp-officeserver | Debian/Linux | systemd devspace.service | R2 安装 + 自动重启已通过 |
 
-适用于使用 `@waishnav/devspace` 1.x 的 mcpdebian、mcpoffice、mcpofficeserver 等主机。**只修改 DevSpace 的 MCP 总体使用指令与 bash 工具描述**，让其准确描述经授权的 Git、依赖安装、systemd/Docker/Portainer 部署、配置维护、日志排查等用途。
+脚本只更改 MCP 的工具使用说明，不更改实际权限、认证、执行器、业务数据或端口。不能绕过 ChatGPT 的安全策略。已经安装的策略会进行源文件哈希比对，拒绝覆盖其他更新。原文件有校验备份。
 
-不增加新的 MCP 连接或端口，不改变认证、权限、实际 Shell 执行器，也不会绕过 ChatGPT 安全检查或解决连接 `link_id` 错误。
-
-## Debian / Linux（一行安装）
+## Linux 一键安装（已验证 SHA-256）
 
 ```bash
-curl -fsSLo /tmp/devspace-policy-install.sh 'https://raw.githubusercontent.com/masakacj/chatgpt-web/release/devspace-tool-policy-multihost-20261118-r2/tools/devspace-policy/install.sh' && printf '%s  %s\n' 'daa1b11b69ca0ad35d0fd56a6e992a7c97c05d4978cf222a9dab1f67f6a1952c' '/tmp/devspace-policy-install.sh' | sha256sum -c - && bash /tmp/devspace-policy-install.sh apply
+curl -fsSLo /tmp/devspace-policy-install-r3.sh 'https://raw.githubusercontent.com/masakacj/chatgpt-web/db84ae782ffdd42b42421c3525ad3015abb523c8/tools/devspace-policy/install.sh' && printf '%s  %s\n' '8db00986f80535f304cd907e42a67de7d0d582f72c6a2d40ea0913659146d52a' '/tmp/devspace-policy-install-r3.sh' | sha256sum -c - && bash /tmp/devspace-policy-install-r3.sh apply
 ```
 
-### Windows PowerShell（以管理员身份运行）
+- 首次安装：策略安装器调用 systemd-run 安排稍后重启 `devspace.service`，并通过 watchdog 检查和必要时回滚。
+- 重复执行：即使策略已存在，也会安排 `devspace.service` 延迟重启，确保文件已加载。
+- 状态：`bash /tmp/devspace-policy-install-r3.sh status`（使用 sudo 查阅有权限保护的备份）。
+- 回滚：`bash /tmp/devspace-policy-install-r3.sh rollback`。
+
+## Windows 一键安装（管理员 PowerShell）
 
 ```powershell
-$p=Join-Path $env:TEMP 'devspace-policy-install.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/masakacj/chatgpt-web/release/devspace-tool-policy-multihost-20261118-r2/tools/devspace-policy/install.ps1' -OutFile $p; if ((Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant() -ne '5c93c3a83be63e4d4ca6e103f5324245387c684ccbeeb2d8b1ea0b892aa32165') { throw 'Installer hash mismatch' }; & $p apply
+$p=Join-Path $env:TEMP 'devspace-policy-install-r3.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/masakacj/chatgpt-web/db84ae782ffdd42b42421c3525ad3015abb523c8/tools/devspace-policy/install.ps1' -OutFile $p; if ((Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'c2935a8f53ea45f75476bbda65e511c4a072f435be138bcc7fd780dd268e06d5') { throw 'Installer hash mismatch' }; & $p -Action apply
 ```
 
-每台机器独立执行一次。Linux 的 systemd `devspace.service` 会被安排重启和健康检查；Windows 端若无名为 `devspace` 的服务，则应用补丁后必须手动重启 DevSpace。切勿在业务高峰期重启正在执行任务的 MCP。
+如果安装器检测到 `DevSpace Managed` 计划任务：
+1. 通过已验证的独立脚本建立 SYSTEM 一次性重启计划任务。
+2. 等待当前安装命令退出后停止 DevSpace Managed，核对旧 PID、创建时间及 CLI 命令行，必要时只结束该 DevSpace 子进程。
+3. 启动原 `DevSpace Managed` 任务，并通过 `/healthz` 和新 PID 验证。
+4. 若无法恢复健康，源文件哈希与备份校验符合时才执行回滚和恢复，再记录结果。
 
-## 状态 / 回滚
+**不重启其他 Node 进程，不修改登录凭据，不启用已禁用的旧任务**。不具备受支持的任务管理器时返回 `manual`，不擅自杀进程。重启任务为固定名称、可重复使用，日志在 `C:\ProgramData\DevSpaceToolPolicy\restart-status.json`。
 
-Linux：`bash /tmp/devspace-policy-install.sh status`、`bash /tmp/devspace-policy-install.sh rollback`。
-Windows：`& $p status`、`& $p rollback`（管理员 PowerShell）。
+- 检查：`& $p -Action check`。
+- 状态（含最近一次重启记录）：`& $p -Action status`。
+- 回滚：`& $p -Action rollback`。
+- 仅补丁、不自动重启：`& $p -Action apply -NoRestart`。
 
-安装前先严格匹配源码中的四段原始说明（不匹配则拒绝修改），备份到 Linux `/var/backups/devspace-tool-policy` / Windows `%ProgramData%\DevSpaceToolPolicy`。只允许回滚校验值仍匹配的文件，避免覆盖后续升级。重复安装是幂等的；支持回滚后重新安装。
+## 发布文件校验
 
-所有下载先验证压缩包 SHA-256，再验证解压文件 SHA-256。完整源代码保存在压缩包内，下载后可查看。
+安装器和 helper 用固定 SHA-256 校验；策略压缩包引用不可变 Git commit：
 
 | 文件 | SHA-256 |
 | --- | --- |
-| `install.sh` | `daa1b11b69ca0ad35d0fd56a6e992a7c97c05d4978cf222a9dab1f67f6a1952c` |
-| `install.ps1` | `5c93c3a83be63e4d4ca6e103f5324245387c684ccbeeb2d8b1ea0b892aa32165` |
+| `install.sh` | `8db00986f80535f304cd907e42a67de7d0d582f72c6a2d40ea0913659146d52a` |
+| `install.ps1` | `c2935a8f53ea45f75476bbda65e511c4a072f435be138bcc7fd780dd268e06d5` |
+| `restart-managed.ps1` | `210797e9608b43c841ba087e79b34e1a56f70e542ccc5e878dd1c5a2d3ea2ec7` |
 | `devspace-tool-policy.mjs.gz` | `22a131c17958493141bdafccffe643b066c1e36e72789e46c6999b11d1a7f9d8` |
-| 解压源码 `devspace-tool-policy.mjs` | `c99722874505ef0598fa30af8d41a8880297a08c3bda0b447a2a3d967a9421ae` |
+| 解压后 `policy.mjs` | `c99722874505ef0598fa30af8d41a8880297a08c3bda0b447a2a3d967a9421ae` |
 
-安装后在 ChatGPT 中重新连接对应 DevSpace MCP，刷新 Bash 工具说明。
+Linux 备份：`/var/backups/devspace-tool-policy/server.js.before`。
+Windows 备份：`C:\ProgramData\DevSpaceToolPolicy\server.js.before`。
 
-
-## R2 检查
-
-- `serverInstructions` 支持 1/2 个分支，并验证数量。
-- Bash 的 `toolNames.shell` 动态文本按原样匹配、正确处理两个模式。
-- 增加 Codex 模式及完整模式说明的兼容修改。
-- Windows 跳过使用 shell:true 执行 npm.cmd 导致的 DEP0190 警告。
-- 本地 5 项测试通过，并已与实际 Windows DevSpace 1.0.7 / Linux DevSpace 1.0.8 源码匹配结果核对。
-- 仅修改工具说明和 MCP 指令，不提供新权限，也不能绕过 ChatGPT 安全检查。
+**最后仍需要在 ChatGPT 中点击刷新该 MCP 的工具定义**。服务器端进程重启不自动刷新已有对话中的工具元数据；刷新后即可使用新版说明。
