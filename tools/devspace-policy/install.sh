@@ -40,7 +40,9 @@ else
   if systemctl is-active --quiet devspace.service; then
     if [ "$base_installed" = true ]; then
       sudo systemd-run --quiet --unit="devspace-policy-r4-restart-$$" --on-active=5s /usr/bin/systemctl restart devspace.service
-      sudo systemd-run --quiet --unit="devspace-policy-r4-watchdog-$$" --on-active=40s /usr/bin/node /var/backups/devspace-tool-policy/devspace-tool-policy.mjs watchdog
+      node_bin="$(command -v node)"
+      [ -x "$node_bin" ] || { echo 'Node executable unavailable; refusing watchdog schedule' >&2; exit 1; }
+      sudo systemd-run --quiet --unit="devspace-policy-r4-watchdog-$" --on-active=40s "$node_bin" /var/backups/devspace-tool-policy/devspace-tool-policy.mjs watchdog
       echo '{"restart":{"scheduled":true,"method":"systemd-run"},"watchdog":{"scheduled":true}}'
     else
       echo '{"restart":{"scheduled":true,"method":"base-policy-installer"},"watchdog":{"scheduled":true}}'
