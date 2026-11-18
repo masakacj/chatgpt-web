@@ -7,10 +7,10 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $PolicyBase = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/a28850b162344bc7595d6d8d4124fb77003b5597/tools/devspace-policy'
-$RestartBase = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/release/devspace-tool-policy-multihost-20261118-r3/tools/devspace-policy'
+$RestartBase = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/f5efb0adc5d24d3d61b6e0bcd3706b0167849865/tools/devspace-policy'
 $ArchiveSha = '22a131c17958493141bdafccffe643b066c1e36e72789e46c6999b11d1a7f9d8'
 $ScriptSha = 'c99722874505ef0598fa30af8d41a8880297a08c3bda0b447a2a3d967a9421ae'
-$RestartSha = '210797e9608b43c841ba087e79b34e1a56f70e542ccc5e878dd1c5a2d3ea2ec7'
+$RestartSha = '5d7424c2963b22e9714143dbd0e7b1d8c67e332a10c9f49f7ffb8367cedf713a'
 $Temp = Join-Path ([IO.Path]::GetTempPath()) ('devspace-tool-policy-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $Temp -Force | Out-Null
 try {
