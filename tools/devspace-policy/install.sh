@@ -27,5 +27,9 @@ if [ "$ACTION" = apply ] || [ "$ACTION" = rollback ]; then
     printf '{"restart":{"scheduled":true,"method":"systemd-run","reason":"reapply_refresh"}}\n'
   fi
 else
-  node "$TMP/policy.mjs" "$ACTION"
+  if [ "$ACTION" = status ]; then
+    sudo node "$TMP/policy.mjs" status
+  else
+    node "$TMP/policy.mjs" check
+  fi
 fi
