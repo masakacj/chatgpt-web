@@ -25,7 +25,7 @@ curl -fsSLo /tmp/devspace-policy-install-r3.sh 'https://raw.githubusercontent.co
 ## Windows 一键安装（管理员 PowerShell）
 
 ```powershell
-$p=Join-Path $env:TEMP 'devspace-policy-install-r3.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/masakacj/chatgpt-web/db84ae782ffdd42b42421c3525ad3015abb523c8/tools/devspace-policy/install.ps1' -OutFile $p; if ((Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'c2935a8f53ea45f75476bbda65e511c4a072f435be138bcc7fd780dd268e06d5') { throw 'Installer hash mismatch' }; & $p -Action apply
+$p=Join-Path $env:TEMP 'devspace-policy-install-r3.ps1'; Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/masakacj/chatgpt-web/fa01199a0760930e7246ba04c30df6b44e48caba/tools/devspace-policy/install.ps1' -OutFile $p; if ((Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant() -ne '2030122ffe48f2ed9c40a3c4aa171198550778691539a26a1da6a2ed968ae365') { throw 'Installer hash mismatch' }; & $p -Action apply
 ```
 
 如果安装器检测到 `DevSpace Managed` 计划任务：
@@ -48,8 +48,8 @@ $p=Join-Path $env:TEMP 'devspace-policy-install-r3.ps1'; Invoke-WebRequest -UseB
 | 文件 | SHA-256 |
 | --- | --- |
 | `install.sh` | `8db00986f80535f304cd907e42a67de7d0d582f72c6a2d40ea0913659146d52a` |
-| `install.ps1` | `c2935a8f53ea45f75476bbda65e511c4a072f435be138bcc7fd780dd268e06d5` |
-| `restart-managed.ps1` | `210797e9608b43c841ba087e79b34e1a56f70e542ccc5e878dd1c5a2d3ea2ec7` |
+| `install.ps1` | `2030122ffe48f2ed9c40a3c4aa171198550778691539a26a1da6a2ed968ae365` |
+| `restart-managed.ps1` | `5d7424c2963b22e9714143dbd0e7b1d8c67e332a10c9f49f7ffb8367cedf713a` |
 | `devspace-tool-policy.mjs.gz` | `22a131c17958493141bdafccffe643b066c1e36e72789e46c6999b11d1a7f9d8` |
 | 解压后 `policy.mjs` | `c99722874505ef0598fa30af8d41a8880297a08c3bda0b447a2a3d967a9421ae` |
 
