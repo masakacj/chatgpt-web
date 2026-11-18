@@ -1,50 +1,69 @@
-# DevSpace tool-use policy installer (Windows PowerShell 5.1+).
-# The downloaded code is pinned by SHA-256; restart is detached so this MCP may disconnect safely.
+# R4 DevSpace policy one-click installer: base v2 + bash.command correction + detached restart.
 [CmdletBinding()]
 param(
   [ValidateSet('apply','check','status','rollback')][string]$Action = 'apply',
   [switch]$NoRestart
 )
 $ErrorActionPreference = 'Stop'
-$PolicyBase = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/a28850b162344bc7595d6d8d4124fb77003b5597/tools/devspace-policy'
-$RestartBase = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/f5efb0adc5d24d3d61b6e0bcd3706b0167849865/tools/devspace-policy'
-$ArchiveSha = '22a131c17958493141bdafccffe643b066c1e36e72789e46c6999b11d1a7f9d8'
-$ScriptSha = 'c99722874505ef0598fa30af8d41a8880297a08c3bda0b447a2a3d967a9421ae'
+$BaseUrl = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/fa01199a0760930e7246ba04c30df6b44e48caba/tools/devspace-policy/install.ps1'
+$RestartUrl = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/f5efb0adc5d24d3d61b6e0bcd3706b0167849865/tools/devspace-policy/restart-managed.ps1'
+$FixUrl = 'https://raw.githubusercontent.com/masakacj/chatgpt-web/6e89a45a9014334ebf96cb8dbb1b519587bae84b/tools/devspace-policy/fix-bash-parameter.mjs'
+$BaseSha = '2030122ffe48f2ed9c40a3c4aa171198550778691539a26a1da6a2ed968ae365'
 $RestartSha = '5d7424c2963b22e9714143dbd0e7b1d8c67e332a10c9f49f7ffb8367cedf713a'
-$Temp = Join-Path ([IO.Path]::GetTempPath()) ('devspace-tool-policy-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $Temp -Force | Out-Null
+$FixSha = 'f2ebb1b83358d8e3eadbaaa6267b35420a2735a2b5089236ed376563c39a9960'
+$Temp = Join-Path ([IO.Path]::GetTempPath()) ('devspace-policy-r4-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $Temp | Out-Null
 try {
-  $Archive = Join-Path $Temp 'policy.mjs.gz'
-  $Script = Join-Path $Temp 'policy.mjs'
-  Invoke-WebRequest -Uri "$PolicyBase/devspace-tool-policy.mjs.gz" -OutFile $Archive -UseBasicParsing
-  if ((Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant() -ne $ArchiveSha) { throw 'Archive SHA-256 mismatch' }
-  $InputStream = [IO.File]::OpenRead($Archive)
-  try {
-    $Decompress = New-Object IO.Compression.GZipStream($InputStream, [IO.Compression.CompressionMode]::Decompress)
-    try {
-      $OutputStream = [IO.File]::Create($Script)
-      try { $Decompress.CopyTo($OutputStream) } finally { $OutputStream.Dispose() }
-    } finally { $Decompress.Dispose() }
-  } finally { $InputStream.Dispose() }
-  if ((Get-FileHash -Algorithm SHA256 $Script).Hash.ToLowerInvariant() -ne $ScriptSha) { throw 'Source SHA-256 mismatch' }
-  & node $Script check
-  if ($LASTEXITCODE -ne 0) { throw 'DevSpace preflight failed' }
-  & node $Script $Action
-  if ($LASTEXITCODE -ne 0) { throw "DevSpace policy operation failed: $Action" }
-  if (($Action -eq 'apply' -or $Action -eq 'rollback') -and -not $NoRestart) {
-    $stateText = (& node $Script status | Out-String)
-    if ($LASTEXITCODE -ne 0) { throw 'Could not verify DevSpace policy status before restart' }
-    $state = $stateText | ConvertFrom-Json
-    $Helper = Join-Path $Temp 'restart-managed.ps1'
-    Invoke-WebRequest -Uri "$RestartBase/restart-managed.ps1" -OutFile $Helper -UseBasicParsing
-    if ((Get-FileHash -Algorithm SHA256 $Helper).Hash.ToLowerInvariant() -ne $RestartSha) { throw 'Restart helper SHA-256 mismatch' }
-    & $Helper -Action dispatch -Target ([string]$state.serverFile) -PatchedSha ([string]$state.sourceSHA256)
-    if (-not $?) { throw 'Restart dispatch failed' }
+  $Base = Join-Path $Temp 'install-base.ps1'
+  $Fix = Join-Path $Temp 'fix-bash-parameter.mjs'
+  $Restart = Join-Path $Temp 'restart-managed.ps1'
+  foreach ($entry in @(
+    @($BaseUrl,$Base,$BaseSha),
+    @($FixUrl,$Fix,$FixSha),
+    @($RestartUrl,$Restart,$RestartSha)
+  )) {
+    Invoke-WebRequest -UseBasicParsing -Uri $entry[0] -OutFile $entry[1]
+    if ((Get-FileHash -LiteralPath $entry[1] -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry[2]) {
+      throw ('Download SHA-256 mismatch: ' + $entry[1])
+    }
   }
-  if ($Action -eq 'status') {
-    $report = Join-Path $env:ProgramData 'DevSpaceToolPolicy\restart-status.json'
-    if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw }
+  & node --check $Fix
+  if ($LASTEXITCODE -ne 0) { throw 'R4 correction syntax check failed' }
+
+  switch ($Action) {
+    'check' {
+      & $Base -Action check
+      if (-not $?) { throw 'Base policy preflight failed' }
+      & node $Fix check
+      if ($LASTEXITCODE -ne 0) { throw 'R4 preflight failed' }
+    }
+    'status' {
+      & $Base -Action status
+      if (-not $?) { throw 'Base policy status failed' }
+      & node $Fix status
+      if ($LASTEXITCODE -ne 0) { throw 'R4 status failed' }
+    }
+    'apply' {
+      & $Base -Action apply -NoRestart
+      if (-not $?) { throw 'Base policy install failed' }
+      & node $Fix apply
+      if ($LASTEXITCODE -ne 0) { throw 'R4 correction failed' }
+    }
+    'rollback' {
+      & node $Fix rollback
+      if ($LASTEXITCODE -ne 0) { throw 'R4 correction rollback failed' }
+      & $Base -Action rollback -NoRestart
+      if (-not $?) { throw 'Base policy rollback failed' }
+    }
+  }
+  if (($Action -eq 'apply' -or $Action -eq 'rollback') -and -not $NoRestart) {
+    $metaJson = & node $Fix status
+    if ($LASTEXITCODE -ne 0) { throw 'Final source integrity check failed' }
+    $meta = $metaJson | ConvertFrom-Json
+    if (-not $meta.manifestMatches) { throw 'Final manifest and source SHA-256 do not match' }
+    & $Restart -Action dispatch -Target ([string]$meta.target) -PatchedSha ([string]$meta.sourceSHA256)
+    if (-not $?) { throw 'DevSpace restart dispatch failed' }
   }
 } finally {
-  Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $Temp -Force -Recurse -ErrorAction SilentlyContinue
 }
