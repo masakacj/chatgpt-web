@@ -14,7 +14,8 @@ param(
   [ValidateSet('Quick','Named')][string]$Mode = 'Quick',
   [string]$PublicUrl = '',
   [string]$WorkspaceRoot = '',
-  [switch]$Resume
+  [switch]$Resume,
+  [switch]$ReuseInstalled
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -28,8 +29,15 @@ $DevVersion = '1.1.1'
 $CloudflaredVersion = '2026.11.1'
 $script:Stage = 'startup'
 $Mutex = New-Object Threading.Mutex($false, 'Local\SkylabDevSpaceDeploy')
-if (-not $Mutex.WaitOne(0)) { throw 'Another SkylabDevSpace deployment/start is already running.' }
+$lockHeld = $false
 try {
+  try {
+    Write-Host '[SkylabDevSpace] Waiting for any current startup or deployment to finish...'
+    $lockHeld = $Mutex.WaitOne(120000)
+  } catch [Threading.AbandonedMutexException] {
+    $lockHeld = $true
+  }
+  if (-not $lockHeld) { throw 'Another installer still holds the mutex after 120 seconds. No process was terminated; inspect the running installer before retrying.' }
   foreach ($dir in @($State,$Tools,$Logs)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   function Note([string]$Text) { Write-Host ('[SkylabDevSpace] ' + $Text) }
   function Stage([string]$Text) {
@@ -234,18 +242,36 @@ try {
     }
     throw "DevSpace port $Port not ready. Check $Logs\devspace.err.log"
   }
-  if ($Resume) {
+  if ($Resume -and $ReuseInstalled) { throw 'Do not combine -Resume with -ReuseInstalled.' }
+  if ($Resume -or $ReuseInstalled) {
     Stage 'Reading installed configuration'
     Require-File $SettingsFile 'Please run the initial installation first'
+    if ($ReuseInstalled) {
+      if ($Mode -ne 'Named' -or $PublicUrl -notmatch '^https://[a-zA-Z0-9.-]+$') { throw '-ReuseInstalled requires -Mode Named -PublicUrl https://HOST.' }
+      $desiredUrl = $PublicUrl
+    }
     $cfg = Get-Content $SettingsFile -Raw | ConvertFrom-Json
-    $Mode = [string]$cfg.mode
-    $PublicUrl = [string]$cfg.publicUrl
+    if ($Resume) {
+      $Mode = [string]$cfg.mode
+      $PublicUrl = [string]$cfg.publicUrl
+    } else {
+      $Mode = 'Named'
+      $PublicUrl = $desiredUrl
+    }
     $WorkspaceRoot = [string]$cfg.workspaceRoot
     $Node = [string]$cfg.node
     $DevJS = [string]$cfg.devJs
     $Bash = [string]$cfg.bash
     $Tunnel = [string]$cfg.tunnel
     foreach ($f in @($Node,$DevJS,$Bash,$Tunnel)) { Require-File $f 'Required tool missing' }
+    if ($ReuseInstalled) {
+      Require-File (Join-Path $State 'tunnel-token.dpapi') 'Previously paired named-tunnel token is missing'
+      Require-File $PSCommandPath 'Installer must be run from its .ps1 file'
+      if ([IO.Path]::GetFullPath($PSCommandPath) -ine [IO.Path]::GetFullPath($StartupFile)) {
+        Copy-Item -LiteralPath $PSCommandPath -Destination $StartupFile -Force
+      }
+      Note 'Reusing installed Node, Git Bash, DevSpace, and cloudflared; no downloads or npm reinstall.'
+    }
     if ($Mode -eq 'Quick') { $PublicUrl = '' } # A quick-tunnel URL cannot be reused after relaunch.
   } else {
     Stage 'Validating installation settings'
@@ -339,7 +365,7 @@ try {
   # DevSpace 1.1.1 supports noninteractive init. Its --json output never includes the Owner password.
   $initOut = Join-Path $Logs 'devspace-init.out.log'
   $initErr = Join-Path $Logs 'devspace-init.err.log'
-  if ($Resume) {
+  if ($Resume -or $ReuseInstalled) {
     $initArgs = @(('"' + $DevJS + '"'),'config','set','publicBaseUrl',$PublicUrl)
   } else {
     # --force reuses the existing Owner token but reconciles an incomplete initial setup.
@@ -380,6 +406,6 @@ try {
   Write-Error ("Deployment failed at stage [" + $script:Stage + "]: " + $_.Exception.Message + ". Logs: " + $Logs)
   exit 1
 } finally {
-  $Mutex.ReleaseMutex()
+  if ($lockHeld) { $Mutex.ReleaseMutex() }
   $Mutex.Dispose()
 }
