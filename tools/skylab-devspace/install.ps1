@@ -371,8 +371,45 @@ try {
     # --force reuses the existing Owner token but reconciles an incomplete initial setup.
     $initArgs = @(('"' + $DevJS + '"'),'init','--force','--yes','--public-url',$PublicUrl,'--roots',('"' + $WorkspaceRoot + '"'),'--json')
   }
-  $initProc = Start-Process -FilePath $Node -ArgumentList $initArgs -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $initOut -RedirectStandardError $initErr
-  if ($initProc.ExitCode -ne 0) { throw "DevSpace init failed. See $initErr" }
+  # On Windows PowerShell 5.1, Start-Process joins ArgumentList into a single
+  # command-line string and may corrupt the CLI arguments. Execute the exact
+  # argv directly instead, capturing the real stderr for troubleshooting.
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    if ($Resume -or $ReuseInstalled) {
+      & $Node $DevJS config set publicBaseUrl $PublicUrl 1> $initOut 2> $initErr
+    } else {
+      & $Node $DevJS init --force --yes --public-url $PublicUrl --roots $WorkspaceRoot --json 1> $initOut 2> $initErr
+    }
+    $initExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($initExitCode -ne 0) {
+    $lines = if (Test-Path -LiteralPath $initErr) {
+      (Get-Content -LiteralPath $initErr -Tail 12 -ErrorAction SilentlyContinue) -join ' '
+    } else { '(stderr unavailable)' }
+    throw "DevSpace configuration failed (exit=$initExitCode): $lines. Full log: $initErr"
+  }
+  # Read back the effective public URL before attempting to restart DevSpace.
+  $readback = Join-Path $Logs 'devspace-config-readback.json'
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    & $Node $DevJS config get 1> $readback 2> $initErr
+    $readbackCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($readbackCode -ne 0) {
+    throw "DevSpace config readback failed ($readbackCode). See $initErr"
+  }
+  $effectiveConfig = Get-Content -LiteralPath $readback -Raw | ConvertFrom-Json
+  if ([string]$effectiveConfig.server.publicBaseUrl -ne $PublicUrl) {
+    throw 'DevSpace publicBaseUrl readback does not match the fixed tunnel URL.'
+  }
+  Remove-Item -LiteralPath $readback -Force -ErrorAction SilentlyContinue
   Stage 'Starting DevSpace'
   $dev = Start-Background $Node @('"' + $DevJS + '"','serve') 'devspace'
   Wait-LocalPort
