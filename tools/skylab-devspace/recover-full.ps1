@@ -102,10 +102,23 @@ try {
   $Node = [string]$settings.node
   $DevJs = [string]$settings.devJs
   Must-Exist $Node 'Original Node runtime missing'
-  $ExpectedCli = [IO.Path]::GetFullPath((Join-Path $ExpectedModule 'dist\cli.js'))
-  if (-not $DevJs -or [IO.Path]::GetFullPath($DevJs) -ine $ExpectedCli) {
-    throw 'Original DevSpace CLI path does not match this dedicated installation'
+  # The official npm package declares "bin/devspace.js" as its CLI entrypoint.
+  # The first installer correctly persisted that path in settings.json. Previous
+  # recovery versions accidentally assumed dist/cli.js and rejected a valid
+  # installation before doing any work. Allow only the two known package-owned
+  # entrypoints; never use a caller-selected path outside this package.
+  $Entry = $null
+  $ExpectedBin = [IO.Path]::GetFullPath((Join-Path $ExpectedModule 'bin\devspace.js'))
+  $ExpectedDist = [IO.Path]::GetFullPath((Join-Path $ExpectedModule 'dist\cli.js'))
+  if (-not [string]::IsNullOrWhiteSpace($DevJs)) {
+    $NormalizedDevJs = [IO.Path]::GetFullPath($DevJs)
+    if ($NormalizedDevJs -ieq $ExpectedBin) { $Entry = 'bin\devspace.js' }
+    elseif ($NormalizedDevJs -ieq $ExpectedDist) { $Entry = 'dist\cli.js' }
   }
+  if (-not $Entry) {
+    throw 'Saved DevSpace entrypoint is not one of the official package-owned CLI paths'
+  }
+  Note "Saved DevSpace entrypoint verified: $Entry"
   $npm = Join-Path (Split-Path -Parent $Node) 'npm.cmd'
   Must-Exist $npm 'npm.cmd is missing from the installed Node.js'
   New-Item -ItemType Directory -Path $Repair -Force | Out-Null
@@ -148,7 +161,8 @@ try {
   Ensure-Package $Candidate
 
   $Stage = 'isolated candidate runtime verification'
-  $CandidateCli = Join-Path $Candidate 'node_modules\@waishnav\devspace\dist\cli.js'
+  $CandidateCli = Join-Path (Join-Path $Candidate 'node_modules\@waishnav\devspace') $Entry
+  Must-Exist $CandidateCli 'Expected package CLI is missing from the candidate'
   $CliOut = Join-Path $Repair 'candidate-cli.stdout.log'
   $CliErr = Join-Path $Repair 'candidate-cli.stderr.log'
   $candidateVersionCode = Run-Native $Node @($CandidateCli,'--version') $CliOut $CliErr
