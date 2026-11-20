@@ -28,16 +28,68 @@ function IsInside([string]$Child,[string]$Parent) {
   $c=[IO.Path]::GetFullPath($Child)
   return $c.StartsWith($p,[StringComparison]::OrdinalIgnoreCase)
 }
+function Native-ClearDirectory([string]$DirectoryPath) {
+  # Windows PowerShell 5.1 Remove-Item -Recurse may fail on deeply nested
+  # TypeScript/node_modules filenames (>260 chars) after partially deleting
+  # files. Use native robocopy to mirror a *verified empty directory* instead.
+  # /XJ excludes junctions so the mirror will not traverse reparse links.
+  $robo=Join-Path $env:SystemRoot 'System32\robocopy.exe'
+  if (-not (Test-Path -LiteralPath $robo -PathType Leaf)) {
+    throw 'Windows robocopy.exe is unavailable; C: directory was left in place'
+  }
+  $empty=Join-Path $DBase ('cleanup-empty-'+$PID+'-'+[guid]::NewGuid().ToString('N'))
+  if (Test-Path -LiteralPath $empty) { throw 'Cleanup empty-directory name collided' }
+  try {
+    New-Item -ItemType Directory -Path $empty -Force -ErrorAction Stop | Out-Null
+    if (@(Get-ChildItem -LiteralPath $empty -Force -ErrorAction Stop).Count -ne 0) {
+      throw 'Cleanup source directory is not empty; refusing mirror'
+    }
+    Note "Using long-path-safe Windows cleanup for $DirectoryPath"
+    & $robo $empty $DirectoryPath /MIR /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS /NP | Out-Null
+    $result=$LASTEXITCODE
+    if ($result -gt 7) {
+      throw "Native cleanup incomplete (robocopy exit $result), remaining files preserved"
+    }
+    if (Test-Path -LiteralPath $DirectoryPath) {
+      # Do not use -Recurse here: robocopy should have emptied the directory.
+      Remove-Item -LiteralPath $DirectoryPath -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $DirectoryPath) {
+      throw 'Cleanup directory is not empty; review any reparse points/locked files'
+    }
+  } finally {
+    if (Test-Path -LiteralPath $empty) {
+      Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
 function Safe-Remove([string]$Path,[bool]$IsDirectory) {
   if (-not (IsInside $Path $State)) { throw 'Path escaped Skylab-owned C: directory' }
+  if (-not (([IO.Path]::GetFullPath($Path) -ieq [IO.Path]::GetFullPath($OldTools)) -or
+             (IsInside $Path $Repair))) {
+    throw 'Cleanup target is not the exact old tools folder or a child of the repair folder'
+  }
   if (-not (Test-Path -LiteralPath $Path)) { return }
+  # Refuse traversing parent folders that are symlinks/junctions.
+  foreach($ancestor in @($State, $Repair)) {
+    if ((Test-Path -LiteralPath $ancestor -PathType Container) -and
+        (([int](Get-Item -LiteralPath $ancestor -Force).Attributes -band
+          [int][IO.FileAttributes]::ReparsePoint) -ne 0)) {
+      throw "Cleanup parent is a reparse point: $ancestor"
+    }
+  }
   $item=Get-Item -LiteralPath $Path -Force
   if (([int]$item.Attributes -band [int][IO.FileAttributes]::ReparsePoint) -ne 0) {
     throw "Refusing to remove reparse point: $Path"
   }
   if ($Phase -eq 'Audit') { Note "Candidate: $Path"; return }
   if ($IsDirectory) {
-    Remove-Item -LiteralPath $Path -Force -Recurse -ErrorAction Stop
+    try {
+      Remove-Item -LiteralPath $Path -Force -Recurse -ErrorAction Stop
+    } catch {
+      Note ('PowerShell recursive removal failed: '+$_.Exception.Message)
+      Native-ClearDirectory $Path
+    }
   } else {
     Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
   }
