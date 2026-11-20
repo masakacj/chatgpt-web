@@ -25,11 +25,17 @@ $SettingsFile = Join-Path $State 'settings.json'
 $StartupFile = Join-Path $State 'Deploy-Skylab-DevSpace.ps1'
 $Port = 7676
 $DevVersion = '1.1.1'
+$CloudflaredVersion = '2026.11.1'
+$script:Stage = 'startup'
 $Mutex = New-Object Threading.Mutex($false, 'Local\SkylabDevSpaceDeploy')
 if (-not $Mutex.WaitOne(0)) { throw 'Another SkylabDevSpace deployment/start is already running.' }
 try {
   foreach ($dir in @($State,$Tools,$Logs)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
   function Note([string]$Text) { Write-Host ('[SkylabDevSpace] ' + $Text) }
+  function Stage([string]$Text) {
+    $script:Stage = $Text
+    Note ("Stage: " + $Text)
+  }
   function Require-File([string]$Path,[string]$Why) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Why : $Path" }
   }
@@ -43,10 +49,57 @@ try {
     } finally { $ErrorActionPreference = $previousPreference }
     if ($exitCode -ne 0) { throw "Command failed ($exitCode): $Exe" }
   }
-  function Download([string]$Url,[string]$Dest) {
-    Note ("Downloading: " + ([uri]$Url).Host)
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $Dest -MaximumRedirection 6
-    Require-File $Dest 'Download failed'
+  function Failure-Text($Failure) {
+    $code = ''
+    try {
+      if ($Failure.Exception.Response -and $Failure.Exception.Response.StatusCode) {
+        $code = 'HTTP ' + [int]$Failure.Exception.Response.StatusCode + ' '
+      }
+    } catch { }
+    return ($code + $Failure.Exception.Message)
+  }
+  function Download([string[]]$Urls,[string]$Dest,[string]$ExpectedSha256) {
+    $failures = @()
+    $part = $Dest + '.partial'
+    foreach ($url in $Urls) {
+      $hostName = ([uri]$url).Host
+      Note ("Downloading [$script:Stage] from " + $hostName)
+      try {
+        if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $part -MaximumRedirection 8 -TimeoutSec 150
+        Require-File $part 'Download incomplete'
+        if ($ExpectedSha256) {
+          $actual = (Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash
+          if ($actual -ine $ExpectedSha256) { throw "SHA256 mismatch from $hostName (rejecting binary)" }
+        }
+        Move-Item -LiteralPath $part -Destination $Dest -Force
+        Note ("Downloaded [$script:Stage] from " + $hostName)
+        return
+      } catch {
+        $reason = Failure-Text $_
+        $failures += ("${hostName}: $reason")
+        Note ("Source failed [$script:Stage]: ${hostName}: $reason")
+        if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
+      }
+    }
+    throw ("All downloads failed at [$script:Stage]. " + ($failures -join '; '))
+  }
+  function Remote-Text([string[]]$Urls) {
+    $failures = @()
+    foreach ($url in $Urls) {
+      $hostName = ([uri]$url).Host
+      try {
+        Note ("Fetching [$script:Stage] from " + $hostName)
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $url -MaximumRedirection 8 -TimeoutSec 45
+        if ([string]::IsNullOrWhiteSpace([string]$response.Content)) { throw 'Empty response' }
+        return [string]$response.Content
+      } catch {
+        $reason = Failure-Text $_
+        $failures += ("${hostName}: $reason")
+        Note ("Source failed [$script:Stage]: ${hostName}: $reason")
+      }
+    }
+    throw ("All requests failed at [$script:Stage]. " + ($failures -join '; '))
   }
   function Find-GitBash {
     $possible = @(
@@ -69,10 +122,17 @@ try {
     if ([Environment]::Is64BitOperatingSystem -eq $false) { throw 'Git Bash requires a supported 64-bit Windows OS.' }
     $portable = Join-Path $Tools 'PortableGit-2.56.1-64-bit.7z.exe'
     # Official Git for Windows release, pinned version. No admin permissions required.
-    Download 'https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/PortableGit-2.56.1-64-bit.7z.exe' $portable
+    Stage 'Git Bash download'
+    # Git for Windows v2.56.1 official release SHA-256. Mirrors cannot substitute other bytes.
+    $gitAsset = 'https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/PortableGit-2.56.1-64-bit.7z.exe'
+    Download @(
+      $gitAsset,
+      'https://mirrors.huaweicloud.com/git-for-windows/v2.56.1.windows.1/PortableGit-2.56.1-64-bit.7z.exe',
+      ('https://ghfast.top/' + $gitAsset)
+    ) $portable '9dd04a608ceb5f6ab32a73709e0ecb159d211da71b697c45ff81f6dd0c6b49c7'
     $gitHome = Join-Path $Tools 'git'
     New-Item -ItemType Directory -Force -Path $gitHome | Out-Null
-    Note 'Extracting portable Git Bash...'
+    Stage 'Git Bash extraction'
     $p = Start-Process -FilePath $portable -ArgumentList @('-y',('-o' + $gitHome)) -Wait -PassThru -WindowStyle Hidden
     if ($p.ExitCode -ne 0) { throw "Portable Git extraction failed: $($p.ExitCode)" }
     $bash = Join-Path $gitHome 'bin\bash.exe'
@@ -93,20 +153,30 @@ try {
       } catch { }
     }
     if ([Environment]::Is64BitOperatingSystem -eq $false) { throw '64-bit Windows is required.' }
-    Note 'Installing portable Node.js 24 LTS...'
-    $idx = @(Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json')
+    Stage 'Node 24 release index'
+    $index = Remote-Text @(
+      'https://nodejs.org/dist/index.json',
+      'https://npmmirror.com/mirrors/node/index.json',
+      'https://registry.npmmirror.com/-/binary/node/index.json'
+    )
+    # PowerShell 5.1's @(... ConvertFrom-Json ...) wraps the entire JSON array as
+    # ONE object. That creates a massive invalid URL and causes HTTP 400.
+    try { $idx = ConvertFrom-Json -InputObject $index } catch { throw "Invalid Node 24 release index: $($_.Exception.Message)" }
     $item = $idx | Where-Object { $_.version -match '^v24\.' } | Select-Object -First 1
-    if (-not $item) { throw 'Official Node 24 release index unavailable.' }
+    if (-not $item -or $item.version -notmatch '^v24\.\d+\.\d+$') { throw 'Official Node 24 release index unavailable or invalid.' }
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
     $zipName = "node-$($item.version)-win-$arch.zip"
     $baseUrl = "https://nodejs.org/dist/$($item.version)"
     $zipFile = Join-Path $Tools $zipName
-    Download "$baseUrl/$zipName" $zipFile
-    $checksums = (Invoke-WebRequest -Uri "$baseUrl/SHASUMS256.txt" -UseBasicParsing).Content
+    Stage 'Node 24 checksum manifest'
+    $paths = @($baseUrl, "https://npmmirror.com/mirrors/node/$($item.version)", "https://registry.npmmirror.com/-/binary/node/$($item.version)")
+    $checksums = Remote-Text @($paths | ForEach-Object { "$_/SHASUMS256.txt" })
     $escaped = [regex]::Escape($zipName)
     $match = [regex]::Match($checksums, "(?m)^([a-fA-F0-9]{64})\s+$escaped\s*$")
     if (-not $match.Success) { throw 'Official Node checksum not found.' }
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zipFile).Hash -ine $match.Groups[1].Value) { throw 'Node download checksum mismatch.' }
+    Stage 'Node 24 ZIP download'
+    Download @($paths | ForEach-Object { "$_/$zipName" }) $zipFile $match.Groups[1].Value
+    Stage 'Node 24 extraction'
     Expand-Archive -LiteralPath $zipFile -DestinationPath $Tools -Force
     $from = Join-Path $Tools ("node-$($item.version)-win-$arch")
     $to = Join-Path $Tools 'node'
@@ -165,6 +235,7 @@ try {
     throw "DevSpace port $Port not ready. Check $Logs\devspace.err.log"
   }
   if ($Resume) {
+    Stage 'Reading installed configuration'
     Require-File $SettingsFile 'Please run the initial installation first'
     $cfg = Get-Content $SettingsFile -Raw | ConvertFrom-Json
     $Mode = [string]$cfg.mode
@@ -175,7 +246,9 @@ try {
     $Bash = [string]$cfg.bash
     $Tunnel = [string]$cfg.tunnel
     foreach ($f in @($Node,$DevJS,$Bash,$Tunnel)) { Require-File $f 'Required tool missing' }
+    if ($Mode -eq 'Quick') { $PublicUrl = '' } # A quick-tunnel URL cannot be reused after relaunch.
   } else {
+    Stage 'Validating installation settings'
     if ($Mode -eq 'Named') {
       if ($PublicUrl -notmatch '^https://[a-zA-Z0-9.-]+$' -or $PublicUrl.EndsWith('/mcp')) { throw 'Named mode requires -PublicUrl https://YOUR-HOSTNAME (without /mcp).' }
     } else { if ($PublicUrl) { throw 'Quick mode does not accept -PublicUrl. Use -Mode Named.' } }
@@ -187,13 +260,15 @@ try {
     if ([IO.Path]::GetPathRoot($WorkspaceRoot).TrimEnd('\') -eq $WorkspaceRoot.TrimEnd('\')) { throw 'Do not expose an entire disk as a workspace.' }
     if ($WorkspaceRoot.StartsWith('\\')) { throw 'UNC workspace paths are not supported by this installer.' }
     New-Item -ItemType Directory -Path $WorkspaceRoot -Force | Out-Null
+    Stage 'Git Bash'
     $Bash = Ensure-GitBash
+    Stage 'Node.js'
     $Node = Ensure-Node
     $env:PATH = "$(Split-Path $Node);$(Split-Path $Bash);$env:PATH"
     Note "Using Node: $(& $Node --version), Git Bash: $Bash"
     $PackageHome = Join-Path $Tools 'npm'
     $DevJS = Join-Path $PackageHome 'node_modules\@waishnav\devspace\dist\cli.js'
-    Note "Installing DevSpace $DevVersion (pinned)..."
+    Stage ("Installing DevSpace " + $DevVersion)
     $npm = Join-Path (Split-Path $Node) 'npm.cmd'
     Require-File $npm 'npm.cmd missing next to Node'
     Invoke-Exe $npm @('install','--global','--prefix',$PackageHome,'--no-fund','--no-audit',("@waishnav/devspace@" + $DevVersion))
@@ -205,10 +280,17 @@ try {
     if (-not $binRel) { throw 'DevSpace entrypoint not in npm package.' }
     $DevJS = [IO.Path]::GetFullPath((Join-Path (Split-Path $manifest) $binRel))
     Require-File $DevJS 'DevSpace JavaScript entrypoint missing'
+    Stage 'Cloudflare tunnel client'
     $Tunnel = Join-Path $Tools 'cloudflared.exe'
-    if (-not (Test-Path $Tunnel)) {
-      $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
-      Download "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-$arch.exe" $Tunnel
+    $cloudSha = '341deda3db5ec498a0482254d6c38c0b7cf01a30c37bb5dd95d2216d08955e35'
+    if ((Test-Path -LiteralPath $Tunnel -PathType Leaf) -and
+        (Get-FileHash -LiteralPath $Tunnel -Algorithm SHA256).Hash -ine $cloudSha) {
+      Note 'Replacing an earlier Cloudflare client with the pinned verified release.'
+      Remove-Item -LiteralPath $Tunnel -Force
+    }
+    if (-not (Test-Path -LiteralPath $Tunnel -PathType Leaf)) {
+      $cloudAsset = "https://github.com/cloudflare/cloudflared/releases/download/$CloudflaredVersion/cloudflared-windows-amd64.exe"
+      Download @($cloudAsset, ('https://ghfast.top/' + $cloudAsset)) $Tunnel $cloudSha
     }
     Invoke-Exe $Tunnel @('--version')
     if ($Mode -eq 'Named') {
@@ -220,16 +302,10 @@ try {
         Set-Content -LiteralPath $keyFile -Value ($secure | ConvertFrom-SecureString) -Encoding ASCII
       }
     }
-    $settings = [ordered]@{mode=$Mode;publicUrl=$PublicUrl;workspaceRoot=$WorkspaceRoot;node=$Node;devJs=$DevJS;bash=$Bash;tunnel=$Tunnel}
-    $settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8
     # Copy only this one installer into a user-owned persistent directory for logon auto-start.
     if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
       if ([IO.Path]::GetFullPath($PSCommandPath) -ine [IO.Path]::GetFullPath($StartupFile)) { Copy-Item -LiteralPath $PSCommandPath -Destination $StartupFile -Force }
     } else { throw 'Run from a saved .ps1 file so automatic startup can be installed.' }
-    $run = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $StartupFile + '" -Resume'
-    $startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-    New-Item -Path $startupKey -Force | Out-Null
-    New-ItemProperty -Path $startupKey -Name 'SkylabDevSpace' -Value $run -PropertyType String -Force | Out-Null
   }
   $env:PATH = "$(Split-Path $Node);$(Split-Path $Bash);$env:PATH"
   Stop-Owned 'devspace' $DevJS
@@ -241,10 +317,11 @@ try {
     if ($a.AsyncWaitHandle.WaitOne(350)) { $probe.EndConnect($a); throw "Port $Port already used by another process; not touching it." }
   } catch [Net.Sockets.SocketException] { } finally { $probe.Close() }
   if ($Mode -eq 'Quick') {
-    Note 'Starting temporary outbound Cloudflare Quick Tunnel...'
-    $tun = Start-Background $Tunnel @('tunnel','--no-autoupdate','--url',"http://127.0.0.1:$Port") 'tunnel'
+    Stage 'Starting temporary outbound Cloudflare Quick Tunnel'
+    $tun = Start-Background $Tunnel @('tunnel','--no-autoupdate','--protocol','http2','--url',"http://127.0.0.1:$Port") 'tunnel'
     $PublicUrl = Wait-QuickURL $tun.Id
   } else {
+    Stage 'Starting named Cloudflare Tunnel'
     $keyFile = Join-Path $State 'tunnel-token.dpapi'
     Require-File $keyFile 'Named tunnel secret missing'
     $secure = Get-Content $keyFile -Raw | ConvertTo-SecureString
@@ -258,15 +335,31 @@ try {
       [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
     }
   }
-  Note "Configuring DevSpace for $PublicUrl ..."
+  Stage ("Configuring DevSpace: " + $PublicUrl)
   # DevSpace 1.1.1 supports noninteractive init. Its --json output never includes the Owner password.
   $initOut = Join-Path $Logs 'devspace-init.out.log'
   $initErr = Join-Path $Logs 'devspace-init.err.log'
-  $initArgs = @(('"' + $DevJS + '"'),'init','--yes','--public-url',$PublicUrl,'--roots',('"' + $WorkspaceRoot + '"'),'--json')
+  if ($Resume) {
+    $initArgs = @(('"' + $DevJS + '"'),'config','set','publicBaseUrl',$PublicUrl)
+  } else {
+    # --force reuses the existing Owner token but reconciles an incomplete initial setup.
+    $initArgs = @(('"' + $DevJS + '"'),'init','--force','--yes','--public-url',$PublicUrl,'--roots',('"' + $WorkspaceRoot + '"'),'--json')
+  }
   $initProc = Start-Process -FilePath $Node -ArgumentList $initArgs -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $initOut -RedirectStandardError $initErr
   if ($initProc.ExitCode -ne 0) { throw "DevSpace init failed. See $initErr" }
+  Stage 'Starting DevSpace'
   $dev = Start-Background $Node @('"' + $DevJS + '"','serve') 'devspace'
   Wait-LocalPort
+  # Save the REAL quick-tunnel URL only after startup succeeds. Never register a
+  # broken/partial setup for automatic retry on every Windows login.
+  $settings = [ordered]@{mode=$Mode;publicUrl=$PublicUrl;workspaceRoot=$WorkspaceRoot;node=$Node;devJs=$DevJS;bash=$Bash;tunnel=$Tunnel}
+  $settings | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8
+  if (-not $Resume) {
+    $run = 'powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $StartupFile + '" -Resume'
+    $startupKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    New-Item -Path $startupKey -Force | Out-Null
+    New-ItemProperty -Path $startupKey -Name 'SkylabDevSpace' -Value $run -PropertyType String -Force | Out-Null
+  }
   $info = "MCP=$PublicUrl/mcp`r`nROOT=$WorkspaceRoot`r`nMODE=$Mode`r`nUSER=$env:USERNAME`r`nAUTH=$env:USERPROFILE\.devspace\auth.json`r`n"
   Set-Content -LiteralPath (Join-Path $State 'connection.txt') -Value $info -Encoding UTF8
   try {
@@ -284,7 +377,7 @@ try {
   if ($Mode -eq 'Quick') { Note 'IMPORTANT: Quick Tunnel URL changes after restart; reconnect the MCP client. Use Named mode for a durable URL.' }
   Note 'Remote MCP authorization and Google API OAuth must still be completed separately.'
 } catch {
-  Write-Error ("Deployment failed: " + $_.Exception.Message)
+  Write-Error ("Deployment failed at stage [" + $script:Stage + "]: " + $_.Exception.Message + ". Logs: " + $Logs)
   exit 1
 } finally {
   $Mutex.ReleaseMutex()
