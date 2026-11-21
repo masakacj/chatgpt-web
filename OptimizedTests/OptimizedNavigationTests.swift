@@ -1,5 +1,6 @@
 import XCTest
 import Combine
+import WebKit
 @testable import ChatGPTWebOptimized
 
 @MainActor
@@ -39,6 +40,65 @@ final class OptimizedNavigationTests: XCTestCase {
         XCTAssertFalse(model.frameworkCacheChecking)
         XCTAssertEqual(model.webViewGeneration, originalGeneration)
         XCTAssertFalse(model.processTerminated)
+    }
+
+    func testWebHealthWithoutLoadedPageIsPassiveAndRecoveryIsExplicit() {
+        let model = OptimizedAppModel()
+        let generation = model.webViewGeneration
+        XCTAssertFalse(model.checkWebContentHealth())
+        XCTAssertFalse(model.webPageUnresponsive)
+        XCTAssertEqual(model.webViewGeneration, generation)
+
+        model.rebuildAfterConfirmation()
+        XCTAssertNotEqual(model.webViewGeneration, generation)
+        XCTAssertFalse(model.webPageUnresponsive)
+        XCTAssertEqual(model.targetURL.absoluteString, "https://chatgpt.com/")
+    }
+
+    func testWebHealthTimeoutDoesNotTreatBriefDelayAsFreeze() {
+        let start = Date(timeIntervalSince1970: 100)
+        XCTAssertFalse(OptimizedAppModel.isWebHealthTimedOut(
+            since: start, now: start.addingTimeInterval(14.9)))
+        XCTAssertTrue(OptimizedAppModel.isWebHealthTimedOut(
+            since: start, now: start.addingTimeInterval(15.1)))
+    }
+
+    func testNavigationResetDoesNotReleasePendingPingOnSameWebView() {
+        let model = OptimizedAppModel()
+        let first = WKWebView(frame: .zero)
+        model.attachedWebView = first
+        model.setPendingWebHealthProbeForTesting(first)
+        model.resetWebContentHealth()
+        XCTAssertTrue(model.hasPendingWebHealthProbeForTesting,
+                      "Navigation cannot enqueue a second ping on a wedged WebContent")
+        let replacement = WKWebView(frame: .zero)
+        model.attachedWebView = replacement
+        model.resetWebContentHealth()
+        XCTAssertFalse(model.hasPendingWebHealthProbeForTesting,
+                       "A new WebView must be independently probeable")
+    }
+
+    func testNavigationProbeAndHealthProbeDoNotOverlapOnSameView() {
+        let model = OptimizedAppModel()
+        let first = WKWebView(frame: .zero)
+        model.attachedWebView = first
+        XCTAssertTrue(model.beginNavigationJSProbe(on: first))
+        XCTAssertFalse(model.beginNavigationJSProbe(on: first))
+        model.resetWebContentHealth()
+        XCTAssertTrue(model.hasPendingNavigationProbeForTesting)
+        XCTAssertFalse(model.beginNavigationJSProbe(on: first))
+        model.endNavigationJSProbe(on: first)
+        XCTAssertTrue(model.beginNavigationJSProbe(on: first))
+        model.endNavigationJSProbe(on: first)
+        model.setPendingWebHealthProbeForTesting(first)
+        XCTAssertFalse(model.beginNavigationJSProbe(on: first),
+                       "An outstanding health ping blocks the older navigation probe")
+        let replacement = WKWebView(frame: .zero)
+        XCTAssertTrue(model.beginNavigationJSProbe(on: replacement))
+        model.endNavigationJSProbe(on: first)
+        XCTAssertTrue(model.hasPendingNavigationProbeForTesting)
+        model.endNavigationJSProbe(on: replacement)
+        XCTAssertFalse(model.hasPendingNavigationProbeForTesting)
     }
 
     func testRepeatedNavigationKVOValuesDoNotPublishUnchangedSwiftUIState() {

@@ -15,6 +15,7 @@ final class OptimizedTelemetry: ObservableObject {
         case navigationError = "nav_error"
         case javascriptProbeEarly = "js_probe_early"
         case javascriptProbeSettled = "js_probe_settled"
+        case webContentUnresponsive = "js_unresponsive"
         case contentTerminated = "web_terminated"
         case automaticRecovery = "auto_recovery"
         case recoveryPaused = "recovery_paused"

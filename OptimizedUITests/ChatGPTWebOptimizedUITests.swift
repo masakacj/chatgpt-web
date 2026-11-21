@@ -30,6 +30,21 @@ final class ChatGPTWebOptimizedUITests: XCTestCase {
         XCTAssertTrue(app.webViews["optimized.webview"].waitForExistence(timeout: 15))
     }
 
+    func testNativeWebRecoveryRemainsAvailableOverOfflineWebView() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-proxy-direct", "-uitest-sidebar-scroll"]
+        app.launch()
+        XCTAssertTrue(app.webViews["optimized.webview"].waitForExistence(timeout: 15))
+        let recovery = app.buttons["navigation.recover.button"]
+        XCTAssertTrue(recovery.exists)
+        recovery.tap()
+        let alert = app.alerts["重新创建网页？"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "不会自动重发消息")).firstMatch.exists)
+        alert.buttons["取消"].tap()
+        XCTAssertTrue(app.webViews["optimized.webview"].exists)
+    }
+
     func testNestedSidebarScrollAcceptsVerticalSwipeWithoutNetwork() {
         verifySidebarSwipe(rootScroll: false)
     }

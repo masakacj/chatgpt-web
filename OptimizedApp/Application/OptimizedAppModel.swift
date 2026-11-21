@@ -13,6 +13,7 @@ final class OptimizedAppModel: ObservableObject {
     @Published var downloadedFile: URL?
     @Published var status = "正在打开 ChatGPT"
     @Published var diagnosticsEnabled = false
+    @Published private(set) var webPageUnresponsive = false
     @Published private(set) var frameworkCacheReport = "未检测"
     @Published private(set) var frameworkCacheChecking = false
     @Published var recoveryAttempts = 0
@@ -25,11 +26,113 @@ final class OptimizedAppModel: ObservableObject {
     weak var supervisor: NativeOptimizationSupervisor?
     var retryHandler: ((String, Int) async -> Bool)?
     private(set) var lastTerminatedGeneration: UUID?
+    private weak var webHealthView: WKWebView?
+    private var webHealthToken: UUID?
+    private var webHealthStartedAt: Date?
+    private weak var navigationProbeView: WKWebView?
+    private var navigationProbeStartedAt: Date?
 
     func markReady() {
         status = "ChatGPT"
         recoveryAttempts = 0
     }
+
+    static func isWebHealthTimedOut(since start: Date, now: Date = Date()) -> Bool {
+        now.timeIntervalSince(start) >= 15
+    }
+
+    func beginNavigationJSProbe(on view: WKWebView) -> Bool {
+        guard !(webHealthToken != nil && webHealthView === view),
+              !(navigationProbeStartedAt != nil && navigationProbeView === view) else { return false }
+        navigationProbeView = view
+        navigationProbeStartedAt = Date()
+        return true
+    }
+
+    func endNavigationJSProbe(on view: WKWebView) {
+        guard navigationProbeView === view else { return }
+        navigationProbeView = nil
+        navigationProbeStartedAt = nil
+        if webPageUnresponsive { webPageUnresponsive = false }
+    }
+
+    /// A single bounded read-only JS ping; no DOM scans, chat content or request replay.
+    /// An unanswered ping stays in flight, preventing a growing queue of WebKit calls.
+    func checkWebContentHealth() -> Bool {
+        guard !isBackgrounded, !processTerminated, let view = attachedWebView,
+              !view.isLoading, view.url?.host == "chatgpt.com" else { return false }
+        if let startedAt = navigationProbeStartedAt, navigationProbeView === view {
+            guard !webPageUnresponsive, Self.isWebHealthTimedOut(since: startedAt) else { return false }
+            webPageUnresponsive = true
+            return true
+        }
+        if webHealthToken != nil && webHealthView !== view {
+            webHealthToken = nil
+            webHealthStartedAt = nil
+        }
+        if let startedAt = webHealthStartedAt {
+            guard !webPageUnresponsive, Self.isWebHealthTimedOut(since: startedAt) else { return false }
+            webPageUnresponsive = true
+            return true
+        }
+        let token = UUID()
+        let generation = webViewGeneration
+        webHealthView = view
+        webHealthToken = token
+        webHealthStartedAt = Date()
+        Task { [weak self, weak view] in
+            guard let view else { return }
+            let responsive: Bool
+            do {
+                _ = try await view.callAsyncJavaScript(
+                    "return 1;", arguments: [:], in: nil,
+                    contentWorld: WebConfigurationFactory.observationWorld)
+                responsive = true
+            } catch { responsive = false }
+            guard let self, self.webHealthToken == token,
+                  self.webHealthView === view,
+                  self.webViewGeneration == generation else { return }
+            self.webHealthToken = nil
+            self.webHealthStartedAt = nil
+            self.webHealthView = nil
+            if responsive && self.webPageUnresponsive { self.webPageUnresponsive = false }
+        }
+        return false
+    }
+
+    func resetWebContentHealth() {
+        if navigationProbeView === attachedWebView, navigationProbeStartedAt != nil {
+            navigationProbeStartedAt = Date()
+        } else {
+            navigationProbeView = nil
+            navigationProbeStartedAt = nil
+        }
+        if webHealthToken != nil && webHealthView === attachedWebView {
+            // A pending WebKit call cannot be canceled by clearing its token.
+            webHealthStartedAt = Date()
+        } else {
+            webHealthToken = nil
+            webHealthStartedAt = nil
+            webHealthView = nil
+        }
+        if webPageUnresponsive { webPageUnresponsive = false }
+    }
+
+    func resumeWebContentHealth() {
+        // Time spent backgrounded is not evidence that a foreground WebContent is hung.
+        if webHealthStartedAt != nil { webHealthStartedAt = Date() }
+        if navigationProbeStartedAt != nil { navigationProbeStartedAt = Date() }
+    }
+
+    #if DEBUG
+    func setPendingWebHealthProbeForTesting(_ view: WKWebView) {
+        webHealthView = view
+        webHealthToken = UUID()
+        webHealthStartedAt = Date()
+    }
+    var hasPendingWebHealthProbeForTesting: Bool { webHealthToken != nil }
+    var hasPendingNavigationProbeForTesting: Bool { navigationProbeStartedAt != nil }
+    #endif
 
     func setCanGoBack(_ available: Bool) {
         guard canGoBack != available else { return }
@@ -54,6 +157,7 @@ final class OptimizedAppModel: ObservableObject {
     /// Repeated same-generation callbacks are idempotent and will not increment failure count.
     func markProcessTerminated(route: String = "other", isSynthetic: Bool = false,
                                backgroundReadOnlyEligible: Bool = false) {
+        resetWebContentHealth()
         goBackHandler = nil
         goForwardHandler = nil
         canGoBack = false
@@ -84,6 +188,7 @@ final class OptimizedAppModel: ObservableObject {
         guard pendingBackgroundReadOnlyRecovery, processTerminated,
               supervisor?.confirmBackgroundReadOnlyRecovery() == true else { return false }
         pendingBackgroundReadOnlyRecovery = false
+        resetWebContentHealth()
         processTerminated = false
         status = "正在恢复网页"
         recoveryAttempts += 1
@@ -96,6 +201,7 @@ final class OptimizedAppModel: ObservableObject {
     /// Explicit user-confirmed rebuild: restores to home route instead of blindly re-entering a risky route.
     func rebuildAfterConfirmation() {
         pendingBackgroundReadOnlyRecovery = false
+        resetWebContentHealth()
         processTerminated = false
         supervisor?.confirmRebuild()
         status = "正在恢复网页"

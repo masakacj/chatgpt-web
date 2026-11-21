@@ -125,6 +125,7 @@ struct OptimizedWebView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.model.resetWebContentHealth()
         if coordinator.model.attachedWebView === webView {
             coordinator.model.attachedWebView = nil
             coordinator.telemetry.record(.webViewDisposed)
@@ -208,6 +209,7 @@ struct OptimizedWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            model.resetWebContentHealth()
             navigationSequence += 1
             syncNavigationState(for: webView)
             owner.invalidateDocument()
@@ -239,12 +241,17 @@ struct OptimizedWebView: UIViewRepresentable {
                           self.navigationSequence == sequence,
                           UIApplication.shared.applicationState == .active,
                           self.routeCategory(for: view) == sourceRoute else { return }
+                    guard self.model.beginNavigationJSProbe(on: view) else { return }
                     let started = CFAbsoluteTimeGetCurrent()
                     do {
                         _ = try await view.callAsyncJavaScript(
                             "return 1;", arguments: [:], in: nil,
                             contentWorld: WebConfigurationFactory.observationWorld)
-                    } catch { return }
+                    } catch {
+                        self.model.endNavigationJSProbe(on: view)
+                        return
+                    }
+                    self.model.endNavigationJSProbe(on: view)
                     guard self.webView === view, !self.hasTerminated,
                           self.navigationSequence == sequence else { return }
                     let elapsedMs = Int(min(9_999, max(0,

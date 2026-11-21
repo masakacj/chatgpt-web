@@ -22,6 +22,7 @@ struct OptimizedRootView: View {
     @StateObject private var liveDebug = OptimizedLiveDebug()
     @StateObject private var proxySettings = OptimizerProxySettings()
     @State private var showingProxySettings = false
+    @State private var showingWebRecovery = false
     @State private var hasEnteredBackground = false
     @State private var thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
     // iOS WebKit has known content-visibility:auto scroll/reveal regressions.
@@ -78,6 +79,17 @@ struct OptimizedRootView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                Button {
+                    showingWebRecovery = true
+                } label: {
+                    Image(systemName: model.webPageUnresponsive ? "exclamationmark.triangle.fill" : "arrow.clockwise")
+                        .foregroundStyle(model.webPageUnresponsive ? Color.orange : Color.primary)
+                        .frame(width: 36, height: 32)
+                }
+                .disabled(model.processTerminated || supervisor.isSafeModeActive ||
+                          !proxySettings.canLoadWebView)
+                .accessibilityLabel(model.webPageUnresponsive ? "网页无响应，恢复网页" : "恢复网页")
+                .accessibilityIdentifier("navigation.recover.button")
                 Button {
                     showingProxySettings = true
                 } label: {
@@ -140,6 +152,16 @@ struct OptimizedRootView: View {
                 // might still own an in-flight connection. Next app start applies it.
                 showingProxySettings = false
             }
+        }
+        .alert("重新创建网页？", isPresented: $showingWebRecovery) {
+            Button("取消", role: .cancel) {}
+            Button("恢复网页") {
+                owner.invalidateDocument()
+                telemetry.record(.manualRecovery, urgent: true)
+                model.rebuildAfterConfirmation()
+            }
+        } message: {
+            Text("将返回 ChatGPT 首页，不会自动重发消息或重试工具。尚未保存的草稿可能丢失；正在生成的请求状态可能无法确认。")
         }
         .sheet(isPresented: $model.diagnosticsEnabled) {
             NavigationStack {
@@ -290,6 +312,7 @@ struct OptimizedRootView: View {
             liveDebug.setForeground(phase == .active)
             if phase == .active {
                 model.isBackgrounded = false
+                model.resumeWebContentHealth()
                 supervisor.recordForeground()
                 telemetry.record(.foreground)
                 // A verified, safe, background-only WebContent loss may restore
@@ -355,6 +378,12 @@ struct OptimizedRootView: View {
         }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             telemetry.periodicTick(isActive: scenePhase == .active)
+        }
+        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
+            guard scenePhase == .active else { return }
+            if model.checkWebContentHealth() {
+                telemetry.record(.webContentUnresponsive, urgent: true)
+            }
         }
     }
 
