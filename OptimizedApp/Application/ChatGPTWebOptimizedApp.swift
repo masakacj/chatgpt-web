@@ -155,13 +155,21 @@ struct OptimizedRootView: View {
         }
         .alert("重新创建网页？", isPresented: $showingWebRecovery) {
             Button("取消", role: .cancel) {}
-            Button("恢复网页") {
-                owner.invalidateDocument()
-                telemetry.record(.manualRecovery, urgent: true)
-                model.rebuildAfterConfirmation()
+            Button("重建当前对话") {
+                if model.rebuildAfterConfirmation(destination: .currentConversation) {
+                    owner.invalidateDocument()
+                    telemetry.record(.manualRecovery, urgent: true)
+                }
+            }
+            .disabled(model.currentConversationURL == nil)
+            Button("回到首页") {
+                if model.rebuildAfterConfirmation(destination: .home) {
+                    owner.invalidateDocument()
+                    telemetry.record(.manualRecovery, urgent: true)
+                }
             }
         } message: {
-            Text("将返回 ChatGPT 首页，不会自动重发消息或重试工具。尚未保存的草稿可能丢失；正在生成的请求状态可能无法确认。")
+            Text("选择重建当前对话或回到首页。不会自动重发消息或重试工具；草稿可能丢失，正在生成的请求状态可能无法确认。")
         }
         .sheet(isPresented: $model.diagnosticsEnabled) {
             NavigationStack {
@@ -427,13 +435,27 @@ struct NativeSafeModeView: View {
                 // Primary actions
                 VStack(spacing: 12) {
                     Button {
+                        if model.rebuildAfterConfirmation(destination: .currentConversation) {
+                            owner.invalidateDocument(processTerminated: true)
+                            telemetry.record(.manualRecovery, urgent: true)
+                        }
+                    } label: {
+                        Label("重建当前对话", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.currentConversationURL == nil)
+                    .accessibilityIdentifier("safemode.rebuild.current.button")
+
+                    Button {
                         owner.invalidateDocument(processTerminated: true)
                         telemetry.record(.manualRecovery, urgent: true)
                         model.rebuildAfterConfirmation()
                     } label: {
                         HStack {
                             Image(systemName: "arrow.clockwise")
-                            Text("重新创建网页 (返回主页)")
+                            Text("回到首页")
                         }
                         .font(.headline)
                         .frame(maxWidth: .infinity)
@@ -443,6 +465,10 @@ struct NativeSafeModeView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .accessibilityIdentifier("safemode.rebuild.button")
+
+                    Text("仅重新加载页面，不会自动重发消息；未保存的草稿可能丢失。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
 
                     Button {
                         supervisor.stayInSafeMode()

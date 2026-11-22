@@ -4,6 +4,10 @@ import WebKit
 
 @MainActor
 final class OptimizedAppModel: ObservableObject {
+    enum RecoveryDestination {
+        case currentConversation, home
+    }
+
     @Published var webViewGeneration = UUID()
     // Weak only: retain no additional WebContent memory while tracking reuse.
     weak var attachedWebView: WKWebView?
@@ -18,6 +22,7 @@ final class OptimizedAppModel: ObservableObject {
     @Published private(set) var frameworkCacheChecking = false
     @Published var recoveryAttempts = 0
     @Published var targetURL = URL(string: "https://chatgpt.com/")!
+    @Published private(set) var currentConversationURL: URL?
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
 
@@ -31,6 +36,23 @@ final class OptimizedAppModel: ObservableObject {
     private var webHealthStartedAt: Date?
     private weak var navigationProbeView: WKWebView?
     private var navigationProbeStartedAt: Date?
+
+    static func restorableConversationURL(_ url: URL?) -> URL? {
+        guard let url, url.scheme == "https", url.host == "chatgpt.com",
+              url.port == nil, url.user == nil, url.password == nil else { return nil }
+        let parts = url.path.split(separator: "/")
+        let plain = parts.count == 2 && parts[0] == "c"
+        let project = parts.count == 4 && parts[0] == "g" && parts[2] == "c"
+        guard (plain || project), CMContract.validConversationID(String(parts.last ?? "")) else { return nil }
+        // Keep the project and conversation route, never stale query/fragment parameters.
+        return URL(string: "https://chatgpt.com" + url.path)
+    }
+
+    func rememberCurrentPage(_ url: URL?) {
+        guard let url else { return } // Teardown may temporarily report no URL.
+        let route = Self.restorableConversationURL(url)
+        if currentConversationURL != route { currentConversationURL = route }
+    }
 
     func markReady() {
         status = "ChatGPT"
@@ -198,17 +220,26 @@ final class OptimizedAppModel: ObservableObject {
         return true
     }
 
-    /// Explicit user-confirmed rebuild: restores to home route instead of blindly re-entering a risky route.
-    func rebuildAfterConfirmation() {
+    /// Explicit user-confirmed GET navigation; never replays a Send, Retry or approval.
+    @discardableResult
+    func rebuildAfterConfirmation(destination: RecoveryDestination = .home) -> Bool {
+        let url: URL
+        switch destination {
+        case .home: url = URL(string: "https://chatgpt.com/")!
+        case .currentConversation:
+            guard let currentConversationURL else { return false }
+            url = currentConversationURL
+        }
         pendingBackgroundReadOnlyRecovery = false
         resetWebContentHealth()
         processTerminated = false
         supervisor?.confirmRebuild()
         status = "正在恢复网页"
         recoveryAttempts += 1
-        targetURL = URL(string: "https://chatgpt.com/")!
+        targetURL = url
         webViewGeneration = UUID()
         lastTerminatedGeneration = nil
+        return true
     }
 
 

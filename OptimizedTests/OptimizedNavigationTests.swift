@@ -55,6 +55,56 @@ final class OptimizedNavigationTests: XCTestCase {
         XCTAssertEqual(model.targetURL.absoluteString, "https://chatgpt.com/")
     }
 
+    func testRebuildCurrentConversationKeepsProjectRouteWithoutReplayingActions() {
+        let model = OptimizedAppModel()
+        let original = model.webViewGeneration
+        XCTAssertFalse(model.rebuildAfterConfirmation(destination: .currentConversation))
+        XCTAssertEqual(model.webViewGeneration, original)
+
+        let current = URL(string: "https://chatgpt.com/g/g-p-fixture/c/123456789012?source=old#turn")!
+        model.rememberCurrentPage(current)
+        let safe = "https://chatgpt.com/g/g-p-fixture/c/123456789012"
+        XCTAssertEqual(model.currentConversationURL?.absoluteString, safe)
+        XCTAssertTrue(model.rebuildAfterConfirmation(destination: .currentConversation))
+        XCTAssertEqual(model.targetURL.absoluteString, safe)
+        XCTAssertNotEqual(model.webViewGeneration, original)
+        XCTAssertFalse(model.processTerminated)
+
+        model.rememberCurrentPage(URL(string: "https://chatgpt.com/"))
+        XCTAssertNil(model.currentConversationURL)
+        XCTAssertFalse(model.rebuildAfterConfirmation(destination: .currentConversation))
+    }
+
+    func testCurrentConversationRebuildRejectsForeignHostsAndNonConversationPages() {
+        XCTAssertNil(OptimizedAppModel.restorableConversationURL(
+            URL(string: "https://other.example/c/123456789012")))
+        XCTAssertNil(OptimizedAppModel.restorableConversationURL(
+            URL(string: "http://chatgpt.com/c/123456789012")))
+        XCTAssertNil(OptimizedAppModel.restorableConversationURL(
+            URL(string: "https://chatgpt.com/g/g-p-fixture")))
+        XCTAssertNil(OptimizedAppModel.restorableConversationURL(
+            URL(string: "https://chatgpt.com/c/invalid")))
+        XCTAssertEqual(OptimizedAppModel.restorableConversationURL(
+            URL(string: "https://chatgpt.com/c/123456789012"))?.absoluteString,
+            "https://chatgpt.com/c/123456789012")
+
+        let model = OptimizedAppModel()
+        model.rememberCurrentPage(URL(string: "https://chatgpt.com/c/123456789012"))
+        model.rememberCurrentPage(nil)
+        XCTAssertNotNil(model.currentConversationURL)
+        model.rememberCurrentPage(URL(string: "https://external.example/"))
+        XCTAssertNil(model.currentConversationURL)
+        let unchanged = model.webViewGeneration
+        XCTAssertFalse(model.rebuildAfterConfirmation(destination: .currentConversation))
+        XCTAssertEqual(model.webViewGeneration, unchanged)
+
+        model.rememberCurrentPage(URL(string: "https://chatgpt.com/g/g-p-fixture/c/123456789012"))
+        model.markProcessTerminated(route: "project", isSynthetic: true)
+        XCTAssertNotNil(model.currentConversationURL)
+        XCTAssertTrue(model.rebuildAfterConfirmation(destination: .currentConversation))
+        XCTAssertEqual(model.targetURL.path, "/g/g-p-fixture/c/123456789012")
+    }
+
     func testWebHealthTimeoutDoesNotTreatBriefDelayAsFreeze() {
         let start = Date(timeIntervalSince1970: 100)
         XCTAssertFalse(OptimizedAppModel.isWebHealthTimedOut(

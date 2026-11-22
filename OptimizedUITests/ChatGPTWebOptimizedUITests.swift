@@ -41,6 +41,10 @@ final class ChatGPTWebOptimizedUITests: XCTestCase {
         let alert = app.alerts["重新创建网页？"]
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
         XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "不会自动重发消息")).firstMatch.exists)
+        XCTAssertTrue(alert.buttons["重建当前对话"].exists)
+        XCTAssertTrue(alert.buttons["回到首页"].exists)
+        XCTAssertFalse(alert.buttons["重建当前对话"].isEnabled,
+                       "No conversation address may be guessed from an offline homepage")
         alert.buttons["取消"].tap()
         XCTAssertTrue(app.webViews["optimized.webview"].exists)
     }

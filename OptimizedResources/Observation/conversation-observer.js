@@ -43,10 +43,27 @@
     const stateNode = turn?.hasAttribute('data-talvt-turn-state') ? turn : states[states.length - 1] || null;
     return { root, turn, stateNode, turns, key: turn?.getAttribute('data-turn-key') || turn?.getAttribute('data-testid') || null };
   };
+  // Never flatten a large DIL/MCP message with an ancestor's textContent.
+  const boundedText = (root, limit = 1200) => {
+    let out = '', visited = 0;
+    const stack = [root];
+    while (stack.length && out.length < limit && ++visited <= 128) {
+      const node = stack.pop();
+      if (node.nodeType === 3) {
+        out += (node.nodeValue || '').slice(0, limit - out.length);
+        continue;
+      }
+      const kids = node.childNodes || node.children || [];
+      if (!kids.length) out += (node.textContent || '').slice(0, limit - out.length);
+      else for (let i = Math.min(kids.length, 48) - 1; i >= 0; i--) stack.push(kids[i]);
+    }
+    return out;
+  };
   const answerReady = turn => {
     if (!turn) return false;
-    const valid = node => Boolean((node?.textContent || '').trim()) &&
-      !node.closest('[data-testid*="activity" i],[data-testid*="reasoning" i],[class*="group/activity-header"]');
+    const valid = node => node &&
+      !node.closest('[data-testid*="activity" i],[data-testid*="reasoning" i],[class*="group/activity-header"]') &&
+      /\S/.test(boundedText(node, 256));
     const roots = turn.querySelectorAll('[class*="DilResponseRoot"],[data-dil-message-id],[class*="MarkdownRoot"],[data-message-author-role="assistant"]');
     if ([...roots].some(valid)) return true;
     const headings = turn.querySelectorAll('h4[data-conversation-role="assistant"],h4[data-message-author-role="assistant"]');
@@ -67,14 +84,14 @@
     const panels = (noTurns ? document : main).querySelectorAll('[data-testid*="conversation-error" i],[data-testid*="error-boundary" i],[role="alert"]');
     for (const panel of panels) {
       if (!visible(panel) || panel.closest('[data-turn-key],[data-testid^="conversation-turn-"]')) continue;
-      const text = (panel.textContent || '').trim().slice(0, 1200);
+      const text = boundedText(panel, 1200).trim();
       const named = /conversation-error|error-boundary/i.test(panel.getAttribute('data-testid') || '');
       if (loadMessage.test(text) || (named && /something went wrong|出错|发生错误|try again/i.test(text))) {
         return { panel, button: button(panel) || null };
       }
     }
     if (!noTurns) return null;
-    const text = (main.textContent || '').trim();
+    const text = boundedText(main, 801).trim();
     if (text.length > 800 || !loadMessage.test(text)) return null;
     return { panel: main, button: button(main) || null };
   };
@@ -104,7 +121,7 @@
     else if (['error','failed','errored'].includes(raw)) nativeStatus = 'error';
     else if (['cancelled','canceled','stopped'].includes(raw)) {
       const failed = turn && [...turn.querySelectorAll('span,div,p,small,strong,[role="status"]')].some(node => {
-        const text = (node.textContent || '').trim();
+        const text = boundedText(node, 71).trim();
         return visible(node) && text.length <= 70 && /^(?:无法思考|无法继续思考|思考失败|could(?: not|n't) think|unable to think|thinking failed|failed to think)$/i.test(text) &&
           !node.closest('[data-conversation-role="user"],[data-message-author-role="user"]');
       });

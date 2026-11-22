@@ -476,6 +476,27 @@ test('H1 answer-ready: arrival of answer cancels follow-ups and reports answerRe
   assert.equal(followUps.length, 0, 'Follow-up timers cancelled once answer becomes ready');
 });
 
+test('large assistant response is checked without flattening the parent textContent', async () => {
+  const env = createEnvironment('https://chatgpt.com/c/123456789012');
+  runInNewContext(observerCode, env.context);
+  await env.advanceTimersByTime(10);
+  const turn = new env.MockHTMLElement('div', {
+    'data-turn-key': 'large-answer', 'data-talvt-turn-state': 'completed'
+  });
+  const root = new env.MockHTMLElement('div', { class: 'DilResponseRoot' });
+  const leaf = new env.MockHTMLElement('span');
+  leaf.textContent = 'Answer content';
+  root.appendChild(leaf);
+  Object.defineProperty(root, 'textContent', {
+    get() { throw new Error('large response must not be flattened'); }
+  });
+  turn.appendChild(root);
+  env.transcript.appendChild(turn);
+  env.doc.dispatchEvent({ type: 'visibilitychange' });
+  await env.advanceTimersByTime(10);
+  assert.equal(env.events.at(-1)?.observation?.answerReady, true);
+});
+
 test('H1 adapter idempotency: repeated refresh on stable history does not reapply attributes', () => {
   const idle = [];
   const ATTR = 'data-optimized-pc-history';

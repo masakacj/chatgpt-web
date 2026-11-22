@@ -193,6 +193,7 @@ struct OptimizedWebView: UIViewRepresentable {
         private func syncNavigationState(for webView: WKWebView) {
             model.setCanGoBack(webView.canGoBack)
             model.setCanGoForward(webView.canGoForward)
+            model.rememberCurrentPage(webView.url)
             // Disable native edge history on chatgpt.com so its sidebar can receive the swipe.
             let host = webView.url?.host?.lowercased() ?? ""
             let external = !host.isEmpty && host != "chatgpt.com" && !host.hasSuffix(".chatgpt.com")
