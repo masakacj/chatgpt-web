@@ -113,7 +113,7 @@
     const hasDraft = fields.some(node => ((node.value || node.textContent || '').trim().length > 0));
     const error = loadError(root || document.querySelector('main'));
     // Reuse the already bounded CM turn scan; do not create a second observer.
-    globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.refresh(current, turns, { running, waiting });
+    globalThis.__CHATGPT_WEB_PC_LONG_CHAT__?.refresh(current, turns, { running, waiting }, root);
     let nativeStatus = 'unknown';
     if (waiting) nativeStatus = 'waiting';
     else if (running) nativeStatus = 'running';

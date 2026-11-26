@@ -32,9 +32,18 @@ final class OptimizerProxySettingsTests: XCTestCase {
             mcpOutputEnabled: true, proxySettings: settings)
         let mcpSources = mcpOnly.userContentController.userScripts.map(\.source)
         XCTAssertEqual(mcpSources.count, 2)
-        XCTAssertTrue(mcpSources.contains {
-            $0.contains("globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ = false;") &&
-            $0.contains("globalThis.__OPTIMIZED_MCP_OUTPUT_RELIEF_ENABLED__ = true;")
+        XCTAssertTrue(mcpOnly.userContentController.userScripts.contains {
+            $0.source.contains("optimized-native-process-style") && $0.injectionTime == .atDocumentStart
+        })
+        XCTAssertFalse(mcpSources.contains { $0.contains("__CHATGPT_WEB_PC_LONG_CHAT__ =") },
+                       "Native relief must not inject the legacy history/scan adapter")
+        let (both, _) = WebConfigurationFactory.make(
+            owner: owner, handler: handler, pcHistoryEnabled: true,
+            mcpOutputEnabled: true, proxySettings: settings)
+        XCTAssertEqual(both.userContentController.userScripts.count, 3)
+        XCTAssertTrue(both.userContentController.userScripts.contains {
+            $0.source.contains("globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ = true;") &&
+            $0.injectionTime == .atDocumentEnd
         })
     }
 

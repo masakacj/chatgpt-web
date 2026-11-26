@@ -28,7 +28,7 @@ struct OptimizedRootView: View {
     // iOS WebKit has known content-visibility:auto scroll/reveal regressions.
     // Quarantine the old v1 default-on flag; let users opt into the experimental v2 path.
     @AppStorage("optimized.pcHistory.enabled.v2") private var pcHistoryEnabled = false
-    @AppStorage("optimized.mcpOutput.enabled.v1") private var mcpOutputEnabled = false
+    @AppStorage("optimized.nativeProcess.enabled.v1") private var mcpOutputEnabled = true
     @Environment(\.scenePhase) private var scenePhase
 
     @MainActor
@@ -196,9 +196,9 @@ struct OptimizedRootView: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
 
-                    Section("MCP 工具输出减负") {
-                        Toggle("MCP 工具输出减负（下次新建网页生效）", isOn: $mcpOutputEnabled)
-                        Text("优先对工具调用产生的大量输出应用显示减负；用户消息、普通助手文本、最终回答和交互授权控件完整保留。下次新建网页生效，保存的登录和代理设置不变。")
+                    Section("原生过程减负") {
+                        Toggle("原生 Result Only（默认开启）", isOn: $mcpOutputEnabled)
+                        Text("保留官方网页交互，仅隐藏明确识别的工具正文及非交互过程卡片；未知组件、审批与正式回答保持原样。不裁剪工具数据，不运行旧 MCP 扫描器。下次新建网页生效，登录和代理设置不变。")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
 

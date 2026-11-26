@@ -4,7 +4,6 @@
   'use strict';
   if (window !== window.top || location.origin !== 'https://chatgpt.com') return;
   const isHistoryEnabled = () => globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ === true;
-  const isMcpEnabled = () => globalThis.__OPTIMIZED_MCP_OUTPUT_RELIEF_ENABLED__ === true;
   const KEEP = 12;
   const MIN = 24;
   // Give ChatGPT's sidebar priority over bounded historical layout work on cold start.
@@ -17,219 +16,30 @@
   const STYLE = 'optimized-pc-history-style';
   const APPROVAL = '[data-testid*="approval" i],[data-testid*="permission" i],button[aria-label*="Approve" i],button[aria-label*="授权"],iframe';
 
-  const MCP_ATTR = 'data-optimized-mcp-output';
-  const MCP_STYLE = 'optimized-mcp-output-style';
-  const EXPLICIT_MCP = '[data-testid*="mcp-result" i],[data-testid*="mcp-output" i],[data-testid*="mcp-tool-result" i],[data-testid*="mcp-tool-output" i],[data-testid*="mcp_result" i],[data-testid*="mcp_output" i]';
-  const TOOL_CALL = '[data-testid*="tool-call" i],[data-testid*="mcp-call" i]';
-  const THOUGHT = '[data-testid*="reasoning" i],[data-testid*="thought" i],[class*="group/activity-header"]';
   const NATIVE_VIRTUALIZER = '[data-virtualized-turn-content],[class*="virtualized-turn" i]';
-  const MCP_OUTPUT_SELECTOR = [
-    '[data-testid*="tool-result" i]',
-    '[data-testid*="tool-output" i]',
-    '[data-testid*="tool-response" i]',
-    '[data-testid*="mcp-result" i]',
-    '[data-testid*="mcp-output" i]',
-    '[data-testid*="tool_result" i]',
-    '[data-testid*="tool_output" i]',
-    '[data-testid*="mcp_result" i]',
-    '[data-testid*="mcp_output" i]'
-  ].join(',');
-  const INTERACTIVE = 'button,a[href],textarea,select,iframe,[role="dialog"],[data-testid*="approval" i],[data-testid*="permission" i],[data-testid*="mcp-app" i]';
-  const STATUS_HEADER = 'summary,header,[class*="header" i],[data-testid*="header" i],[data-testid*="status" i],[role="status"],[data-testid*="progress" i]';
-  const PRESERVE = INTERACTIVE + ',' + STATUS_HEADER + ',[data-testid*="error" i],[role="alert"]';
-
   const state = {chat: null, count: 0, tail: null, checked: 0, generation: 0,
-    optimized: 0, mcpRelieved: 0, nativeVirtualized: false, disposed: false};
-  const markedMcpNodes = new Set();
-  const candidateMcpNodes = new Set();
-  const scannedTurns = new Set();
-  let lastTailTurn = null;
-  let lastTailCount = -1;
+    optimized: 0, nativeVirtualized: false, disposed: false};
 
-  function hasMcpInteractive(node) {
-    if (!node) return false;
-    if (typeof node.matches === 'function') {
-      if (node.matches(PRESERVE)) return true;
-      if (node.matches(TURN) || (typeof node.hasAttribute === 'function' ? node.hasAttribute('data-turn-key') : Boolean(node.attrs?.has?.('data-turn-key')))) return true;
-      if (node.matches(THOUGHT)) return true;
+  // The official renderer wins even when modern and legacy markers coexist.
+  function nativeRenderer(turns, root) {
+    for (let i = 0; i < turns.length; i++) {
+      if (turns[i]?.hasAttribute?.('data-turn-key')) return true;
     }
-    if (typeof node.closest === 'function') {
-      if (node.closest('[data-conversation-role="user"],[data-message-author-role="user"]')) return true;
-      if (node.closest(PRESERVE)) return true;
-      const explicit = node.matches?.(EXPLICIT_MCP);
-      if (node.parentElement?.closest?.('.markdown,[class*="MarkdownRoot"]') ||
-          node.closest('[data-testid*="final-answer" i]')) return true;
-      if (node.closest('[class*="DilResponseRoot"],[data-dil-message-id]') &&
-          !explicit && !node.parentElement?.closest?.(TOOL_CALL)) return true;
-      if (node.closest(THOUGHT) && !explicit) return true;
-      if (node.closest('[data-testid*="conversation-error" i],[data-testid*="error-boundary" i]')) return true;
-    }
-    let cur = node;
-    while (cur) {
-      const role = typeof cur.getAttribute === 'function' ?
-        (cur.getAttribute('data-conversation-role') || cur.getAttribute('data-message-author-role')) :
-        (cur.attrs?.get?.('data-conversation-role') || cur.attrs?.get?.('data-message-author-role'));
-      if (role === 'user') return true;
-      cur = cur.parentElement || cur.parent;
-    }
-    if (typeof node.querySelector === 'function') {
-      if (node.querySelector(PRESERVE)) return true;
-    }
-    return false;
-  }
-
-  function isLargeOutput(node) {
-    if (!node) return false;
-    const stack = [node];
-    let textLen = 0, elements = 0, visited = 0;
-    while (stack.length) {
-      const part = stack.pop();
-      if (++visited > 256) return true;
-      if (part.nodeType === 3) textLen += part.length ?? part.data?.length ?? 0;
-      else {
-        if (part !== node && ++elements > 100) return true;
-        const children = part.childNodes || part.children || [];
-        if (children.length > 256) return true;
-        if (children.length) {
-          for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
-          // DOM test fixtures may store text directly alongside children.
-          if (!part.childNodes) textLen += part.textContent?.length || 0;
-        } else textLen += part.textContent?.length || 0;
-      }
-      if (textLen >= 1024) return true;
-    }
-    return false;
-  }
-
-  function mcpStyle() {
-    if (document.getElementById(MCP_STYLE)) return;
-    const el = document.createElement('style');
-    el.id = MCP_STYLE;
-    el.textContent = '[' + MCP_ATTR + '="1"]:not(:is(' + PRESERVE + ')):not(:has(' + PRESERVE + ')){display:none!important;}';
-    (document.head || document.documentElement).appendChild(el);
-  }
-
-  function clearMcpRelief() {
-    for (const el of markedMcpNodes) {
-      try { el.removeAttribute?.(MCP_ATTR); } catch (_) {}
-    }
-    if (typeof document.querySelectorAll === 'function') {
-      try {
-        for (const el of document.querySelectorAll('[' + MCP_ATTR + ']'))
-          el.removeAttribute(MCP_ATTR);
-      } catch (_) {}
-    }
-    markedMcpNodes.clear();
-    candidateMcpNodes.clear();
-    scannedTurns.clear();
-    lastTailTurn = null;
-    lastTailCount = -1;
-    document.getElementById(MCP_STYLE)?.remove();
-    state.mcpRelieved = 0;
-  }
-
-  function getTurnDescendantCount(turn) {
-    if (!turn) return 0;
-    if (typeof turn.getElementsByTagName === 'function') {
-      try { return turn.getElementsByTagName('*').length; } catch (_) {}
-    }
-    let count = 0;
-    const stack = [turn];
-    while (stack.length) {
-      const node = stack.pop();
-      const ch = node.children;
-      if (ch) {
-        const len = ch.length;
-        count += len;
-        for (let i = 0; i < len; i++) {
-          stack.push(ch[i]);
-        }
-      }
-    }
-    return count;
-  }
-
-  function discoverMcpCandidates(turns, activity) {
-    if (!turns || !turns.length) return;
-    const len = turns.length;
-    const tailIndex = len - 1;
-    const tailTurn = turns[tailIndex];
-    const isRunning = Boolean(activity?.running || activity?.waiting);
-
-    for (let i = 0; i < len; i++) {
-      const turn = turns[i];
-      if (!turn || typeof turn.querySelectorAll !== 'function') continue;
-      const isTail = (i === tailIndex);
-      const isSettled = scannedTurns.has(turn);
-
-      if (isSettled && !isTail) continue;
-      if (isTail && isRunning && turn === lastTailTurn && getTurnDescendantCount(turn) === lastTailCount) continue;
-      if (isSettled && isTail && !isRunning) continue;
-
-      try {
-        const items = turn.querySelectorAll(MCP_OUTPUT_SELECTOR);
-        if (items && items.length) {
-          for (let j = 0; j < items.length; j++) {
-            const item = items[j];
-            if (!item) continue;
-            candidateMcpNodes.add(item);
-            if (!markedMcpNodes.has(item) && !hasMcpInteractive(item) && isLargeOutput(item)) {
-              if (typeof item.setAttribute === 'function') {
-                item.setAttribute(MCP_ATTR, '1');
-                markedMcpNodes.add(item);
-              }
-            }
-          }
-        }
-      } catch (_) {}
-
-      if (!isTail || !isRunning) {
-        scannedTurns.add(turn);
-      } else {
-        lastTailTurn = turn;
-        lastTailCount = getTurnDescendantCount(turn);
-      }
-    }
-  }
-
-  function applyMcpRelief(turns, activity) {
-    if (!isMcpEnabled()) {
-      // OFF is the default: avoid a full ChatGPT DOM walk on every status update.
-      if (markedMcpNodes.size || candidateMcpNodes.size || scannedTurns.size ||
-          document.getElementById(MCP_STYLE)) clearMcpRelief();
-      return;
-    }
-    for (const node of markedMcpNodes) {
-      if (node.isConnected === false || hasMcpInteractive(node)) {
-        try { node.removeAttribute?.(MCP_ATTR); } catch (_) {}
-        markedMcpNodes.delete(node);
-      }
-    }
-    for (const node of candidateMcpNodes) {
-      if (!node || node.isConnected === false) {candidateMcpNodes.delete(node);continue;}
-      if (markedMcpNodes.has(node)) continue;
-      if (hasMcpInteractive(node) || !isLargeOutput(node)) continue;
-      if (typeof node.setAttribute === 'function') {
-        node.setAttribute(MCP_ATTR, '1');
-        markedMcpNodes.add(node);
-      }
-    }
-    discoverMcpCandidates(turns, activity);
-    if (markedMcpNodes.size > 0) mcpStyle();
-    state.mcpRelieved = markedMcpNodes.size;
+    return Boolean(root?.querySelector?.('[data-turn-key],' + NATIVE_VIRTUALIZER));
   }
 
   function resetHistory() {
     state.generation++;
-    for (const el of document.querySelectorAll('[' + ATTR + ']'))
-      el.removeAttribute(ATTR);
+    if (state.optimized) {
+      for (const el of document.querySelectorAll('[' + ATTR + ']')) el.removeAttribute(ATTR);
+    }
+    document.getElementById(STYLE)?.remove();
     state.count = 0; state.tail = null;
     state.checked = 0; state.optimized = 0;
   }
 
   function reset() {
     resetHistory();
-    clearMcpRelief();
     state.chat = null;
     state.nativeVirtualized = false;
   }
@@ -265,40 +75,37 @@
     (document.head || document.documentElement).appendChild(el);
   }
 
-  function refresh(id, turns, activity) {
+  function refresh(id, turns, activity, root) {
     if (state.disposed) return;
     if (!id) { if (state.chat) reset(); return; }
     if (document.hidden || !turns) return;
     if (state.chat && id !== state.chat) reset();
     state.chat = id;
 
-    // 1. MCP tool output relief: selective display relief during running/idle, independent of 24/12 layout
-    applyMcpRelief(turns, activity);
-
-    // 2. PC Chrome long-chat history optimization: gated on running/waiting and 24-turn minimum
-    if (!isHistoryEnabled()) return;
+    if (!isHistoryEnabled()) {
+      if (state.optimized || document.getElementById(STYLE)) resetHistory();
+      return;
+    }
+    const count = turns.length, tail = count ? turns[count - 1] : null, now = Date.now();
+    if (nativeRenderer(turns, root)) {
+      // Cancel pending legacy work even if no idle batch has marked a turn yet.
+      if (!state.nativeVirtualized || state.optimized) resetHistory();
+      state.nativeVirtualized = true;
+      state.count = count; state.tail = tail; state.checked = now;
+      return;
+    }
+    if (state.nativeVirtualized) {
+      resetHistory();
+      state.nativeVirtualized = false;
+    }
     if (activity?.running || activity?.waiting) {
-      // CSS :has() restores newly mounted approvals during streaming.
-      // Inspect marked history only when an explicit approval is awaited.
       if (activity?.waiting) restoreApprovals();
       state.generation++;
       state.checked = 0;
       return;
     }
-    // MCP output relief above remains active; delay only expensive history relayout.
     if (coldStartClock !== null && performance.now() - coldStartClock < COLD_START_GRACE_MS) return;
-    const count = turns.length, tail = count ? turns[count - 1] : null, now = Date.now();
-    if (id === state.chat && tail === state.tail && count === state.count &&
-        now - state.checked < 12000) return;
-    const native = Boolean(turns[0]?.hasAttribute?.('data-turn-key') &&
-      !turns[0]?.getAttribute?.('data-testid')?.startsWith('conversation-turn-')) ||
-      Boolean(turns[0]?.querySelector?.(NATIVE_VIRTUALIZER));
-    state.nativeVirtualized = native;
-    if (native) {
-      if (state.optimized) resetHistory();
-      state.count = count; state.tail = tail; state.checked = now;
-      return;
-    }
+    if (tail === state.tail && count === state.count && now - state.checked < 12000) return;
     restoreApprovals();
     if (count < MIN && state.count >= MIN) resetHistory();
     state.chat = id; state.count = count; state.tail = tail; state.checked = now;
@@ -317,8 +124,14 @@
       else setTimeout(step, 160);
     };
     const step = deadline => {
-      if (state.disposed || generation !== state.generation ||
+      if (state.disposed || !isHistoryEnabled() || generation !== state.generation ||
           state.chat !== id || document.hidden) return;
+      // A native marker can arrive between the refresh and an idle batch.
+      if (root?.isConnected === false || nativeRenderer(turns, root)) {
+        resetHistory();
+        state.nativeVirtualized = Boolean(root?.isConnected !== false);
+        return;
+      }
       if (deadline?.timeRemaining && deadline.timeRemaining() < 4) {
         schedule();
         return;
@@ -347,18 +160,14 @@
     state.disposed = true;
     reset();
     document.getElementById(STYLE)?.remove();
-    document.getElementById(MCP_STYLE)?.remove();
     delete globalThis.__CHATGPT_WEB_PC_LONG_CHAT__;
   }
 
   globalThis.__CHATGPT_WEB_PC_LONG_CHAT__ = {
     refresh, reset, destroy, audit: () => ({
       enabled: isHistoryEnabled(),
-      mcpEnabled: isMcpEnabled(),
       mounted: state.count,
       optimized: state.optimized,
-      mcpRelieved: markedMcpNodes.size,
-      mcpCandidates: candidateMcpNodes.size,
       nativeVirtualized: state.nativeVirtualized,
       generation: state.generation
     })

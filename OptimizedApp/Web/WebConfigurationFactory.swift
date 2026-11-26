@@ -56,16 +56,19 @@ enum WebConfigurationFactory {
           (document.head || document.documentElement).appendChild(style);
         })();
         """
-        // Prepend to the existing CM user script, preserving the original
-        // one-script baseline when both optional optimizers are disabled.
-        // When both optional visual optimizers are OFF, do not parse/inject the
-        // adapter at all; the independent CM observer below stays fully active.
-        if (pcHistoryEnabled || mcpOutputEnabled),
+        // Native CSS-only relief is independent of the legacy history adapter.
+        if mcpOutputEnabled,
+           let url = Bundle.main.url(forResource: "native-process", withExtension: "js"),
+           let source = try? String(contentsOf: url, encoding: .utf8) {
+            controller.addUserScript(WKUserScript(source: source,
+                                                 injectionTime: .atDocumentStart,
+                                                 forMainFrameOnly: true, in: observationWorld))
+        }
+        if pcHistoryEnabled,
            let url = Bundle.main.url(forResource: "pc-long-chat-adapter", withExtension: "js"),
            let source = try? String(contentsOf: url, encoding: .utf8) {
             let prefix = """
             globalThis.__OPTIMIZED_PC_HISTORY_ENABLED__ = \(pcHistoryEnabled);
-            globalThis.__OPTIMIZED_MCP_OUTPUT_RELIEF_ENABLED__ = \(mcpOutputEnabled);
             """ + "\n"
             controller.addUserScript(WKUserScript(source: prefix + source,
                                                  injectionTime: .atDocumentEnd,
