@@ -49,6 +49,29 @@ final class ChatGPTWebOptimizedUITests: XCTestCase {
         XCTAssertTrue(app.webViews["optimized.webview"].exists)
     }
 
+    func testNativeDownloadsReceiveTextBlobAndImageWithoutLeavingWebView() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uitest-proxy-direct", "-uitest-download"]
+        app.launch()
+        let webView = app.webViews["optimized.webview"]
+        XCTAssertTrue(webView.waitForExistence(timeout: 15))
+        for (label, filename, photo) in [
+            ("Download text", "fixture.txt", false),
+            ("Download blob", "fixture-blob.txt", false),
+            ("Download image", "fixture.png", true)
+        ] {
+            let link = webView.links[label]
+            XCTAssertTrue(link.waitForExistence(timeout: 10), label)
+            link.tap()
+            let saved = app.staticTexts.containing(NSPredicate(format: "label == %@", filename)).firstMatch
+            XCTAssertTrue(saved.waitForExistence(timeout: 20), "WKDownload must finish: \(filename)")
+            XCTAssertTrue(app.buttons["downloads.save.files"].firstMatch.exists)
+            if photo { XCTAssertTrue(app.buttons["downloads.save.photo"].firstMatch.exists) }
+            app.buttons["downloads.done"].tap()
+            XCTAssertTrue(webView.waitForExistence(timeout: 5))
+        }
+    }
+
     func testNestedSidebarScrollAcceptsVerticalSwipeWithoutNetwork() {
         verifySidebarSwipe(rootScroll: false)
     }

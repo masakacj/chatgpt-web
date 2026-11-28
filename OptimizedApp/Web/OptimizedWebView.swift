@@ -91,6 +91,20 @@ struct OptimizedWebView: UIViewRepresentable {
             return webView
         }
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uitest-download") {
+            // Actual offline WKDownload paths, no ChatGPT account or network.
+            let html = """
+            <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>body{font:22px system-ui;padding:20px}a,button{display:block;margin:24px 0}</style></head>
+            <body><main><a id="text" download="fixture.txt" href="data:text/plain,fixture%20download">Download text</a>
+            <a id="photo" download="fixture.png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1sAAAAASUVORK5CYII=">Download image</a>
+            <a id="blob" download="fixture-blob.txt">Download blob</a>
+            <script>document.getElementById('blob').href=URL.createObjectURL(new Blob(['blob fixture'],{type:'text/plain'}));</script>
+            </main></body></html>
+            """
+            webView.loadHTMLString(html, baseURL: URL(string: "https://chatgpt.com"))
+            return webView
+        }
         if ProcessInfo.processInfo.arguments.contains("-uitest-sidebar-scroll") {
             // Offline WKWebView nested-drawer touch fixture; never compiled into Release.
             let rootScroll = ProcessInfo.processInfo.arguments.contains("-uitest-sidebar-root-scroll")
@@ -131,6 +145,7 @@ struct OptimizedWebView: UIViewRepresentable {
             coordinator.telemetry.record(.webViewDisposed)
         }
         coordinator.stopObservingBackHistory()
+        coordinator.cancelDownloads()
         coordinator.liveDebug.detach(webView)
         coordinator.owner.invalidateDocument()
         coordinator.model.retryHandler = nil
@@ -158,6 +173,7 @@ struct OptimizedWebView: UIViewRepresentable {
         let handler: WeakOptimizedObservationHandler
         weak var webView: WKWebView?
         private var destinations: [ObjectIdentifier: URL] = [:]
+        private var activeDownloads: [ObjectIdentifier: WKDownload] = [:]
         private var backHistoryObservation: NSKeyValueObservation?
         private var forwardHistoryObservation: NSKeyValueObservation?
         private var currentURLObservation: NSKeyValueObservation?
@@ -283,6 +299,7 @@ struct OptimizedWebView: UIViewRepresentable {
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             guard self.webView === webView, !hasTerminated else { return }
             hasTerminated = true
+            cancelDownloads()
             stopObservingBackHistory()
             let route = routeCategory(for: webView)
             telemetry.record(.contentTerminated, route: route, urgent: true)
@@ -329,17 +346,31 @@ struct OptimizedWebView: UIViewRepresentable {
                    host != "openai.com" && !host.hasSuffix(".openai.com")
         }
 
+        private func isExplicitDownload(_ action: WKNavigationAction, url: URL) -> Bool {
+            if action.shouldPerformDownload { return OptimizedDownloadStore.supportsDownload(url) }
+            let origin = action.sourceFrame.securityOrigin
+            return origin.protocol == "https" && origin.host == "chatgpt.com" &&
+                (action.navigationType == .linkActivated || action.targetFrame == nil) &&
+                OptimizedDownloadStore.isInlineDownload(url)
+        }
+
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
             guard let scheme = url.scheme?.lowercased() else { decisionHandler(.cancel); return }
+            // Respect HTML download intent before the external-link/scheme
+            // policy. WebKit owns blob/data and authenticated HTTP downloads.
+            if isExplicitDownload(navigationAction, url: url) {
+                decisionHandler(.download)
+                return
+            }
             if scheme == "https" || scheme == "http" {
                 if navigationAction.navigationType == .linkActivated,
                    navigationAction.targetFrame != nil,
                    shouldConfirmExternalLink(url, from: webView) {
                     // Target-blank is handled by createWebViewWith; never prompt twice.
-                    askBeforeOpeningOutsideProxy(url, in: webView)
+                    askBeforeOpeningOutsideProxy(url, in: webView, request: navigationAction.request)
                     decisionHandler(.cancel)
                 } else {
                     decisionHandler(.allow)
@@ -353,10 +384,15 @@ struct OptimizedWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationResponse: WKNavigationResponse,
                      decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-            let response = navigationResponse.response as? HTTPURLResponse
-            let disposition = response?.value(forHTTPHeaderField: "Content-Disposition")?.lowercased() ?? ""
-            if !navigationResponse.canShowMIMEType || disposition.contains("attachment") {
-                decisionHandler(.download)
+            let response = navigationResponse.response
+            if OptimizedDownloadStore.shouldDownloadResponse(response,
+                canShow: navigationResponse.canShowMIMEType, mainFrame: navigationResponse.isForMainFrame) {
+                if OptimizedDownloadStore.acceptsResponse(response) {
+                    decisionHandler(.download)
+                } else {
+                    decisionHandler(.cancel)
+                    model.downloadFailed("文件链接已失效或服务端拒绝下载，请重新获取。")
+                }
             } else {
                 decisionHandler(.allow)
             }
@@ -367,10 +403,14 @@ struct OptimizedWebView: UIViewRepresentable {
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
+                if isExplicitDownload(navigationAction, url: url) {
+                    startDownload(navigationAction.request, in: webView)
+                    return nil
+                }
                 let scheme = url.scheme?.lowercased()
                 if scheme == "https" || scheme == "http" {
                     if shouldConfirmExternalLink(url, from: webView) {
-                        askBeforeOpeningOutsideProxy(url, in: webView)
+                        askBeforeOpeningOutsideProxy(url, in: webView, request: navigationAction.request)
                     } else {
                         webView.load(URLRequest(url: url))
                     }
@@ -412,40 +452,105 @@ struct OptimizedWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView,
                      navigationAction: WKNavigationAction,
                      didBecome download: WKDownload) {
-            download.delegate = self
+            guard self.webView === webView, !hasTerminated else {
+                download.cancel { _ in }; return
+            }
+            registerDownload(download)
         }
 
         func webView(_ webView: WKWebView,
                      navigationResponse: WKNavigationResponse,
                      didBecome download: WKDownload) {
+            guard self.webView === webView, !hasTerminated else {
+                download.cancel { _ in }; return
+            }
+            registerDownload(download)
+        }
+
+        private func registerDownload(_ download: WKDownload) {
+            let id = ObjectIdentifier(download)
+            guard activeDownloads[id] == nil else { return }
+            activeDownloads[id] = download
             download.delegate = self
+            model.downloadStarted()
+        }
+
+        private func startDownload(_ request: URLRequest, in view: WKWebView) {
+            guard self.webView === view, !hasTerminated, let url = request.url,
+                  OptimizedDownloadStore.supportsDownload(url) else { return }
+            view.startDownload(using: request) { [weak self, weak view] download in
+                guard let self, let view, self.webView === view, !self.hasTerminated else {
+                    download.cancel { _ in }
+                    return
+                }
+                self.registerDownload(download)
+            }
+        }
+
+        func cancelDownloads() {
+            let store = model.downloadStore
+            let current = activeDownloads
+            let paths = destinations
+            activeDownloads.removeAll()
+            destinations.removeAll()
+            for (id, download) in current {
+                download.delegate = nil
+                download.cancel { _ in
+                    if let path = paths[id] { store.discardStaged(path) }
+                }
+            }
         }
 
         func download(_ download: WKDownload,
                       decideDestinationUsing response: URLResponse,
                       suggestedFilename: String,
                       completionHandler: @escaping (URL?) -> Void) {
-            let safe = suggestedFilename
-                .replacingOccurrences(of: "/", with: "-")
-                .replacingOccurrences(of: "\\", with: "-")
-                .prefix(120)
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("ChatGPTWebOptimized-\(UUID().uuidString)-\(safe)")
-            destinations[ObjectIdentifier(download)] = url
-            completionHandler(url)
+            let id = ObjectIdentifier(download)
+            guard activeDownloads[id] != nil else { completionHandler(nil); return }
+            guard OptimizedDownloadStore.acceptsResponse(response) else {
+                activeDownloads.removeValue(forKey: id)
+                model.downloadFailed("文件链接已失效或服务端拒绝下载，请重新获取。")
+                completionHandler(nil)
+                return
+            }
+            do {
+                let url = try model.downloadStore.destination(filename: suggestedFilename,
+                                                               mimeType: response.mimeType)
+                if let old = destinations.updateValue(url, forKey: id) { model.downloadStore.discardStaged(old) }
+                completionHandler(url)
+            } catch {
+                activeDownloads.removeValue(forKey: id)
+                model.downloadFailed("无法创建本地下载文件，请检查手机剩余空间。")
+                completionHandler(nil)
+            }
         }
 
         func downloadDidFinish(_ download: WKDownload) {
-            model.downloadedFile = destinations.removeValue(forKey: ObjectIdentifier(download))
+            let id = ObjectIdentifier(download)
+            guard activeDownloads.removeValue(forKey: id) != nil else { return }
+            guard let url = destinations.removeValue(forKey: id) else {
+                model.downloadFailed()
+                return
+            }
+            do {
+                try model.downloadCompleted(url)
+            } catch {
+                model.downloadStore.discardStaged(url)
+                model.downloadFailed("文件下载后保存失败，请检查手机剩余空间。")
+                telemetry.record(.downloadError, errorCode: (error as NSError).code, urgent: true)
+            }
         }
 
         func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-            destinations.removeValue(forKey: ObjectIdentifier(download))
-            model.status = "下载失败"
+            let id = ObjectIdentifier(download)
+            guard activeDownloads.removeValue(forKey: id) != nil else { return }
+            if let url = destinations.removeValue(forKey: id) { model.downloadStore.discardStaged(url) }
+            model.downloadFailed()
             telemetry.record(.downloadError, errorCode: (error as NSError).code, urgent: true)
         }
 
-        private func askBeforeOpeningOutsideProxy(_ url: URL, in webView: WKWebView? = nil) {
+        private func askBeforeOpeningOutsideProxy(_ url: URL, in webView: WKWebView? = nil,
+                                                  request: URLRequest? = nil) {
             let destination = url.host ?? (url.scheme ?? "其他应用")
             let prompt = UIAlertController(
                 title: "打开外部链接",
@@ -453,6 +558,13 @@ struct OptimizedWebView: UIViewRepresentable {
                 preferredStyle: .alert)
             prompt.addAction(UIAlertAction(title: "取消", style: .cancel))
             if url.scheme?.lowercased() == "https", let webView {
+                let original = request ?? URLRequest(url: url)
+                if original.httpMethod == "GET" || original.httpMethod == nil {
+                    prompt.addAction(UIAlertAction(title: "下载链接内容", style: .default) { [weak self, weak webView] _ in
+                        guard let self, let webView else { return }
+                        self.startDownload(original, in: webView)
+                    })
+                }
                 prompt.addAction(UIAlertAction(title: "在 Optimizer 内打开（可返回）", style: .default) { [weak webView] _ in
                     guard let webView, self.webView === webView, !self.hasTerminated else { return }
                     webView.load(URLRequest(url: url))

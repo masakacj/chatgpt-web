@@ -14,7 +14,10 @@ final class OptimizedAppModel: ObservableObject {
     var isBackgrounded = false
     @Published private(set) var pendingBackgroundReadOnlyRecovery = false
     @Published var processTerminated = false
-    @Published var downloadedFile: URL?
+    let downloadStore = OptimizedDownloadStore()
+    @Published private(set) var downloads: [URL] = []
+    @Published private(set) var downloadNotice: String?
+    @Published private(set) var downloadEvent = UUID()
     @Published var status = "正在打开 ChatGPT"
     @Published var diagnosticsEnabled = false
     @Published private(set) var webPageUnresponsive = false
@@ -57,6 +60,37 @@ final class OptimizedAppModel: ObservableObject {
     func markReady() {
         status = "ChatGPT"
         recoveryAttempts = 0
+    }
+
+    func refreshDownloads() {
+        let files = downloadStore.completedFiles()
+        if downloads != files { downloads = files }
+    }
+
+    func downloadStarted() {
+        downloadNotice = "正在通过当前网页连接下载…"
+    }
+
+    func downloadCompleted(_ stagedFile: URL) throws {
+        _ = try downloadStore.commit(stagedFile)
+        refreshDownloads()
+        downloadNotice = "下载完成，可保存到文件或相册"
+        downloadEvent = UUID()
+    }
+
+    func downloadFailed(_ message: String = "下载失败，请重新点击网页下载按钮。") {
+        downloadNotice = message
+        downloadEvent = UUID()
+    }
+
+    func removeDownload(_ url: URL) {
+        do {
+            try downloadStore.remove(url)
+            refreshDownloads()
+            downloadNotice = "已删除 App 内下载副本"
+        } catch {
+            downloadNotice = "删除失败，请重试"
+        }
     }
 
     static func isWebHealthTimedOut(since start: Date, now: Date = Date()) -> Bool {

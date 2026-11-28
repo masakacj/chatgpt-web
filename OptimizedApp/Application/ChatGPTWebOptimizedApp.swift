@@ -23,6 +23,7 @@ struct OptimizedRootView: View {
     @StateObject private var proxySettings = OptimizerProxySettings()
     @State private var showingProxySettings = false
     @State private var showingWebRecovery = false
+    @State private var showingDownloads = false
     @State private var hasEnteredBackground = false
     @State private var thermalStateDescription = Self.formatThermalState(ProcessInfo.processInfo.thermalState)
     // iOS WebKit has known content-visibility:auto scroll/reveal regressions.
@@ -79,6 +80,15 @@ struct OptimizedRootView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                Button {
+                    model.refreshDownloads()
+                    showingDownloads = true
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                        .frame(width: 32, height: 32)
+                }
+                .accessibilityLabel("下载")
+                .accessibilityIdentifier("navigation.downloads.button")
                 Button {
                     showingWebRecovery = true
                 } label: {
@@ -151,6 +161,17 @@ struct OptimizedRootView: View {
                 // Do not mutate the shared WKWebsiteDataStore while an old WebView
                 // might still own an in-flight connection. Next app start applies it.
                 showingProxySettings = false
+            }
+        }
+        .sheet(isPresented: $showingDownloads) {
+            OptimizedDownloadsView(model: model)
+        }
+        .onChange(of: model.downloadEvent) { _, _ in
+            // Do not interrupt a recovery prompt or another system sheet.
+            // The download toolbar remains available when a presentation is busy.
+            if scenePhase == .active, !showingProxySettings, !showingWebRecovery,
+               !model.diagnosticsEnabled, owner.recoveryCandidate == nil {
+                showingDownloads = true
             }
         }
         .alert("重新创建网页？", isPresented: $showingWebRecovery) {
